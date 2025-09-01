@@ -19,7 +19,9 @@ from database_config_supabase import (
     update_user_password_supabase,
     delete_user_supabase,
     get_all_users_supabase,
-    create_database
+    create_database,
+    save_transaction_supabase,
+    save_file_record_supabase
 )
 from sqlalchemy.exc import IntegrityError
 import os
@@ -477,13 +479,12 @@ def login_page():
                         if user_info:
                             user_id = user_info['id']
                             
-                            # Create folder path for the user
+                                                        # Create folder path for the user
                             folder_path = f"/tmp/{new_username}_investments"
                             
                             # Process the uploaded files
                             try:
-                                from web_agent import web_agent
-                                web_agent._process_uploaded_files(uploaded_files, folder_path)
+                                process_uploaded_files_during_registration(uploaded_files, folder_path, user_id)
                                 st.success(f"✅ Successfully processed {len(uploaded_files)} file(s)!")
                                 st.success("🎉 Your portfolio is ready for analysis!")
                                 
@@ -493,6 +494,10 @@ def login_page():
                                 st.session_state['user_id'] = user_id
                                 st.session_state['user_role'] = user_info['role']
                                 st.session_state['login_time'] = datetime.now()
+                                
+                                # Set flag to trigger dashboard refresh
+                                st.session_state['refresh_dashboard'] = True
+                                st.session_state['show_portfolio_after_upload'] = True
                                 
                                 st.rerun()
                             except Exception as e:
@@ -594,6 +599,232 @@ def require_admin():
     if st.session_state.get('user_role') != 'admin':
         st.error("Admin privileges required")
         st.stop()
+
+def process_uploaded_files_during_registration(uploaded_files, folder_path, user_id):
+    """Process uploaded files during registration without circular imports"""
+    import pandas as pd
+    from pathlib import Path
+    import os
+    from datetime import datetime
+    import streamlit as st
+    
+    if not uploaded_files:
+        st.warning("No files selected for upload")
+        return False
+    
+    # Create progress bar
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    processed_count = 0
+    failed_count = 0
+    
+    try:
+        for i, uploaded_file in enumerate(uploaded_files):
+            status_text.text(f"Processing {uploaded_file.name}...")
+            
+            try:
+                # Read the uploaded file
+                df = pd.read_csv(uploaded_file)
+                
+                # Standardize column names
+                column_mapping = {
+                    'Stock Name': 'stock_name',
+                    'Stock_Name': 'stock_name',
+                    'stock_name': 'stock_name',
+                    'Ticker': 'ticker',
+                    'ticker': 'ticker',
+                    'Quantity': 'quantity',
+                    'quantity': 'quantity',
+                    'Price': 'price',
+                    'price': 'price',
+                    'Transaction Type': 'transaction_type',
+                    'Transaction_Type': 'transaction_type',
+                    'transaction_type': 'transaction_type',
+                    'Date': 'date',
+                    'date': 'date',
+                    'Channel': 'channel',
+                    'channel': 'channel'
+                }
+                
+                # Rename columns
+                df = df.rename(columns=column_mapping)
+                
+                # Extract channel from filename if not present
+                if 'channel' not in df.columns:
+                    channel_name = uploaded_file.name.replace('.csv', '').replace('_', ' ')
+                    df['channel'] = channel_name
+                
+                # Ensure required columns exist
+                required_columns = ['stock_name', 'ticker', 'quantity', 'transaction_type', 'date']
+                missing_columns = [col for col in required_columns if col not in df.columns]
+                
+                if missing_columns:
+                    st.error(f"❌ Missing required columns in {uploaded_file.name}: {missing_columns}")
+                    failed_count += 1
+                    continue
+                
+                # Clean and validate data
+                df = df.dropna(subset=['ticker', 'quantity'])
+                df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce')
+                
+                # Convert date to datetime
+                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                df = df.dropna(subset=['date'])
+                
+                # Standardize transaction types
+                df['transaction_type'] = df['transaction_type'].str.lower().str.strip()
+                df['transaction_type'] = df['transaction_type'].replace({
+                    'buy': 'buy',
+                    'purchase': 'buy',
+                    'bought': 'buy',
+                    'sell': 'sell',
+                    'sold': 'sell',
+                    'sale': 'sell'
+                })
+                
+                # Filter valid transaction types
+                df = df[df['transaction_type'].isin(['buy', 'sell'])]
+                
+                if df.empty:
+                    st.warning(f"⚠️ No valid transactions found in {uploaded_file.name}")
+                    failed_count += 1
+                    continue
+                
+                # Add user_id to the dataframe
+                df['user_id'] = user_id
+                
+                # Fetch historical prices for missing price values
+                if 'price' not in df.columns or df['price'].isna().any():
+                    status_text.text(f"🔍 Fetching historical prices for {uploaded_file.name}...")
+                    df = fetch_historical_prices_for_upload(df)
+                
+                # Save to database using Supabase client
+                
+                # Save file record
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"{uploaded_file.name.replace('.csv', '')}_{timestamp}.csv"
+                file_path = os.path.join(folder_path, filename)
+                
+                # Save file record
+                file_record = save_file_record_supabase(filename, file_path, user_id)
+                
+                # Save transactions
+                transactions_saved = 0
+                for _, row in df.iterrows():
+                    success = save_transaction_supabase(
+                        user_id=user_id,
+                        stock_name=row.get('stock_name', ''),
+                        ticker=row['ticker'],
+                        quantity=float(row['quantity']),
+                        price=float(row.get('price', 0)),
+                        transaction_type=row['transaction_type'],
+                        date=row['date'].strftime('%Y-%m-%d'),
+                        channel=row.get('channel', ''),
+                        sector=row.get('sector', '')
+                    )
+                    if success:
+                        transactions_saved += 1
+                
+                if transactions_saved > 0:
+                    processed_count += 1
+                    st.success(f"✅ Successfully processed {uploaded_file.name} ({transactions_saved} transactions)")
+                else:
+                    failed_count += 1
+                    st.error(f"❌ Failed to save transactions from {uploaded_file.name}")
+                
+            except Exception as e:
+                st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
+                failed_count += 1
+            
+            # Update progress
+            progress = (i + 1) / len(uploaded_files)
+            progress_bar.progress(progress)
+        
+        # Final status
+        status_text.text("Processing complete!")
+        progress_bar.progress(1.0)
+        
+        if processed_count > 0:
+            st.success(f"✅ Successfully processed {processed_count} files")
+            return True
+        if failed_count > 0:
+            st.error(f"❌ Failed to process {failed_count} files")
+            return False
+        
+    except Exception as e:
+        st.error(f"❌ Error during file processing: {str(e)}")
+        return False
+    finally:
+        progress_bar.empty()
+        status_text.empty()
+
+def fetch_historical_prices_for_upload(df):
+    """Fetch historical prices for uploaded file data"""
+    try:
+        import yfinance as yf
+        from mftool import Mftool
+        import streamlit as st
+        
+        # Initialize mftool for mutual funds
+        mf = Mftool()
+        
+        # Prepare tickers and dates for bulk fetching
+        tickers_with_dates = []
+        price_indices = []
+        
+        for idx, row in df.iterrows():
+            ticker = row['ticker']
+            transaction_date = row['date']
+            
+            tickers_with_dates.append((ticker, transaction_date))
+            price_indices.append(idx)
+        
+        if not tickers_with_dates:
+            return df
+        
+        # Add price column if it doesn't exist
+        if 'price' not in df.columns:
+            df['price'] = None
+        
+        # Fetch prices for each ticker
+        prices_found = 0
+        for i, (ticker, transaction_date) in enumerate(tickers_with_dates):
+            idx = price_indices[i]
+            price = None
+            
+            try:
+                # Try yfinance first (for stocks)
+                stock = yf.Ticker(ticker)
+                hist = stock.history(start=transaction_date, end=transaction_date + pd.Timedelta(days=1))
+                
+                if not hist.empty:
+                    price = hist['Close'].iloc[0]
+                else:
+                    # Try mftool for mutual funds
+                    try:
+                        mf_info = mf.get_scheme_details(ticker)
+                        if mf_info and 'nav' in mf_info:
+                            price = float(mf_info['nav'])
+                    except:
+                        pass
+                
+                if price:
+                    df.at[idx, 'price'] = price
+                    prices_found += 1
+                    
+            except Exception as e:
+                st.warning(f"⚠️ Could not fetch price for {ticker}: {e}")
+                continue
+        
+        # Show summary
+        st.info(f"🔍 Price summary: {prices_found}/{len(tickers_with_dates)} transactions got historical prices")
+        
+        return df
+        
+    except Exception as e:
+        st.error(f"❌ Error fetching historical prices: {e}")
+        return df
 
 def main_login_system():
     """Main function to run the login system"""
