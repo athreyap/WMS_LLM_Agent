@@ -12,6 +12,7 @@ import json
 from database_config_supabase import (
     update_stock_data_supabase,
     get_stock_data_supabase,
+    get_transactions_supabase,
     update_transaction_sector_supabase,
     get_transactions_by_ticker_supabase,
     get_transactions_by_tickers_supabase,
@@ -201,18 +202,18 @@ class StockDataAgent:
             print(f"❌ Error updating live price for {ticker}: {e}")
             return False
     
-    def _update_all_stock_data(self):
+    def _update_all_stock_data(self, user_id: int = None):
         """Update all stock data using bulk updates"""
         try:
             # Get all unique tickers from transactions table using Supabase
-            transactions = get_transactions_supabase()
+            transactions = get_transactions_supabase(user_id)
             tickers = list(set([t['ticker'] for t in transactions if t.get('ticker')]))
             
             if not tickers:
-                print("ℹ️ No tickers found in transactions table")
+                print(f"ℹ️ No tickers found in transactions table{' for user ' + str(user_id) if user_id else ''}")
                 return
             
-            print(f"🔄 Bulk updating data for {len(tickers)} tickers...")
+            print(f"🔄 Bulk updating data for {len(tickers)} tickers{' for user ' + str(user_id) if user_id else ''}...")
             
             # Use bulk update for better performance
             result = self._bulk_update_stock_data(tickers)
@@ -492,7 +493,7 @@ class StockDataAgent:
                         'ticker': record['ticker'],
                         'stock_name': record.get('stock_name'),
                         'sector': record.get('sector'),
-                        'live_price': record.get('current_price'),
+                        'live_price': record.get('live_price'),  # Use live_price instead of current_price
                         'price_source': 'supabase',
                         'last_updated': record.get('last_updated')
                     }
@@ -536,17 +537,17 @@ class StockDataAgent:
         except Exception as e:
             print(f"❌ Error cleaning up old data: {e}")
     
-    def update_all_stock_sectors(self):
+    def update_all_stock_sectors(self, user_id: int = None):
         """Update sector information for all stocks in the database using Supabase"""
         try:
-            print("🔄 Updating sectors for all stocks...")
+            print(f"🔄 Updating sectors for all stocks{' for user ' + str(user_id) if user_id else ''}...")
             
             # Get all unique tickers from transactions table using Supabase
-            transactions = get_transactions_supabase()
+            transactions = get_transactions_supabase(user_id)
             tickers = list(set([t['ticker'] for t in transactions if t.get('ticker') and t.get('sector') in ['Unknown', '']]))
             
             if not tickers:
-                print("ℹ️ No tickers found that need sector updates")
+                print(f"ℹ️ No tickers found that need sector updates{' for user ' + str(user_id) if user_id else ''}")
                 return
             
             print(f"🔄 Updating sectors for {len(tickers)} tickers...")
@@ -629,6 +630,6 @@ def update_user_stock_prices(user_id: int) -> Dict:
     """Update live prices for a specific user's stocks"""
     return stock_agent.update_user_stock_data(user_id)
 
-def update_all_stock_sectors():
+def update_all_stock_sectors(user_id: int = None):
     """Update sector information for all stocks"""
-    return stock_agent.update_all_stock_sectors()
+    return stock_agent.update_all_stock_sectors(user_id)

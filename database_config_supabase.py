@@ -457,6 +457,7 @@ def save_file_record_supabase(filename: str, file_path: str, user_id: int) -> Op
         file_hash = hashlib.md5(file_path.encode()).hexdigest()
         
         data = {
+            "user_id": user_id,
             "filename": filename,
             "file_path": file_path,
             "file_hash": file_hash,
@@ -478,10 +479,13 @@ def save_file_record_supabase(filename: str, file_path: str, user_id: int) -> Op
         print(f"❌ Error saving file record: {e}")
         return None
 
-def get_file_records_supabase() -> List[Dict]:
+def get_file_records_supabase(user_id: int = None) -> List[Dict]:
     """Get file records using Supabase client"""
     try:
-        result = supabase.table("investment_files").select("*").execute()
+        if user_id:
+            result = supabase.table("investment_files").select("*").eq("user_id", user_id).execute()
+        else:
+            result = supabase.table("investment_files").select("*").execute()
         
         if result.data:
             return result.data
@@ -740,6 +744,7 @@ def create_database():
         files_table_sql = """
         CREATE TABLE IF NOT EXISTS investment_files (
             id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id),
             filename VARCHAR(255) NOT NULL,
             original_filename VARCHAR(255) NOT NULL,
             file_hash VARCHAR(64) UNIQUE NOT NULL,

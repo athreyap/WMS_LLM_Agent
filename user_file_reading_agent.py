@@ -597,18 +597,30 @@ class UserFileReadingAgent:
         try:
             print("🔄 **Batch Historical Price Fetching** - Processing uploaded file...")
             
+            # Ensure price column exists
+            if 'price' not in df.columns:
+                df['price'] = None
+                print("📝 Price column not found, creating it with None values")
+            
             # Get unique tickers and their transaction dates
             ticker_date_pairs = []
             price_indices = []
             
             for idx, row in df.iterrows():
-                ticker = row['ticker']
-                transaction_date = row['date']
-                
-                # Only fetch if price is missing
-                if pd.isna(row['price']) or row['price'] == 0:
-                    ticker_date_pairs.append((ticker, transaction_date))
-                    price_indices.append(idx)
+                try:
+                    ticker = row['ticker']
+                    transaction_date = row['date']
+                    
+                    # Only fetch if price is missing
+                    if pd.isna(row['price']) or row['price'] == 0:
+                        ticker_date_pairs.append((ticker, transaction_date))
+                        price_indices.append(idx)
+                except KeyError as e:
+                    print(f"⚠️ Missing column in row {idx}: {e}")
+                    continue
+                except Exception as e:
+                    print(f"⚠️ Error processing row {idx}: {e}")
+                    continue
             
             if not ticker_date_pairs:
                 print("ℹ️ All transactions already have historical prices")
@@ -635,6 +647,10 @@ class UserFileReadingAgent:
                                 idx = price_indices[i]
                                 df.at[idx, 'price'] = price
                                 # Set sector to Mutual Funds for mutual fund tickers
+                                if 'sector' not in df.columns:
+                                    df['sector'] = None
+                                if 'stock_name' not in df.columns:
+                                    df['stock_name'] = None
                                 df.at[idx, 'sector'] = 'Mutual Funds'
                                 df.at[idx, 'stock_name'] = f"MF-{ticker}"
                                 prices_found += 1

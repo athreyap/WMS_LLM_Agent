@@ -404,9 +404,6 @@ def login_page():
     with tab2:
         st.markdown("### Create Account")
         
-    with tab2:
-        st.markdown("### Create Account")
-        
         # Registration form with file upload
         new_username = st.text_input("Username", key="register_username")
         new_email = st.text_input("Email", key="register_email")
@@ -699,39 +696,16 @@ def process_uploaded_files_during_registration(uploaded_files, folder_path, user
                     status_text.text(f"🔍 Fetching historical prices for {uploaded_file.name}...")
                     df = fetch_historical_prices_for_upload(df)
                 
-                # Save to database using Supabase client
+                # Save directly to database using user file agent (same as old users)
+                from user_file_reading_agent import user_file_agent
+                success = user_file_agent._process_uploaded_file_direct(df, user_id, uploaded_file.name)
                 
-                # Save file record
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"{uploaded_file.name.replace('.csv', '')}_{timestamp}.csv"
-                file_path = os.path.join(folder_path, filename)
-                
-                # Save file record
-                file_record = save_file_record_supabase(filename, file_path, user_id)
-                
-                # Save transactions
-                transactions_saved = 0
-                for _, row in df.iterrows():
-                    success = save_transaction_supabase(
-                        user_id=user_id,
-                        stock_name=row.get('stock_name', ''),
-                        ticker=row['ticker'],
-                        quantity=float(row['quantity']),
-                        price=float(row.get('price', 0)),
-                        transaction_type=row['transaction_type'],
-                        date=row['date'].strftime('%Y-%m-%d'),
-                        channel=row.get('channel', ''),
-                        sector=row.get('sector', '')
-                    )
-                    if success:
-                        transactions_saved += 1
-                
-                if transactions_saved > 0:
+                if success:
                     processed_count += 1
-                    st.success(f"✅ Successfully processed {uploaded_file.name} ({transactions_saved} transactions)")
+                    st.success(f"✅ Successfully processed {uploaded_file.name}")
                 else:
                     failed_count += 1
-                    st.error(f"❌ Failed to save transactions from {uploaded_file.name}")
+                    st.error(f"❌ Failed to process {uploaded_file.name}")
                 
             except Exception as e:
                 st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
@@ -767,6 +741,13 @@ def fetch_historical_prices_for_upload(df):
         import streamlit as st
         import pandas as pd
         
+        # Validate required columns exist
+        required_columns = ['ticker', 'date']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            st.error(f"❌ Missing required columns: {missing_columns}")
+            return df
+        
         # Initialize mftool for mutual funds
         mf = Mftool()
         
@@ -775,13 +756,25 @@ def fetch_historical_prices_for_upload(df):
         price_indices = []
         
         for idx, row in df.iterrows():
-            ticker = row['ticker']
-            transaction_date = row['date']
-            
-            tickers_with_dates.append((ticker, transaction_date))
-            price_indices.append(idx)
+            try:
+                ticker = row['ticker']
+                transaction_date = row['date']
+                
+                # Skip if ticker or date is missing/invalid
+                if pd.isna(ticker) or pd.isna(transaction_date):
+                    continue
+                
+                tickers_with_dates.append((ticker, transaction_date))
+                price_indices.append(idx)
+            except KeyError as e:
+                st.warning(f"⚠️ Missing column in row {idx}: {e}")
+                continue
+            except Exception as e:
+                st.warning(f"⚠️ Error processing row {idx}: {e}")
+                continue
         
         if not tickers_with_dates:
+            st.info("ℹ️ No valid ticker/date pairs found for price fetching")
             return df
         
         # Add price column if it doesn't exist

@@ -379,13 +379,6 @@ class WebAgent:
                         failed_count += 1
                         st.error(f"❌ Failed to process {uploaded_file.name}")
                     
-                    if success:
-                        processed_count += 1
-                        st.success(f"✅ Successfully processed {uploaded_file.name}")
-                    else:
-                        failed_count += 1
-                        st.error(f"❌ Failed to process {uploaded_file.name}")
-                    
                 except Exception as e:
                     st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
                     failed_count += 1
@@ -1575,6 +1568,49 @@ class WebAgent:
                         else:
                             st.error("❌ Could not determine folder path for file processing")
                     st.sidebar.info(f"Selected {len(uploaded_files)} file(s)")
+                
+                # Show file history
+                st.sidebar.markdown("---")
+                st.sidebar.markdown("### 📋 File History")
+                
+                try:
+                    # Get user's file records
+                    file_records = get_file_records_supabase(user_id)
+                    
+                    if file_records:
+                        st.sidebar.success(f"📁 {len(file_records)} file(s) uploaded")
+                        
+                        # Show recent files (last 5)
+                        recent_files = file_records[-5:] if len(file_records) > 5 else file_records
+                        
+                        for file_record in recent_files:
+                            filename = file_record.get('filename', 'Unknown')
+                            processed_at = file_record.get('processed_at', 'Unknown')
+                            status = file_record.get('status', 'Unknown')
+                            
+                            # Format the date
+                            try:
+                                if isinstance(processed_at, str):
+                                    from datetime import datetime
+                                    date_obj = datetime.fromisoformat(processed_at.replace('Z', '+00:00'))
+                                    formatted_date = date_obj.strftime('%Y-%m-%d %H:%M')
+                                else:
+                                    formatted_date = str(processed_at)
+                            except:
+                                formatted_date = str(processed_at)
+                            
+                            # Show file info
+                            status_color = "🟢" if status == "processed" else "🟡"
+                            st.sidebar.text(f"{status_color} {filename}")
+                            st.sidebar.caption(f"📅 {formatted_date}")
+                        
+                        if len(file_records) > 5:
+                            st.sidebar.caption(f"... and {len(file_records) - 5} more files")
+                    else:
+                        st.sidebar.info("📁 No files uploaded yet")
+                        
+                except Exception as e:
+                    st.sidebar.warning("⚠️ Could not load file history")
                 
                 # Show admin panel if requested
                 if st.session_state.get('show_admin_panel', False):
