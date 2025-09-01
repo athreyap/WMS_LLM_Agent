@@ -13,7 +13,7 @@ from functools import wraps
 import random
 
 # PostgreSQL connection string for Supabase
-DATABASE_URL = os.getenv('DATABASE_URL', "postgresql://postgres:wmssupabase123@db.rolcoegikoeblxzqgkix.supabase.co:5432/postgres?sslmode=require")
+DATABASE_URL = os.getenv('DATABASE_URL', "postgresql://postgres:wmssupabase123@db.rolcoegikoeblxzqgkix.supabase.co:5432/postgres?sslmode=require&prefer_ipv4=true")
 
 def get_db_session_with_retry(max_retries=3, base_delay=1):
     """Get database session with retry logic for cloud environments"""
