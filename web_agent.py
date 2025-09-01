@@ -698,6 +698,39 @@ class WebAgent:
                 transactions = get_transactions_with_historical_prices(user_id=user_id)
                 print(f"🔍 Transactions fetched: {len(transactions) if transactions else 0} records")
                 
+                # Debug: Check if transactions exist but are empty
+                if transactions and len(transactions) > 0:
+                    print(f"🔍 First transaction sample: {transactions[0] if transactions else 'None'}")
+                    print(f"🔍 Transaction columns: {list(transactions[0].keys()) if transactions else 'None'}")
+                else:
+                    print(f"⚠️ No transactions found for user {user_id}")
+                    # Try to get all transactions to see if there's a user_id issue
+                    all_transactions = get_transactions_with_historical_prices()
+                    print(f"🔍 All transactions in system: {len(all_transactions) if all_transactions else 0}")
+                    if all_transactions:
+                        print(f"🔍 Sample transaction user_id: {all_transactions[0].get('user_id') if all_transactions else 'None'}")
+                    
+                                    # If no transactions found, try a small delay and retry (in case of timing issue)
+                if not transactions and user_id:
+                    print(f"🔄 Retrying transaction fetch after delay...")
+                    import time
+                    time.sleep(2)  # Wait 2 seconds
+                    transactions = get_transactions_with_historical_prices(user_id=user_id)
+                    print(f"🔍 Retry result: {len(transactions) if transactions else 0} transactions")
+                    
+                    # If still no transactions, check if there's a file path issue
+                    if not transactions:
+                        print(f"🔍 Checking for file path issues...")
+                        try:
+                            from database_config_supabase import get_file_records_supabase
+                            file_records = get_file_records_supabase(user_id)
+                            print(f"🔍 File records found: {len(file_records) if file_records else 0}")
+                            if file_records:
+                                for file_record in file_records:
+                                    print(f"🔍 File: {file_record.get('filename', 'N/A')} - Path: {file_record.get('file_path', 'N/A')} - User: {file_record.get('user_id', 'N/A')}")
+                        except Exception as e:
+                            print(f"⚠️ Error checking file records: {e}")
+                
                 if not transactions:
                     st.warning(f"⚠️ No transactions found for user ID {user_id}")
                     return pd.DataFrame()  # Return empty DataFrame instead of falling back to all transactions
@@ -1752,6 +1785,69 @@ class WebAgent:
                         # This will trigger the price fetching logic in the main flow
                         self.session_state['force_price_fetch'] = True
                         st.rerun()
+                
+                # Debug button to check database directly
+                if st.sidebar.button("🔍 Debug Database", type="secondary", help="Check database directly for debugging"):
+                    if user_id and user_id != 1:
+                        st.sidebar.info("🔍 Checking database directly...")
+                        try:
+                            from database_config_supabase import get_transactions_supabase
+                            direct_transactions = get_transactions_supabase(user_id)
+                            st.sidebar.success(f"🔍 Direct DB Query: {len(direct_transactions)} transactions found")
+                            if direct_transactions:
+                                st.sidebar.info(f"🔍 Sample: {direct_transactions[0].get('ticker', 'N/A')} - {direct_transactions[0].get('quantity', 'N/A')}")
+                                st.sidebar.info(f"🔍 User ID in DB: {direct_transactions[0].get('user_id', 'N/A')}")
+                                st.sidebar.info(f"🔍 File ID: {direct_transactions[0].get('file_id', 'N/A')}")
+                        except Exception as e:
+                            st.sidebar.error(f"❌ Debug query failed: {e}")
+                
+                # Check all transactions button
+                if st.sidebar.button("🔍 Check All Transactions", type="secondary", help="Check all transactions in system"):
+                    st.sidebar.info("🔍 Checking all transactions...")
+                    try:
+                        from database_config_supabase import get_transactions_supabase
+                        all_transactions = get_transactions_supabase()
+                        st.sidebar.success(f"🔍 All Transactions: {len(all_transactions)} total")
+                        if all_transactions:
+                            # Group by user_id
+                            user_counts = {}
+                            for t in all_transactions:
+                                uid = t.get('user_id', 'unknown')
+                                user_counts[uid] = user_counts.get(uid, 0) + 1
+                            st.sidebar.info(f"🔍 By User: {user_counts}")
+                    except Exception as e:
+                        st.sidebar.error(f"❌ All transactions query failed: {e}")
+                
+                # Check archive file specifically
+                if st.sidebar.button("🔍 Check Archive File", type="secondary", help="Check the specific archive file"):
+                    st.sidebar.info("🔍 Checking archive file...")
+                    try:
+                        from database_config_supabase import get_file_records_supabase, get_transactions_supabase
+                        # Check file records
+                        file_records = get_file_records_supabase(user_id)
+                        archive_files = [f for f in file_records if 'archive' in f.get('file_path', '').lower()]
+                        st.sidebar.success(f"🔍 Archive Files: {len(archive_files)} found")
+                        for f in archive_files:
+                            st.sidebar.info(f"🔍 Archive: {f.get('filename')} - {f.get('file_path')}")
+                        
+                        # Check transactions from archive files
+                        if archive_files:
+                            transactions = get_transactions_supabase(user_id)
+                            archive_transactions = [t for t in transactions if t.get('file_id') in [f.get('id') for f in archive_files]]
+                            st.sidebar.success(f"🔍 Archive Transactions: {len(archive_transactions)} found")
+                    except Exception as e:
+                        st.sidebar.error(f"❌ Archive check failed: {e}")
+                
+                # Database diagnosis button
+                if st.sidebar.button("🔍 Database Diagnosis", type="secondary", help="Run comprehensive database diagnostics"):
+                    st.sidebar.info("🔍 Running database diagnosis...")
+                    try:
+                        from database_config_supabase import diagnose_database_issues
+                        # Run diagnosis in a try-catch to handle any errors
+                        diagnose_database_issues()
+                        st.sidebar.success("✅ Database diagnosis complete! Check console for details.")
+                    except Exception as e:
+                        st.sidebar.error(f"❌ Database diagnosis failed: {e}")
                 
                 # Show file history
                 st.sidebar.markdown("---")

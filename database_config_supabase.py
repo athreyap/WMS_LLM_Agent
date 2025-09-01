@@ -777,17 +777,45 @@ def save_transactions_bulk_supabase(df: pd.DataFrame, file_id: int, user_id: int
             bulk_data.append(transaction_data)
         
         # Insert all transactions in bulk
+        print(f"🔄 Inserting {len(bulk_data)} transactions into database...")
         result = supabase.table("investment_transactions").insert(bulk_data).execute()
         
         if result.data:
             print(f"✅ Successfully saved {len(result.data)} transactions for file {file_id}")
-            return True
+            
+            # Verify the data was actually committed by reading it back
+            print(f"🔍 Verifying data commit by reading back...")
+            try:
+                verify_result = supabase.table("investment_transactions").select("*").eq("file_id", file_id).execute()
+                if verify_result.data:
+                    print(f"✅ Data verification successful: {len(verify_result.data)} transactions found in database")
+                    return True
+                else:
+                    print(f"❌ Data verification failed: No transactions found after insert")
+                    return False
+            except Exception as verify_error:
+                print(f"⚠️ Data verification error: {verify_error}")
+                # Still return True if insert was successful
+                return True
         else:
             print(f"❌ Failed to save transactions for file {file_id}")
             return False
             
     except Exception as e:
         print(f"❌ Error saving bulk transactions: {e}")
+        
+        # Check for specific error types
+        error_str = str(e).lower()
+        if "row-level security" in error_str or "rls" in error_str:
+            print(f"💡 RLS Policy Error: Row-level security is blocking the insert")
+            print(f"💡 Check if RLS policies are properly configured for user {user_id}")
+        elif "permission" in error_str or "access" in error_str:
+            print(f"💡 Permission Error: User {user_id} doesn't have insert permissions")
+        elif "constraint" in error_str:
+            print(f"💡 Constraint Error: Database constraint violation")
+        elif "connection" in error_str:
+            print(f"💡 Connection Error: Database connection issue")
+        
         return False
 
 # Database initialization function
@@ -1111,5 +1139,20 @@ def diagnose_database_issues():
             print(f"⚠️ Table '{table_name}' is missing 'file_id' column")
             print(f"💡 This will cause errors when trying to link transactions to files")
             print(f"💡 Please update the table schema to include 'file_id INTEGER REFERENCES investment_files(id)'")
+    
+    # Check RLS policies
+    print(f"\n🔍 Checking RLS policies...")
+    try:
+        # Test insert permission
+        test_data = {"test": "data"}
+        test_result = supabase.table("investment_transactions").insert(test_data).execute()
+        print(f"✅ Insert permission test: Success")
+        # Clean up test data
+        supabase.table("investment_transactions").delete().eq("test", "data").execute()
+    except Exception as rls_error:
+        print(f"❌ Insert permission test failed: {rls_error}")
+        if "row-level security" in str(rls_error).lower():
+            print(f"💡 RLS Policy Issue: Row-level security is blocking inserts")
+            print(f"💡 You may need to disable RLS for testing or configure proper policies")
     
     print("\n🔍 Database diagnosis complete!")
