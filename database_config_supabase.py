@@ -11,9 +11,41 @@ import time
 import threading
 from functools import wraps
 import random
+import socket
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
-# PostgreSQL connection string for Supabase
-DATABASE_URL = os.getenv('DATABASE_URL', "postgresql://postgres:wmssupabase123@db.rolcoegikoeblxzqgkix.supabase.co:5432/postgres?sslmode=require&family=ipv4")
+def build_ipv4_dsn():
+    """
+    Returns a DSN string that:
+    - Forces IPv4 (`hostaddr=...`)
+    - Uses TLS (`sslmode=require`)
+    - Keeps the original user/password/port/database
+    """
+    raw = os.getenv('DATABASE_URL', "postgresql://postgres:wmssupabase123@db.rolcoegikoeblxzqgkix.supabase.co:5432/postgres")
+    
+    if not raw:
+        raise RuntimeError("DATABASE_URL not found")
+    
+    parsed = urlparse(raw)
+    
+    # Resolve the hostname to a single IPv4 address
+    try:
+        ipv4 = socket.getaddrinfo(parsed.hostname, None, socket.AF_INET)[0][4][0]
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not resolve IPv4 for {parsed.hostname}: {exc}"
+        ) from exc
+    
+    # Preserve any existing query params, then add sslmode and hostaddr
+    qs = dict(parse_qsl(parsed.query))
+    qs.update({"sslmode": "require", "hostaddr": ipv4})
+    new_query = urlencode(qs, doseq=True)
+    dsn = urlunparse(parsed._replace(query=new_query))
+    
+    return dsn
+
+# PostgreSQL connection string for Supabase with IPv4 forcing
+DATABASE_URL = build_ipv4_dsn()
 
 def get_db_session_with_retry(max_retries=3, base_delay=1):
     """Get database session with retry logic for cloud environments"""
