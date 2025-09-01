@@ -1987,6 +1987,32 @@ class WebAgent:
                         except Exception as e:
                             st.sidebar.error(f"❌ Force reload failed: {e}")
                 
+                # Direct database inspection button
+                if st.sidebar.button("🔍 Inspect Database Directly", type="secondary", help="Check database tables directly"):
+                    if user_id and user_id != 1:
+                        st.sidebar.info("🔍 Inspecting database directly...")
+                        try:
+                            from database_config_supabase import supabase
+                            
+                            # Check investment_transactions table
+                            transactions_result = supabase.table("investment_transactions").select("*").limit(5).execute()
+                            st.sidebar.success(f"🔍 Transactions table: {len(transactions_result.data) if transactions_result.data else 0} records")
+                            if transactions_result.data:
+                                st.sidebar.info(f"🔍 Sample transaction: {transactions_result.data[0]}")
+                            
+                            # Check investment_files table
+                            files_result = supabase.table("investment_files").select("*").limit(5).execute()
+                            st.sidebar.success(f"🔍 Files table: {len(files_result.data) if files_result.data else 0} records")
+                            if files_result.data:
+                                st.sidebar.info(f"🔍 Sample file: {files_result.data[0]}")
+                            
+                            # Check specific user data
+                            user_transactions = supabase.table("investment_transactions").select("*").eq("user_id", user_id).execute()
+                            st.sidebar.success(f"🔍 User {user_id} transactions: {len(user_transactions.data) if user_transactions.data else 0}")
+                            
+                        except Exception as e:
+                            st.sidebar.error(f"❌ Database inspection failed: {e}")
+                
                 # Show file history
                 st.sidebar.markdown("---")
                 st.sidebar.markdown("### 📋 File History")
