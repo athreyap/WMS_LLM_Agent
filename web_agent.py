@@ -19,6 +19,7 @@ from stock_data_agent import stock_agent, get_live_price, get_sector, get_stock_
 from user_file_reading_agent import user_file_agent, process_user_files_on_login, get_user_transactions_data, start_user_file_monitoring, stop_user_file_monitoring
 from database_config_supabase import (
     get_transactions_supabase,
+    get_transactions_with_historical_prices,
     get_user_by_id_supabase,
     create_user_supabase,
     get_user_by_username_supabase,
@@ -1590,36 +1591,150 @@ class WebAgent:
         
         df = self.load_data_from_agents(user_id)
         
-        if not df.empty:
-            # Manual refresh button for live prices and sectors
-            if st.sidebar.button("🔄 Refresh Live Prices & Sectors", help="Force update live prices and sector information for your stocks"):
-                try:
-                    if user_id and user_id != 1:
-                        # Clear cache to force refresh
-                        cache_key = f'live_prices_user_{user_id}'
-                        cache_timestamp_key = f'live_prices_timestamp_user_{user_id}'
-                        self.session_state.pop(cache_key, None)
-                        self.session_state.pop(cache_timestamp_key, None)
+        # Check if user has transactions
+        has_transactions = not df.empty
+        
+        if has_transactions:
+            # User has transactions - show data with file upload option on the left
+            st.markdown('<h2 class="section-header">📊 Your Portfolio Data</h2>', unsafe_allow_html=True)
+            
+            # Create two columns: left for file upload, right for data
+            col1, col2 = st.columns([1, 3])
+            
+            with col1:
+                st.markdown("### 📤 Upload More Files")
+                st.info("Add more transaction files to your portfolio")
+                
+                # File Upload Section for users with existing data
+                is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
+                if is_streamlit_cloud and user_id and user_id != 1:
+                    folder_path = self.session_state.get('folder_path', '')
+                    if folder_path:
+                        uploaded_files = st.file_uploader(
+                            "Choose CSV files",
+                            type=['csv'],
+                            accept_multiple_files=True,
+                            help="Upload additional CSV files with transaction data"
+                        )
                         
-                        # Update live prices and sectors
-                        update_result = update_user_stock_prices(user_id)
-                        if update_result.get('updated', 0) > 0:
-                            # Clear holdings and quarterly cache since prices changed
-                            holdings_cache_key = f'holdings_user_{user_id}'
-                            quarterly_cache_key = f'quarterly_analysis_user_{user_id}'
-                            self.session_state.pop(holdings_cache_key, None)
-                            self.session_state.pop(f'{holdings_cache_key}_hash', None)
-                            self.session_state.pop(quarterly_cache_key, None)
-                            self.session_state.pop(f'{quarterly_cache_key}_hash', None)
-                            st.sidebar.success(f"✅ Updated {update_result['updated']} stock prices and sectors")
-                        else:
-                            st.sidebar.info("ℹ️ No updates needed")
-                        
-                        st.rerun()
-                except Exception as e:
-                    st.sidebar.error(f"❌ Error refreshing prices: {e}")
+                        if uploaded_files:
+                            if st.button("📊 Process Files", type="primary"):
+                                self._process_uploaded_files(uploaded_files, folder_path)
+                                st.rerun()
+                            st.info(f"Selected {len(uploaded_files)} file(s)")
+                else:
+                    st.info("📁 **Local Mode**: Place CSV files in your transaction folder for automatic processing.")
+                
+                # Manual refresh button for live prices and sectors
+                if st.button("🔄 Refresh Live Prices & Sectors", help="Force update live prices and sector information for your stocks"):
+                    try:
+                        if user_id and user_id != 1:
+                            # Clear cache to force refresh
+                            cache_key = f'live_prices_user_{user_id}'
+                            cache_timestamp_key = f'live_prices_timestamp_user_{user_id}'
+                            self.session_state.pop(cache_key, None)
+                            self.session_state.pop(cache_timestamp_key, None)
+                            
+                            # Update live prices and sectors
+                            update_result = update_user_stock_prices(user_id)
+                            if update_result.get('updated', 0) > 0:
+                                # Clear holdings and quarterly cache since prices changed
+                                holdings_cache_key = f'holdings_user_{user_id}'
+                                quarterly_cache_key = f'quarterly_analysis_user_{user_id}'
+                                self.session_state.pop(holdings_cache_key, None)
+                                self.session_state.pop(f'{holdings_cache_key}_hash', None)
+                                self.session_state.pop(quarterly_cache_key, None)
+                                self.session_state.pop(f'{quarterly_cache_key}_hash', None)
+                                st.success(f"✅ Updated {update_result['updated']} stock prices and sectors")
+                            else:
+                                st.info("ℹ️ No updates needed")
+                            
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error refreshing prices: {e}")
+            
+            with col2:
+                # Show transaction summary
+                st.markdown("### 📈 Transaction Summary")
+                st.info(f"Found **{len(df)} transactions** in your portfolio")
+                
+                # Show quick stats
+                if len(df) > 0:
+                    unique_stocks = df['ticker'].nunique()
+                    total_buy = len(df[df['transaction_type'] == 'buy'])
+                    total_sell = len(df[df['transaction_type'] == 'sell'])
+                    
+                    st.markdown(f"""
+                    **Quick Stats:**
+                    - 📊 **Unique Stocks**: {unique_stocks}
+                    - 📈 **Buy Transactions**: {total_buy}
+                    - 📉 **Sell Transactions**: {total_sell}
+                    """)
+                
         else:
-            st.sidebar.warning("**No transactions found for this user**")
+            # User has no transactions - show prominent file upload option
+            st.markdown('<h2 class="section-header">🚀 Welcome to Your Portfolio Analytics!</h2>', unsafe_allow_html=True)
+            
+            # Create a centered layout for new users
+            col1, col2, col3 = st.columns([1, 2, 1])
+            
+            with col2:
+                st.markdown("""
+                ### 📤 Get Started with Your Portfolio
+                
+                To begin analyzing your portfolio, you need to upload your transaction files.
+                """)
+                
+                # File Upload Section for new users
+                is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
+                if is_streamlit_cloud and user_id and user_id != 1:
+                    folder_path = self.session_state.get('folder_path', '')
+                    if folder_path:
+                        st.info("🌐 **Cloud Mode**: Upload your CSV transaction files for automatic processing with historical price calculation.")
+                        
+                        uploaded_files = st.file_uploader(
+                            "Choose CSV files",
+                            type=['csv'],
+                            accept_multiple_files=True,
+                            help="Upload CSV files with transaction data. Files will be processed automatically with historical price fetching."
+                        )
+                        
+                        if uploaded_files:
+                            if st.button("📊 Process Files & Start Analysis", type="primary", use_container_width=True):
+                                self._process_uploaded_files(uploaded_files, folder_path)
+                                st.rerun()
+                            st.info(f"Selected {len(uploaded_files)} file(s) for processing")
+                        
+                        # Show sample CSV format
+                        with st.expander("📋 Sample CSV Format"):
+                            st.markdown("""
+                            Your CSV file should have these columns:
+                            - **date**: Transaction date (YYYY-MM-DD)
+                            - **ticker**: Stock symbol (e.g., AAPL, MSFT)
+                            - **quantity**: Number of shares
+                            - **price**: Price per share
+                            - **transaction_type**: 'buy' or 'sell'
+                            - **stock_name**: Company name (optional)
+                            - **channel**: Investment channel (optional)
+                            - **sector**: Stock sector (optional)
+                            """)
+                else:
+                    st.info("📁 **Local Mode**: Place CSV files in your transaction folder for automatic processing.")
+                    st.markdown("""
+                    ### 📁 Setup Instructions:
+                    1. Create a folder for your transaction files
+                    2. Place your CSV files in that folder
+                    3. The system will automatically detect and process them
+                    """)
+                
+                # Show what happens after upload
+                st.markdown("""
+                ### 🎯 What Happens After Upload:
+                - ✅ **Automatic Processing**: Files are processed with historical price data
+                - 📊 **Portfolio Analysis**: Get detailed analytics and insights
+                - 📈 **Performance Tracking**: Monitor your investment performance
+                - 🔄 **Live Updates**: Real-time price updates and sector information
+                """)
         
         # Store original DataFrame for comparison
         if not df.empty and all(col in df.columns for col in ['ticker', 'quantity', 'price', 'live_price', 'transaction_type']):
@@ -1634,34 +1749,27 @@ class WebAgent:
             self.session_state.pop('original_df', None)
             self.session_state.pop('original_df_hash', None)
         
-        # File Upload Section for Streamlit Cloud
-        is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
-        if is_streamlit_cloud and user_id and user_id != 1:
-            folder_path = self.session_state.get('folder_path', '')
-            if folder_path:
-                st.markdown('<h2 class="section-header">📤 File Upload & Processing</h2>', unsafe_allow_html=True)
-                st.info("🌐 **Cloud Mode**: Upload your CSV transaction files for automatic processing with historical price calculation.")
-                
-                uploaded_files = st.file_uploader(
-                    "Choose CSV files",
-                    type=['csv'],
-                    accept_multiple_files=True,
-                    help="Upload CSV files with transaction data. Files will be processed automatically with historical price fetching."
-                )
-                
-                if uploaded_files:
-                    col1, col2 = st.columns([1, 3])
-                    with col1:
-                        if st.button("📊 Process Files", type="primary"):
-                            self._process_uploaded_files(uploaded_files, folder_path)
-                    with col2:
-                        st.info(f"Selected {len(uploaded_files)} file(s) for processing")
+
         
-        # Render filters at the top
-        filtered_df, selected_channel, selected_sector, selected_stock = self.render_top_filters(df)
-        
-        # Render dashboard
-        self.render_dashboard(filtered_df)
+        # Only render filters and dashboard if user has transactions
+        if has_transactions:
+            # Render filters at the top
+            filtered_df, selected_channel, selected_sector, selected_stock = self.render_top_filters(df)
+            
+            # Render dashboard
+            self.render_dashboard(filtered_df)
+        else:
+            # Show a message encouraging users to upload files
+            st.markdown("""
+            ---
+            ### 🎯 Ready to Start?
+            
+            Once you upload your transaction files, you'll see:
+            - 📊 **Portfolio Overview**: Complete analysis of your investments
+            - 📈 **Performance Metrics**: Returns, gains, and losses
+            - 🏆 **Top Performers**: Your best and worst performing stocks
+            - 📋 **Detailed Analytics**: Sector analysis, channel breakdown, and more
+            """)
 
 # Global web agent instance
 web_agent = WebAgent()

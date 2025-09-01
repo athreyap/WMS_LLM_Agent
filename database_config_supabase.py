@@ -430,6 +430,25 @@ def get_transactions_supabase(user_id: int = None) -> List[Dict]:
         print(f"❌ Error getting transactions: {e}")
         return []
 
+def get_transactions_with_historical_prices(user_id: int = None) -> List[Dict]:
+    """Get investment transactions with historical prices using Supabase client"""
+    try:
+        # Get transactions
+        transactions = get_transactions_supabase(user_id)
+        
+        if not transactions:
+            return []
+        
+        # For now, return transactions as-is
+        # Historical prices would be fetched separately by the stock data agent
+        # This function serves as a wrapper for future enhancement
+        print(f"✅ Retrieved {len(transactions)} transactions for user {user_id if user_id else 'all'}")
+        return transactions
+        
+    except Exception as e:
+        print(f"❌ Error getting transactions with historical prices: {e}")
+        return []
+
 def save_file_record_supabase(filename: str, file_path: str, user_id: int) -> Optional[Dict]:
     """Save file record using Supabase client"""
     try:
@@ -737,6 +756,10 @@ def save_transaction(user_id: int, stock_name: str, ticker: str, quantity: float
 def get_transactions(user_id: int = None) -> List[Dict]:
     """Get investment transactions (legacy function)"""
     return get_transactions_supabase(user_id)
+
+def get_transactions_with_historical_prices(user_id: int = None) -> List[Dict]:
+    """Get investment transactions with historical prices (legacy function)"""
+    return get_transactions_with_historical_prices(user_id)
 
 def save_file_record_to_db(filename: str, file_path: str, user_id: int) -> Optional[Dict]:
     """Save file record (legacy function)"""
