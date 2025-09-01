@@ -456,15 +456,34 @@ def save_file_record_supabase(filename: str, file_path: str, user_id: int) -> Op
         import hashlib
         file_hash = hashlib.md5(file_path.encode()).hexdigest()
         
-        data = {
-            "user_id": user_id,
-            "filename": filename,
-            "file_path": file_path,
-            "file_hash": file_hash,
-            "customer_name": f"user_{user_id}",
-            "processed_at": datetime.utcnow().isoformat(),
-            "status": "processed"
-        }
+        # First, check if the table structure supports user_id
+        try:
+            # Try to get table info to check columns
+            test_result = supabase.table("investment_files").select("id").limit(1).execute()
+            print(f"✅ Table 'investment_files' is accessible")
+        except Exception as table_error:
+            print(f"⚠️ Table access issue: {table_error}")
+            # Try alternative approach without user_id if the column doesn't exist
+            data = {
+                "filename": filename,
+                "file_path": file_path,
+                "file_hash": file_hash,
+                "customer_name": f"user_{user_id}",
+                "processed_at": datetime.utcnow().isoformat(),
+                "status": "processed"
+            }
+            print(f"🔄 Attempting insert without user_id column...")
+        else:
+            # Table is accessible, try with user_id
+            data = {
+                "user_id": user_id,
+                "filename": filename,
+                "file_path": file_path,
+                "file_hash": file_hash,
+                "customer_name": f"user_{user_id}",
+                "processed_at": datetime.utcnow().isoformat(),
+                "status": "processed"
+            }
         
         result = supabase.table("investment_files").insert(data).execute()
         
@@ -477,23 +496,55 @@ def save_file_record_supabase(filename: str, file_path: str, user_id: int) -> Op
             
     except Exception as e:
         print(f"❌ Error saving file record: {e}")
+        # Try to provide more specific error information
+        if "column" in str(e).lower() and "user_id" in str(e).lower():
+            print(f"💡 The 'user_id' column might not exist in the 'investment_files' table")
+            print(f"💡 Please run the database schema update in your Supabase dashboard")
         return None
 
 def get_file_records_supabase(user_id: int = None) -> List[Dict]:
     """Get file records using Supabase client"""
     try:
         if user_id:
-            result = supabase.table("investment_files").select("*").eq("user_id", user_id).execute()
+            # Try to get files for specific user
+            try:
+                result = supabase.table("investment_files").select("*").eq("user_id", user_id).execute()
+                if result.data:
+                    return result.data
+                else:
+                    return []
+            except Exception as user_query_error:
+                # If user_id query fails, try to get all files and filter manually
+                print(f"⚠️ User-specific query failed for user {user_id}: {user_query_error}")
+                print("🔄 Falling back to manual filtering...")
+                try:
+                    result = supabase.table("investment_files").select("*").execute()
+                    if result.data:
+                        # Filter by user_id manually
+                        user_files = [file_record for file_record in result.data if file_record.get('user_id') == user_id]
+                        return user_files
+                    else:
+                        return []
+                except Exception as fallback_error:
+                    print(f"❌ Fallback query also failed: {fallback_error}")
+                    # Run diagnostics to help identify the issue
+                    print("🔍 Running database diagnostics...")
+                    diagnose_database_issues()
+                    return []
         else:
+            # Get all files
             result = supabase.table("investment_files").select("*").execute()
-        
-        if result.data:
-            return result.data
-        else:
-            return []
+            if result.data:
+                return result.data
+            else:
+                return []
             
     except Exception as e:
         print(f"❌ Error getting file records: {e}")
+        # Run diagnostics to help identify the issue
+        print("🔍 Running database diagnostics...")
+        diagnose_database_issues()
+        # Return empty list instead of failing completely
         return []
 
 def update_stock_data_supabase(ticker: str, stock_name: str = None, sector: str = None, current_price: float = None):
@@ -1003,3 +1054,62 @@ CREATE POLICY "Enable all operations for files" ON investment_files
 -- =====================================================
 """
     return sql_commands
+
+def check_table_structure(table_name: str) -> Dict:
+    """Check the structure of a table to diagnose schema issues"""
+    try:
+        # Try to get a sample record to see what columns exist
+        result = supabase.table(table_name).select("*").limit(1).execute()
+        
+        if result.data:
+            # Get the first record to see available columns
+            sample_record = result.data[0]
+            columns = list(sample_record.keys())
+            print(f"✅ Table '{table_name}' structure: {columns}")
+            return {
+                "accessible": True,
+                "columns": columns,
+                "sample_record": sample_record
+            }
+        else:
+            # Table exists but is empty
+            print(f"ℹ️ Table '{table_name}' exists but is empty")
+            return {
+                "accessible": True,
+                "columns": [],
+                "sample_record": None
+            }
+            
+    except Exception as e:
+        print(f"❌ Error accessing table '{table_name}': {e}")
+        return {
+            "accessible": False,
+            "error": str(e),
+            "columns": [],
+            "sample_record": None
+        }
+
+def diagnose_database_issues():
+    """Diagnose common database schema issues"""
+    print("🔍 Diagnosing database schema issues...")
+    
+    tables_to_check = ["users", "investment_transactions", "investment_files", "stock_data"]
+    
+    for table_name in tables_to_check:
+        print(f"\n📋 Checking table: {table_name}")
+        structure = check_table_structure(table_name)
+        
+        if not structure["accessible"]:
+            print(f"❌ Table '{table_name}' is not accessible")
+            if "column" in structure.get("error", "").lower():
+                print(f"💡 This might be a schema issue - check if the table exists and has the correct structure")
+        elif table_name == "investment_files" and "user_id" not in structure["columns"]:
+            print(f"⚠️ Table '{table_name}' is missing 'user_id' column")
+            print(f"💡 This will cause errors when trying to filter files by user")
+            print(f"💡 Please update the table schema to include 'user_id INTEGER REFERENCES users(id)'")
+        elif table_name == "investment_transactions" and "file_id" not in structure["columns"]:
+            print(f"⚠️ Table '{table_name}' is missing 'file_id' column")
+            print(f"💡 This will cause errors when trying to link transactions to files")
+            print(f"💡 Please update the table schema to include 'file_id INTEGER REFERENCES investment_files(id)'")
+    
+    print("\n🔍 Database diagnosis complete!")

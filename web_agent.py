@@ -379,8 +379,9 @@ class WebAgent:
                     if missing_columns:
                         st.error(f"❌ Missing required columns in {uploaded_file.name}: {missing_columns}")
                         st.info("Required columns: date, ticker, quantity, transaction_type")
-                        st.info("Optional columns: price, stock_name, sector")
+                        st.info("Optional columns: price, stock_name, channel, sector")
                         st.info("Note: If 'channel' column is missing, it will be auto-generated from the filename")
+                        st.info("Note: If 'price' column is missing, historical prices will be automatically fetched")
                         failed_count += 1
                         continue
                     
@@ -426,14 +427,26 @@ class WebAgent:
                     
                     # Save directly to database using user file agent
                     from user_file_reading_agent import user_file_agent
-                    success = user_file_agent._process_uploaded_file_direct(df, user_id, uploaded_file.name)
-                    
-                    if success:
-                        processed_count += 1
-                        st.success(f"✅ Successfully processed {uploaded_file.name}")
-                    else:
+                    try:
+                        success = user_file_agent._process_uploaded_file_direct(df, user_id, uploaded_file.name)
+                        
+                        if success:
+                            processed_count += 1
+                            st.success(f"✅ Successfully processed {uploaded_file.name}")
+                        else:
+                            failed_count += 1
+                            st.error(f"❌ Failed to process {uploaded_file.name}")
+                    except Exception as db_error:
                         failed_count += 1
-                        st.error(f"❌ Failed to process {uploaded_file.name}")
+                        st.error(f"❌ Database error processing {uploaded_file.name}: {str(db_error)}")
+                        # Show helpful information for common database issues
+                        if "400" in str(db_error) or "bad request" in str(db_error).lower():
+                            st.info("💡 This might be due to missing database columns")
+                            st.info("💡 Please check the console for detailed diagnostics")
+                        elif "user_id" in str(db_error).lower():
+                            st.info("💡 This might be due to missing user_id column in investment_files table")
+                        elif "file_id" in str(db_error).lower():
+                            st.info("💡 This might be due to missing file_id column in investment_transactions table")
                     
                 except Exception as e:
                     st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
@@ -1706,6 +1719,13 @@ class WebAgent:
                         
                 except Exception as e:
                     st.sidebar.warning("⚠️ Could not load file history")
+                    # Show more specific error information
+                    if "400" in str(e) or "bad request" in str(e).lower():
+                        st.sidebar.error("❌ Database schema issue detected")
+                        st.sidebar.info("💡 This might be due to missing columns in the database tables")
+                        st.sidebar.info("💡 Please check the console for detailed diagnostics")
+                    else:
+                        st.sidebar.error(f"❌ Error: {str(e)}")
                 
                 # Show admin panel if requested
                 if st.session_state.get('show_admin_panel', False):
