@@ -428,14 +428,18 @@ def get_transactions_supabase(user_id: int = None) -> List[Dict]:
         print(f"❌ Error getting transactions: {e}")
         return []
 
-def save_file_record_supabase(filename: str, original_filename: str, file_hash: str, customer_name: str = None) -> Optional[Dict]:
+def save_file_record_supabase(filename: str, file_path: str, user_id: int) -> Optional[Dict]:
     """Save file record using Supabase client"""
     try:
+        # Generate file hash from file path
+        import hashlib
+        file_hash = hashlib.md5(file_path.encode()).hexdigest()
+        
         data = {
             "filename": filename,
-            "original_filename": original_filename,
+            "file_path": file_path,
             "file_hash": file_hash,
-            "customer_name": customer_name,
+            "customer_name": f"user_{user_id}",
             "processed_at": datetime.utcnow().isoformat(),
             "status": "processed"
         }
@@ -728,9 +732,9 @@ def get_transactions(user_id: int = None) -> List[Dict]:
     """Get investment transactions (legacy function)"""
     return get_transactions_supabase(user_id)
 
-def save_file_record_to_db(filename: str, original_filename: str, file_hash: str, customer_name: str = None) -> Optional[Dict]:
+def save_file_record_to_db(filename: str, file_path: str, user_id: int) -> Optional[Dict]:
     """Save file record (legacy function)"""
-    return save_file_record_supabase(filename, original_filename, file_hash, customer_name)
+    return save_file_record_supabase(filename, file_path, user_id)
 
 def get_file_records() -> List[Dict]:
     """Get file records (legacy function)"""
