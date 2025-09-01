@@ -598,75 +598,52 @@ class WebAgent:
                 future = executor.submit(load_data_with_timeout)
                 df = future.result(timeout=300)  # 5 minutes timeout for data loading
             
-            # Smart live price caching system
-            cache_key = f'live_prices_user_{user_id}' if user_id else 'live_prices_global'
-            cache_timestamp_key = f'live_prices_timestamp_user_{user_id}' if user_id else 'live_prices_timestamp_global'
-            
-            # Check if we have cached prices and if they're recent enough
-            cache_age = time.time() - self.session_state.get(cache_timestamp_key, 0)
-            cache_valid = cache_age < 300  # 5 minutes cache
-            
-            # In fast loading mode, extend cache validity to 10 minutes and skip live price fetching
-            fast_loading = self.session_state.get('fast_loading', True)
-            if fast_loading:
-                cache_valid = cache_age < 600  # 10 minutes cache in fast mode
-            else:
-                cache_valid = cache_age < 300  # 5 minutes cache in normal mode
-            
-            if cache_valid and cache_key in self.session_state:
-                # Use cached prices (fast)
-                live_prices = self.session_state[cache_key]
-                if fast_loading:
-                    pass  # Silent cache usage
-            else:
-                # Need to fetch fresh prices (always fetch if not cached, regardless of fast loading mode)
-                try:
-                    print(f"🔄 Fetching fresh live prices for user {user_id}...")
-                    # Set flag to indicate live prices are being updated
-                    self.session_state['updating_live_prices'] = True
+            # Always fetch fresh live prices (bypass cache completely)
+            print(f"🔄 Always fetching fresh live prices for user {user_id} (bypassing cache)...")
+            try:
+                # Set flag to indicate live prices are being updated
+                self.session_state['updating_live_prices'] = True
+                
+                if user_id and user_id != 1:  # Authenticated user
+                    # Direct price fetching using stock agent for all tickers
+                    print(f"🔄 Fetching fresh prices directly for user {user_id}...")
+                    direct_prices = {}
+                    unique_tickers = df['ticker'].unique()
                     
-                    if user_id and user_id != 1:  # Authenticated user
-                        # Update only user's stocks (faster than all stocks)
-                        print(f"🔄 Updating user-specific stock prices for user {user_id}...")
-                        update_result = update_user_stock_prices(user_id)
-                        print(f"🔍 Update result: {update_result}")
-                        if update_result.get('updated', 0) > 0:
-                            print(f"✅ Updated {update_result['updated']} stock prices")
-                        else:
-                            print(f"⚠️ No stock prices updated: {update_result}")
+                    for ticker in unique_tickers:
+                        try:
+                            # Use the stock agent's fetch method to get fresh live prices
+                            fresh_data = stock_agent._fetch_stock_data(ticker)
+                            if fresh_data and fresh_data.get('live_price'):
+                                direct_prices[ticker] = fresh_data['live_price']
+                                print(f"✅ {ticker}: ₹{fresh_data['live_price']}")
+                            else:
+                                print(f"❌ {ticker}: No fresh price data available")
+                        except Exception as e:
+                            print(f"⚠️ Error fetching price for {ticker}: {e}")
+                    
+                    if direct_prices:
+                        live_prices = direct_prices
+                        print(f"✅ Direct price fetching: {len(direct_prices)} prices fetched")
                     else:
-                        # For non-authenticated users, update all stocks
-                        print(f"🔄 Updating all stock prices...")
-                        update_result = update_user_stock_prices(1)  # Update all stocks
-                        print(f"🔍 Update result: {update_result}")
-                        if update_result.get('updated', 0) > 0:
-                            print(f"✅ Updated {update_result['updated']} stock prices")
-                        else:
-                            print(f"⚠️ No stock prices updated: {update_result}")
-                    
-                    # Get fresh live prices (user-specific when possible)
-                    if user_id and user_id != 1:
-                        print(f"🔄 Getting user-specific live prices for user {user_id}...")
-                        live_prices = get_user_live_prices(user_id)
-                    else:
-                        print(f"🔄 Getting all live prices...")
-                        live_prices = get_all_live_prices()
-                    
-                    print(f"🔍 Live prices fetched: {len(live_prices)} prices")
-                    
-                    # Cache the results
-                    self.session_state[cache_key] = live_prices
-                    self.session_state[cache_timestamp_key] = time.time()
-                    
-                    # Clear the updating flag
-                    self.session_state['updating_live_prices'] = False
-                    
-                except Exception as e:
-                    st.warning(f"⚠️ Could not fetch live prices: {e}")
-                    # Fallback to cached prices if available
-                    live_prices = self.session_state.get(cache_key, {})
-                    # Clear the updating flag even on error
-                    self.session_state['updating_live_prices'] = False
+                        print(f"❌ No fresh prices could be fetched, using historical prices")
+                        live_prices = {}
+                else:
+                    # For non-authenticated users, try to get all prices
+                    print(f"🔄 Fetching all live prices...")
+                    live_prices = get_all_live_prices()
+                
+                print(f"🔍 Live prices fetched: {len(live_prices)} prices")
+                
+                # Clear the updating flag
+                self.session_state['updating_live_prices'] = False
+                
+            except Exception as e:
+                st.warning(f"⚠️ Could not fetch live prices: {e}")
+                # Fallback to empty prices (will use historical prices)
+                live_prices = {}
+                # Clear the updating flag even on error
+                self.session_state['updating_live_prices'] = False
             
             # Add live prices to DataFrame
             df['live_price'] = df['ticker'].map(live_prices).fillna(df['price'])
@@ -689,39 +666,10 @@ class WebAgent:
             total_transactions = len(df)
             print(f"🔍 Final live prices: {zero_prices}/{total_transactions} transactions have zero prices")
             
-            # If all prices are zero or missing, try to fetch them again
+            # If all prices are zero, log the issue but don't retry since we already fetched fresh
             if zero_prices == total_transactions and total_transactions > 0:
-                print(f"⚠️ All prices are zero, attempting to fetch fresh prices...")
-                try:
-                    if user_id and user_id != 1:
-                        # Direct price fetching using stock agent
-                        print(f"🔄 Fetching fresh prices directly for user {user_id}...")
-                        direct_prices = {}
-                        unique_tickers = df['ticker'].unique()
-                        
-                        for ticker in unique_tickers:
-                            try:
-                                # Use the stock agent's fetch method to get fresh live prices
-                                fresh_data = stock_agent._fetch_stock_data(ticker)
-                                if fresh_data and fresh_data.get('live_price'):
-                                    direct_prices[ticker] = fresh_data['live_price']
-                                    print(f"✅ {ticker}: ₹{fresh_data['live_price']}")
-                                else:
-                                    print(f"❌ {ticker}: No fresh price data available")
-                            except Exception as e:
-                                print(f"⚠️ Error fetching price for {ticker}: {e}")
-                        
-                        if direct_prices:
-                            df['live_price'] = df['ticker'].map(direct_prices).fillna(df['price'])
-                            print(f"✅ Direct price fetching: {len(direct_prices)} prices fetched")
-                            
-                            # Update cache with fresh prices
-                            self.session_state[cache_key] = direct_prices
-                            self.session_state[cache_timestamp_key] = time.time()
-                        else:
-                            print(f"❌ No fresh prices could be fetched")
-                except Exception as e:
-                    print(f"❌ Error refreshing prices: {e}")
+                print(f"⚠️ All prices are zero after fresh fetch - this may indicate API issues or invalid tickers")
+                print(f"🔍 Sample tickers: {list(df['ticker'].unique())[:5]}")
             
             # Calculate current values and gains with enhanced error handling
             df['current_value'] = df['quantity'] * df['live_price']
