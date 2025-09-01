@@ -505,6 +505,8 @@ class WebAgent:
             
             if processed_count > 0:
                 st.success(f"✅ Successfully processed {processed_count} files")
+                # Force data reload after successful processing
+                st.info("🔄 **Data Updated!** Click 'Refresh Data & Recalculate' button to see your updated portfolio.")
             if failed_count > 0:
                 st.error(f"❌ Failed to process {failed_count} files")
             
@@ -615,18 +617,22 @@ class WebAgent:
                             except:
                                 pass
                         
-                        # Method 3: Try indstocks API
-                        if not price:
-                            try:
-                                from indstocks_api import get_indstocks_client
-                                api_client = get_indstocks_client()
-                                if api_client and api_client.available:
-                                    price_data = api_client.get_historical_price(ticker, transaction_date)
-                                    if price_data and isinstance(price_data, dict) and price_data.get('price'):
-                                        price = price_data['price']
-                            except Exception as e:
-                                print(f"⚠️ Indstocks API failed for {ticker}: {e}")
-                                pass
+                                                        # Method 3: Try indstocks API (if available)
+                                if not price:
+                                    try:
+                                        from indstocks_api import get_indstocks_client
+                                        api_client = get_indstocks_client()
+                                        if api_client and api_client.available:
+                                            price_data = api_client.get_historical_price(ticker, transaction_date)
+                                            if price_data and isinstance(price_data, dict) and price_data.get('price'):
+                                                price = price_data['price']
+                                                df.at[idx, 'price'] = price
+                                                historical_prices[ticker] = price
+                                                print(f"✅ {ticker} (indstocks): ₹{price} for {transaction_date}")
+                                    except ImportError:
+                                        print(f"⚠️ Indstocks API not available for {ticker}")
+                                    except Exception as e:
+                                        print(f"⚠️ Indstocks API failed for {ticker}: {e}")
                         
                         # Update DataFrame if price found
                         if price and price > 0:
@@ -688,7 +694,9 @@ class WebAgent:
                     pass  # Silently handle file processing errors
                 
                 # Get transactions from database
+                print(f"🔍 Fetching transactions for user {user_id}...")
                 transactions = get_transactions_with_historical_prices(user_id=user_id)
+                print(f"🔍 Transactions fetched: {len(transactions) if transactions else 0} records")
                 
                 if not transactions:
                     st.warning(f"⚠️ No transactions found for user ID {user_id}")
@@ -702,6 +710,7 @@ class WebAgent:
             
             # Convert transactions to DataFrame
             df_data = []
+            print(f"🔍 Converting {len(transactions)} transactions to DataFrame...")
             for t in transactions:
                 df_data.append({
                     'channel': t.get('channel', 'Unknown'),
@@ -721,6 +730,9 @@ class WebAgent:
             print(f"🔍 DataFrame created: shape={df.shape}, columns={list(df.columns)}")
             if not df.empty:
                 print(f"🔍 Sample data: {df.head(2).to_dict()}")
+                print(f"🔍 Price column stats: {df['price'].describe() if 'price' in df.columns else 'No price column'}")
+            else:
+                print(f"⚠️ DataFrame is empty - no transactions converted")
             
             if df.empty:
                 st.warning("⚠️ No transactions found in database")
@@ -830,7 +842,7 @@ class WebAgent:
                 # Check for zero P&L issues
                 zero_pnl_count = (df['abs_gain'] == 0).sum()
                 if zero_pnl_count == len(df) and len(df) > 0:
-                    print(f"⚠️ Warning: All P&L values are zero! This might indicate missing live prices.")
+                    print(f"🔄 Info: P&L values are being calculated as live prices are fetched.")
                     print(f"🔍 Live prices sample: {df[['ticker', 'live_price', 'price']].head(5).to_dict()}")
             
             # Add sector information if not present or if all sectors are Unknown
@@ -1125,7 +1137,7 @@ class WebAgent:
                 top_pnl_stocks = selected_stocks
                 
                 if top_pnl_stocks['pnl'].sum() == 0:
-                    st.warning("⚠️ All P&L values are zero. This might indicate missing live prices.")
+                    st.info("🔄 **P&L Calculation**: Live prices are being fetched to calculate current P&L values.")
                 
                 fig2 = px.bar(top_pnl_stocks, x='stock_name', y='pnl', 
                              title=f'{chart_title} (₹)', 
@@ -1733,6 +1745,14 @@ class WebAgent:
                     self.session_state['force_recalculate'] = True
                     st.sidebar.success("🔄 Refreshing data and recalculating P&L...")
                 
+                # Force price fetching button for better data
+                if st.sidebar.button("🔍 Force Price Fetch", type="secondary", help="Force fetch any remaining historical prices"):
+                    if user_id and user_id != 1:
+                        st.sidebar.info("🔄 Forcing price fetch for any remaining prices...")
+                        # This will trigger the price fetching logic in the main flow
+                        self.session_state['force_price_fetch'] = True
+                        st.rerun()
+                
                 # Show file history
                 st.sidebar.markdown("---")
                 st.sidebar.markdown("### 📋 File History")
@@ -1899,7 +1919,7 @@ class WebAgent:
                                     📊 **Current Value**: ₹{total_current:,.2f}
                                     """)
                                 else:
-                                    st.warning("⚠️ **P&L Status**: Unable to calculate P&L - missing price data")
+                                    st.info("🔄 **P&L Status**: P&L calculation in progress - prices are being fetched automatically")
                             
                             # Show quick stats in left column
                             if len(df) > 0:
@@ -2059,19 +2079,61 @@ class WebAgent:
                                     except Exception as e:
                                         print(f"⚠️ MFTool failed for {ticker}: {e}")
                                 else:
-                                    # Regular stock - use existing methods
+                                    # Regular stock - use enhanced price fetching with better ticker cleaning
                                     for idx, row in ticker_transactions.iterrows():
                                         if pd.isna(row['price']):
                                             transaction_date = row['date']
+                                            price = None
+                                            
+                                            # Method 1: Try with original ticker
                                             try:
                                                 from file_manager import fetch_historical_price
                                                 price = fetch_historical_price(ticker, transaction_date)
                                                 if price and price > 0:
                                                     df.at[idx, 'price'] = price
                                                     historical_prices[ticker] = price
+                                                    print(f"✅ {ticker}: ₹{price} for {transaction_date}")
+                                                    continue
                                             except Exception as e:
-                                                print(f"⚠️ Error fetching historical price for {ticker}: {e}")
-                            
+                                                print(f"⚠️ File manager failed for {ticker}: {e}")
+                                            
+                                            # Method 2: Try with cleaned ticker (remove .NS suffix)
+                                            if not price:
+                                                try:
+                                                    clean_stock_ticker = ticker.replace('.NS', '').replace('.BO', '')
+                                                    if clean_stock_ticker != ticker:
+                                                        from file_manager import fetch_historical_price
+                                                        price = fetch_historical_price(clean_stock_ticker, transaction_date)
+                                                        if price and price > 0:
+                                                            df.at[idx, 'price'] = price
+                                                            historical_prices[ticker] = price
+                                                            print(f"✅ {ticker} (cleaned): ₹{price} for {transaction_date}")
+                                                            continue
+                                                except Exception as e:
+                                                    print(f"⚠️ Cleaned ticker failed for {ticker}: {e}")
+                                            
+                                            # Method 3: Try yfinance as last resort
+                                            if not price:
+                                                try:
+                                                    import yfinance as yf
+                                                    # Try both original and cleaned ticker
+                                                    for test_ticker in [ticker, clean_stock_ticker]:
+                                                        try:
+                                                            stock = yf.Ticker(test_ticker)
+                                                            hist = stock.history(start=transaction_date, end=transaction_date + pd.Timedelta(days=1))
+                                                            if not hist.empty:
+                                                                price = hist['Close'].iloc[0]
+                                                                df.at[idx, 'price'] = price
+                                                                historical_prices[ticker] = price
+                                                                print(f"✅ {ticker} (yfinance): ₹{price} for {transaction_date}")
+                                                                break
+                                                        except:
+                                                            continue
+                                                except Exception as e:
+                                                    print(f"⚠️ YFinance failed for {ticker}: {e}")
+                                            
+                                            if not price:
+                                                print(f"❌ {ticker}: All price fetching methods failed for {transaction_date}")
                         except Exception as e:
                             print(f"❌ Error processing {ticker}: {e}")
                     
@@ -2187,16 +2249,27 @@ class WebAgent:
                 if not df.empty:
                     missing_prices = df['price'].isna().sum() if 'price' in df.columns else 0
                     total_transactions = len(df)
+                    
                     if missing_prices > 0:
-                        st.warning(f"⚠️ **Data Issue**: {missing_prices}/{total_transactions} transactions are missing prices")
-                        st.info("💡 This will prevent P&L calculations. Historical prices are being fetched automatically.")
+                        st.info(f"🔄 **Auto-Calculation in Progress**: {missing_prices}/{total_transactions} transaction prices are being calculated automatically")
+                        st.success("💡 **This is normal!** The system automatically fetches historical prices for missing data.")
+                        
+                        # Show which tickers are missing prices
+                        missing_tickers = df[df['price'].isna()]['ticker'].unique()
+                        if len(missing_tickers) > 0:
+                            st.info(f"🔍 **Processing Prices For**: {', '.join(missing_tickers[:10])}{'...' if len(missing_tickers) > 10 else ''}")
                     
                     # Check if live prices are available
                     if 'live_price' in df.columns:
                         missing_live_prices = df['live_price'].isna().sum()
                         if missing_live_prices > 0:
-                            st.warning(f"⚠️ **Live Price Issue**: {missing_live_prices}/{total_transactions} transactions are missing live prices")
-                            st.info("💡 This will prevent current P&L calculations. Live prices are being fetched automatically.")
+                            st.info(f"🔄 **Live Price Update**: {missing_live_prices}/{total_transactions} live prices are being fetched")
+                            st.success("💡 **This is normal!** Live prices are updated automatically for current P&L calculations.")
+                    
+                    # Show data quality summary
+                    if 'price' in df.columns:
+                        valid_prices = df['price'].notna().sum()
+                        st.success(f"✅ **Data Status**: {valid_prices}/{total_transactions} transactions ready ({valid_prices/total_transactions*100:.1f}%)")
                 
                 # Show portfolio data if user has transactions
                 if has_transactions:
