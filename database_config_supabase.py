@@ -518,8 +518,30 @@ def update_stock_data_supabase(ticker: str, stock_name: str = None, sector: str 
             print(f"❌ Failed to update stock data for {ticker}")
             
     except Exception as e:
+        # Handle duplicate key constraint error gracefully
+        if "duplicate key value violates unique constraint" in str(e) or "23505" in str(e):
+            print(f"⚠️ Duplicate key for {ticker}, trying update instead of upsert...")
+            try:
+                # Try to update existing record
+                result = supabase.table("stock_data").update(data).eq("ticker", ticker).execute()
+                
+                if result.data:
+                    print(f"✅ Stock data updated for {ticker} (existing record)")
+                else:
+                    # If update fails, try insert (in case record doesn't exist)
+                    result = supabase.table("stock_data").insert({
+                        "ticker": ticker,
+                        **data
+                    }).execute()
+                    
+                    if result.data:
+                        print(f"✅ Stock data inserted for {ticker} (new record)")
+                    else:
+                        print(f"❌ Failed to insert stock data for {ticker}")
+            except Exception as e2:
+                print(f"❌ Error updating stock data (fallback): {e2}")
         # Handle RLS policy error gracefully
-        if "row-level security policy" in str(e) or "42501" in str(e):
+        elif "row-level security policy" in str(e) or "42501" in str(e):
             print(f"⚠️ RLS policy blocked update for {ticker}, skipping database update")
             print(f"🔍 This is normal - stock data updates are restricted by security policies")
         # Handle schema cache error gracefully

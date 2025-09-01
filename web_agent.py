@@ -1007,24 +1007,6 @@ class WebAgent:
         
         st.markdown('<h2 class="section-header">📈 Sector Analysis</h2>', unsafe_allow_html=True)
         
-        # Add button to update sectors (only show when not loading live prices)
-        loading_live_prices = False
-        
-        # Check if there's an ongoing live price update in session state
-        if self.session_state.get('updating_live_prices', False):
-            loading_live_prices = True
-        
-        # Only show the button if not loading live prices
-        if not loading_live_prices:
-            col1, col2, col3 = st.columns([2, 1, 1])
-            with col2:
-                if st.button("🔄 Update Sectors", help="Update sector information for all stocks"):
-                    with st.spinner("Updating sectors..."):
-                        from stock_data_agent import update_all_stock_sectors
-                        update_all_stock_sectors()
-                        st.success("✅ Sectors updated successfully!")
-                        st.rerun()
-        
         # Sector performance
         sector_performance = holdings.groupby('sector').agg({
             'total_invested': 'sum',
@@ -1565,6 +1547,9 @@ class WebAgent:
                 st.sidebar.markdown("---")
                 st.sidebar.markdown("### 📤 Upload Files")
                 st.sidebar.info("Upload your CSV transaction files for automatic processing.")
+                
+                # Get user info for file processing
+                user_id = self.session_state.get('user_id', 1)
                 
                 uploaded_files = st.sidebar.file_uploader(
                     "Choose CSV files",
