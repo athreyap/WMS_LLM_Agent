@@ -730,10 +730,26 @@ class WebAgent:
                                     print(f"🔍 File: {file_record.get('filename', 'N/A')} - Path: {file_record.get('file_path', 'N/A')} - User: {file_record.get('user_id', 'N/A')}")
                         except Exception as e:
                             print(f"⚠️ Error checking file records: {e}")
+                    
+                    # Final attempt: try to get transactions directly from database
+                    if not transactions:
+                        print(f"🔄 Final attempt: Direct database query...")
+                        try:
+                            from database_config_supabase import get_transactions_supabase
+                            direct_transactions = get_transactions_supabase(user_id)
+                            if direct_transactions:
+                                print(f"✅ Direct query successful: {len(direct_transactions)} transactions found")
+                                transactions = direct_transactions
+                            else:
+                                print(f"❌ Direct query also failed: No transactions found")
+                        except Exception as e:
+                            print(f"❌ Direct query error: {e}")
                 
                 if not transactions:
                     st.warning(f"⚠️ No transactions found for user ID {user_id}")
-                    return pd.DataFrame()  # Return empty DataFrame instead of falling back to all transactions
+                    # Don't return empty DataFrame - try to force reload
+                    print(f"🔄 Attempting to force reload data...")
+                    return self._force_reload_user_data(user_id)
             else:
                 transactions = get_transactions_with_historical_prices()
             
@@ -1011,6 +1027,57 @@ class WebAgent:
     
     
     
+    
+    def _force_reload_user_data(self, user_id: int) -> pd.DataFrame:
+        """Force reload user data by processing files again"""
+        try:
+            print(f"🔄 Force reloading data for user {user_id}...")
+            
+            # Try to process user files again
+            try:
+                from user_file_reading_agent import process_user_files_on_login
+                result = process_user_files_on_login(user_id)
+                print(f"🔄 File processing result: {result}")
+            except Exception as e:
+                print(f"⚠️ File processing error: {e}")
+            
+            # Wait a moment for database to settle
+            import time
+            time.sleep(3)
+            
+            # Try to get transactions again
+            try:
+                from database_config_supabase import get_transactions_supabase
+                transactions = get_transactions_supabase(user_id)
+                if transactions:
+                    print(f"✅ Force reload successful: {len(transactions)} transactions found")
+                    # Convert to DataFrame
+                    df_data = []
+                    for t in transactions:
+                        df_data.append({
+                            'channel': t.get('channel', 'Unknown'),
+                            'stock_name': t.get('stock_name', ''),
+                            'ticker': t.get('ticker', ''),
+                            'sector': t.get('sector', 'Unknown'),
+                            'date': t.get('date'),
+                            'quantity': t.get('quantity', 0),
+                            'price': t.get('price', 0),
+                            'transaction_type': t.get('transaction_type', 'buy'),
+                            'user_id': t.get('user_id')
+                        })
+                    df = pd.DataFrame(df_data)
+                    print(f"✅ DataFrame created: {df.shape}")
+                    return df
+                else:
+                    print(f"❌ Force reload failed: Still no transactions")
+                    return pd.DataFrame()
+            except Exception as e:
+                print(f"❌ Force reload error: {e}")
+                return pd.DataFrame()
+                
+        except Exception as e:
+            print(f"❌ Force reload function error: {e}")
+            return pd.DataFrame()
     
     def calculate_holdings(self, df: pd.DataFrame):
         """Calculate current holdings from transactions"""
@@ -2340,6 +2407,15 @@ class WebAgent:
                 # Debug: Show data status
                 st.info(f"🔍 **Data Status**: DataFrame shape: {df.shape}, Columns: {list(df.columns) if not df.empty else 'None'}")
                 st.info(f"🔍 **Processing Status**: Data processing complete: {self.session_state.get('data_processing_complete', False)}")
+                
+                # Show transaction summary if data exists
+                if not df.empty:
+                    st.success(f"✅ **Data Loaded Successfully**: {len(df)} transactions found")
+                    if 'ticker' in df.columns:
+                        unique_tickers = df['ticker'].nunique()
+                        st.info(f"📊 **Portfolio Summary**: {unique_tickers} unique stocks, {len(df)} total transactions")
+                else:
+                    st.warning("⚠️ **No Data Loaded**: DataFrame is empty - this might indicate a loading issue")
                 
                 # Check for common issues
                 if not df.empty:
