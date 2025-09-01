@@ -10,9 +10,29 @@ import pandas as pd
 import time
 import threading
 from functools import wraps
+import random
 
 # PostgreSQL connection string for Supabase
-DATABASE_URL = os.getenv('DATABASE_URL', "postgresql://postgres:wmssupabase123@db.rolcoegikoeblxzqgkix.supabase.co:5432/postgres")
+DATABASE_URL = os.getenv('DATABASE_URL', "postgresql://postgres:wmssupabase123@db.rolcoegikoeblxzqgkix.supabase.co:5432/postgres?sslmode=require")
+
+def get_db_session_with_retry(max_retries=3, base_delay=1):
+    """Get database session with retry logic for cloud environments"""
+    for attempt in range(max_retries):
+        try:
+            session = SessionLocal()
+            # Test the connection
+            session.execute("SELECT 1")
+            return session
+        except Exception as e:
+            session.close()
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                print(f"⚠️ Database connection attempt {attempt + 1} failed, retrying in {delay:.2f}s: {e}")
+                time.sleep(delay)
+            else:
+                print(f"❌ Database connection failed after {max_retries} attempts: {e}")
+                raise e
+    return None
 
 # Cache decorator for database functions
 def cache_result(ttl_seconds=300):
@@ -49,16 +69,22 @@ def cache_result(ttl_seconds=300):
         return wrapper
     return decorator
 
-# Create SQLAlchemy engine for PostgreSQL with optimized settings
+# Create SQLAlchemy engine for PostgreSQL with optimized settings for cloud deployment
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_recycle=300,
-    pool_size=10,
-    max_overflow=20,
+    pool_recycle=180,  # Reduced for cloud environments
+    pool_size=3,  # Smaller pool for cloud
+    max_overflow=5,  # Smaller overflow for cloud
     connect_args={
-        "connect_timeout": 30,
-        "application_name": "WMS_LLM_App"
+        "connect_timeout": 30,  # Reduced timeout for cloud
+        "application_name": "WMS_LLM_Streamlit",
+        "sslmode": "require",  # Force SSL connection
+        "keepalives": 1,
+        "keepalives_idle": 60,
+        "keepalives_interval": 10,
+        "keepalives_count": 3,
+        "options": "-c statement_timeout=30000"  # 30 second statement timeout
     }
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -536,9 +562,9 @@ def get_transactions_dataframe(user_id=None):
 
 # User authentication functions
 def create_user(username, email, password_hash, password_salt, folder_path=None):
-    """Create a new user"""
+    """Create a new user with retry logic"""
     try:
-        session = SessionLocal()
+        session = get_db_session_with_retry()
         user = UserLogin(
             username=username,
             email=email,
@@ -559,9 +585,9 @@ def create_user(username, email, password_hash, password_salt, folder_path=None)
 
 @cache_result(ttl_seconds=600)  # Cache for 10 minutes
 def get_user_by_username(username):
-    """Get user by username - with caching"""
+    """Get user by username - with caching and retry logic"""
     try:
-        session = SessionLocal()
+        session = get_db_session_with_retry()
         user = session.query(UserLogin).filter_by(username=username).first()
         session.close()
         
