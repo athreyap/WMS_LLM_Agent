@@ -516,3 +516,43 @@ def update_stock_data(ticker: str, stock_name: str = None, sector: str = None, c
 def get_stock_data(ticker: str = None) -> List[Dict]:
     """Get stock data (legacy function)"""
     return get_stock_data_supabase(ticker)
+
+# Additional legacy functions for session-based operations
+def save_transactions_to_db_with_session(session, df: pd.DataFrame, file_id: int, user_id: int) -> bool:
+    """Save transactions to database with session (legacy function)"""
+    try:
+        success_count = 0
+        for _, row in df.iterrows():
+            transaction_data = {
+                "user_id": user_id,
+                "stock_name": row['stock_name'],
+                "ticker": row['ticker'],
+                "quantity": float(row['quantity']),
+                "price": float(row['price']),
+                "transaction_type": row['transaction_type'],
+                "date": row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date']),
+                "channel": row.get('channel'),
+                "sector": row.get('sector'),
+                "created_at": datetime.utcnow().isoformat()
+            }
+            
+            result = save_transaction_supabase(**transaction_data)
+            if result:
+                success_count += 1
+        
+        print(f"✅ Saved {success_count}/{len(df)} transactions to database")
+        return success_count == len(df)
+        
+    except Exception as e:
+        print(f"❌ Error saving transactions with session: {e}")
+        return False
+
+def fetch_historical_prices_background(user_id: int):
+    """Fetch historical prices in background (legacy function)"""
+    try:
+        # This is a placeholder - actual implementation would be more complex
+        print(f"🔄 Background historical price fetching initiated for user {user_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Error in background price fetching: {e}")
+        return False

@@ -11,7 +11,7 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 import hashlib
-from database_config_supabase import save_file_to_db, save_transactions_to_db
+from database_config_supabase import save_file_record_supabase, save_transaction_supabase
 from indstocks_api import get_indstocks_client
 
 # Import mutual fund functionality

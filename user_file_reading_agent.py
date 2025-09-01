@@ -11,9 +11,13 @@ import glob
 import shutil
 
 # Import existing modules
-from database_config_supabase import SessionLocal, save_transactions_to_db_with_session, save_file_record_to_db, fetch_historical_prices_background
+from database_config_supabase import (
+    save_transaction_supabase,
+    save_file_record_supabase,
+    get_user_by_id_supabase
+)
 from stock_data_agent import stock_agent, force_update_stock
-from login_system import get_user_by_id
+from login_system import get_user_by_id_supabase
 
 # Import price fetching functions
 try:
@@ -38,7 +42,7 @@ class UserFileReadingAgent:
     def _get_user_folder_path(self, user_id: int) -> Optional[str]:
         """Get user's folder path from database"""
         try:
-            user = get_user_by_id(user_id)
+            user = get_user_by_id_supabase(user_id)
             if user and user.get('folder_path'):
                 return user['folder_path']
             return None
@@ -248,11 +252,9 @@ class UserFileReadingAgent:
                 print(f"⚠️ Skipping {file_path.name} due to missing required columns - marked as processed to avoid repeated attempts")
                 return False
             
-            # Save file to database
-            session = SessionLocal()
+            # Save file to database using Supabase client
             try:
-                file_record = save_file_record_to_db(
-                    session=session,
+                file_record = save_file_record_supabase(
                     filename=file_path.name,
                     file_path=str(file_path),
                     user_id=user_id
@@ -262,11 +264,10 @@ class UserFileReadingAgent:
                     print(f"❌ Failed to save file record for {file_path.name}")
                     return False
                 
-                # Save transactions to database
-                success = save_transactions_to_db_with_session(
-                    session=session,
+                # Save transactions to database using Supabase client
+                success = save_transaction_supabase(
                     df=df,
-                    file_id=file_record.id,
+                    file_id=file_record['id'],
                     user_id=user_id
                 )
                 
@@ -280,17 +281,15 @@ class UserFileReadingAgent:
                     new_tickers = df['ticker'].unique().tolist()
                     self._update_stock_data_for_tickers(new_tickers)
                     
-                    # Start background historical price fetching for better performance
-                    fetch_historical_prices_background(user_id)
-                    
                     print(f"✅ Successfully processed {file_path.name} for user {user_id}")
                     return True
                 else:
                     print(f"❌ Failed to save transactions for {file_path.name}")
                     return False
                     
-            finally:
-                session.close()
+            except Exception as e:
+                print(f"❌ Error saving to database: {e}")
+                return False
                 
         except Exception as e:
             print(f"❌ Error processing {file_path.name} for user {user_id}: {e}")
