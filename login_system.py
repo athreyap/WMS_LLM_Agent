@@ -15,7 +15,10 @@ from database_config_supabase import (
     create_user_supabase,
     get_user_by_username_supabase,
     get_user_by_id_supabase,
-    update_user_login_supabase
+    update_user_login_supabase,
+    update_user_password_supabase,
+    delete_user_supabase,
+    get_all_users_supabase
 )
 from sqlalchemy.exc import IntegrityError
 import os
@@ -223,10 +226,9 @@ def get_user_by_id(user_id):
         return None
 
 def update_user_password(username, new_password):
-    """Update user password"""
-    session = SessionLocal()
+    """Update user password using Supabase client"""
     try:
-        user = session.query(UserLogin).filter_by(username=username).first()
+        user = get_user_by_username_supabase(username)
         if not user:
             return False, "User not found"
         
@@ -238,18 +240,16 @@ def update_user_password(username, new_password):
         # Hash new password
         hashed_password, salt = hash_password(new_password)
         
-        # Update password
-        user.password_hash = hashed_password
-        user.password_salt = salt
-        session.commit()
+        # Update password using Supabase
+        success = update_user_password_supabase(user['id'], hashed_password, salt)
         
-        return True, "Password updated successfully"
+        if success:
+            return True, "Password updated successfully"
+        else:
+            return False, "Failed to update password"
         
     except Exception as e:
-        session.rollback()
         return False, f"Error updating password: {str(e)}"
-    finally:
-        session.close()
 
 def reset_user_password(username):
     """Reset user password to a new strong password"""
@@ -262,44 +262,43 @@ def reset_user_password(username):
         return False, message
 
 def delete_user_account(username):
-    """Delete user account"""
-    session = SessionLocal()
+    """Delete user account using Supabase client"""
     try:
-        user = session.query(UserLogin).filter_by(username=username).first()
+        user = get_user_by_username_supabase(username)
         if not user:
             return False, "User not found"
         
-        session.delete(user)
-        session.commit()
+        # Delete user using Supabase
+        success = delete_user_supabase(user['id'])
         
-        return True, "User account deleted successfully"
+        if success:
+            return True, "User account deleted successfully"
+        else:
+            return False, "Failed to delete user account"
         
     except Exception as e:
-        session.rollback()
         return False, f"Error deleting user: {str(e)}"
-    finally:
-        session.close()
 
 def get_all_users():
-    """Get all users (admin function)"""
-    session = SessionLocal()
+    """Get all users using Supabase client"""
     try:
-        users = session.query(UserLogin).all()
+        users = get_all_users_supabase()
         return [
             {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'role': user.role,
-                'created_at': user.created_at,
-                'last_login': user.last_login,
-                'is_active': user.is_active,
-                'failed_attempts': user.failed_attempts
+                'id': user['id'],
+                'username': user['username'],
+                'email': user.get('email'),
+                'role': user.get('role', 'user'),
+                'created_at': user.get('created_at'),
+                'last_login': user.get('last_login'),
+                'is_active': user.get('is_active', True),
+                'failed_attempts': user.get('login_attempts', 0)
             }
             for user in users
         ]
-    finally:
-        session.close()
+    except Exception as e:
+        print(f"Error getting all users: {e}")
+        return []
 
 def is_session_valid():
     """Check if current session is valid"""

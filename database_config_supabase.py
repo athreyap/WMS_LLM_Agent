@@ -475,6 +475,196 @@ def get_stock_data_supabase(ticker: str = None) -> List[Dict]:
         print(f"❌ Error getting stock data: {e}")
         return []
 
+def update_transaction_sector_supabase(ticker: str, sector: str):
+    """Update sector for all transactions with a specific ticker"""
+    try:
+        result = supabase.table("investment_transactions").update({
+            "sector": sector
+        }).eq("ticker", ticker).execute()
+        
+        if result.data:
+            print(f"✅ Updated sector for {len(result.data)} transactions with ticker {ticker}")
+            return True
+        else:
+            print(f"⚠️ No transactions found with ticker {ticker}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error updating transaction sector: {e}")
+        return False
+
+def get_transactions_by_ticker_supabase(ticker: str) -> List[Dict]:
+    """Get all transactions for a specific ticker"""
+    try:
+        result = supabase.table("investment_transactions").select("*").eq("ticker", ticker).execute()
+        
+        if result.data:
+            return result.data
+        else:
+            return []
+            
+    except Exception as e:
+        print(f"❌ Error getting transactions by ticker: {e}")
+        return []
+
+def get_transactions_by_tickers_supabase(tickers: List[str]) -> List[Dict]:
+    """Get all transactions for specific tickers"""
+    try:
+        result = supabase.table("investment_transactions").select("*").in_("ticker", tickers).execute()
+        
+        if result.data:
+            return result.data
+        else:
+            return []
+            
+    except Exception as e:
+        print(f"❌ Error getting transactions by tickers: {e}")
+        return []
+
+def update_transactions_sector_bulk_supabase(ticker_sector_map: Dict[str, str]):
+    """Update sectors for multiple tickers in bulk"""
+    try:
+        success_count = 0
+        for ticker, sector in ticker_sector_map.items():
+            if update_transaction_sector_supabase(ticker, sector):
+                success_count += 1
+        
+        print(f"✅ Updated sectors for {success_count}/{len(ticker_sector_map)} tickers")
+        return success_count == len(ticker_sector_map)
+        
+    except Exception as e:
+        print(f"❌ Error updating sectors in bulk: {e}")
+        return False
+
+def update_user_password_supabase(user_id: int, password_hash: str, password_salt: str):
+    """Update user password using Supabase client"""
+    try:
+        result = supabase.table("users").update({
+            "password_hash": password_hash,
+            "password_salt": password_salt
+        }).eq("id", user_id).execute()
+        
+        if result.data:
+            print(f"✅ Password updated successfully for user {user_id}")
+            return True
+        else:
+            print(f"❌ Failed to update password for user {user_id}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error updating password: {e}")
+        return False
+
+def delete_user_supabase(user_id: int):
+    """Delete user account using Supabase client"""
+    try:
+        result = supabase.table("users").delete().eq("id", user_id).execute()
+        
+        if result.data:
+            print(f"✅ User {user_id} deleted successfully")
+            return True
+        else:
+            print(f"❌ Failed to delete user {user_id}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error deleting user: {e}")
+        return False
+
+def get_all_users_supabase() -> List[Dict]:
+    """Get all users using Supabase client"""
+    try:
+        result = supabase.table("users").select("*").execute()
+        
+        if result.data:
+            return result.data
+        else:
+            return []
+            
+    except Exception as e:
+        print(f"❌ Error getting all users: {e}")
+        return []
+
+# Database initialization function
+def create_database():
+    """Create database tables if they don't exist"""
+    try:
+        print("🔄 Initializing database tables...")
+        
+        # Create users table
+        users_table_sql = """
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(50) UNIQUE NOT NULL,
+            password_hash VARCHAR(255) NOT NULL,
+            email VARCHAR(100),
+            role VARCHAR(20) DEFAULT 'user',
+            folder_path TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_login TIMESTAMP,
+            login_attempts INTEGER DEFAULT 0,
+            is_locked BOOLEAN DEFAULT FALSE
+        );
+        """
+        
+        # Create investment_transactions table
+        transactions_table_sql = """
+        CREATE TABLE IF NOT EXISTS investment_transactions (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id),
+            stock_name VARCHAR(100) NOT NULL,
+            ticker VARCHAR(20) NOT NULL,
+            quantity DECIMAL(10,2) NOT NULL,
+            price DECIMAL(10,2) NOT NULL,
+            transaction_type VARCHAR(10) NOT NULL,
+            date DATE NOT NULL,
+            channel VARCHAR(50),
+            sector VARCHAR(50),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+        
+        # Create investment_files table
+        files_table_sql = """
+        CREATE TABLE IF NOT EXISTS investment_files (
+            id SERIAL PRIMARY KEY,
+            filename VARCHAR(255) NOT NULL,
+            original_filename VARCHAR(255) NOT NULL,
+            file_hash VARCHAR(64) UNIQUE NOT NULL,
+            customer_name VARCHAR(100),
+            processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            status VARCHAR(20) DEFAULT 'processed'
+        );
+        """
+        
+        # Create stock_data table
+        stock_data_table_sql = """
+        CREATE TABLE IF NOT EXISTS stock_data (
+            id SERIAL PRIMARY KEY,
+            ticker VARCHAR(20) UNIQUE NOT NULL,
+            stock_name VARCHAR(100),
+            sector VARCHAR(50),
+            current_price DECIMAL(10,2),
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+        
+        # Execute SQL using Supabase client
+        # Note: Supabase client doesn't support direct SQL execution for table creation
+        # This would typically be done through Supabase dashboard or migrations
+        print("✅ Database tables should be created through Supabase dashboard")
+        print("📋 Please run the following SQL in your Supabase SQL editor:")
+        print("\n" + users_table_sql)
+        print("\n" + transactions_table_sql)
+        print("\n" + files_table_sql)
+        print("\n" + stock_data_table_sql)
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error creating database: {e}")
+        return False
+
 # Legacy functions for backward compatibility
 def create_user(username: str, password_hash: str, email: str = None, role: str = "user", folder_path: str = None) -> Optional[Dict]:
     """Create a new user (legacy function)"""

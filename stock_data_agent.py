@@ -13,7 +13,14 @@ import hashlib
 import json
 
 # Import the existing database configuration
-from database_config_supabase import engine, SessionLocal
+from database_config_supabase import (
+    update_stock_data_supabase,
+    get_stock_data_supabase,
+    update_transaction_sector_supabase,
+    get_transactions_by_ticker_supabase,
+    get_transactions_by_tickers_supabase,
+    update_transactions_sector_bulk_supabase
+)
 
 # Create a new base for stock data tables
 StockDataBase = declarative_base()
@@ -38,8 +45,6 @@ class StockDataAgent:
     """Agentic AI system for managing stock data"""
     
     def __init__(self):
-        self.engine = engine
-        self.SessionLocal = SessionLocal
         self.cache = {}
         self.cache_lock = threading.Lock()
         # Update interval - can be configured via environment variable
@@ -47,9 +52,6 @@ class StockDataAgent:
         self.auto_update = os.getenv('STOCK_AUTO_UPDATE', 'false').lower() == 'true'  # Default: disabled (user-specific updates)
         self.max_retries = 3
         self.batch_size = 25
-        
-        # Initialize the stock data table
-        self._create_stock_data_table()
         
         # Start background update thread
         self._start_background_updates()
@@ -197,103 +199,37 @@ class StockDataAgent:
             return None
     
     def _update_stock_data(self, ticker: str) -> bool:
-        """Update live price data for a single stock (overwrites, doesn't append)"""
+        """Update live price data for a single stock using Supabase"""
         try:
-            session = self.SessionLocal()
-            
             # Fetch new live data
             new_data = self._fetch_stock_data(ticker)
             
             if new_data:
-                # Check if stock exists in database
-                stock_record = session.query(StockData).filter_by(ticker=ticker).first()
+                # Update stock data using Supabase
+                update_stock_data_supabase(
+                    ticker=ticker,
+                    stock_name=new_data['stock_name'],
+                    sector=new_data['sector'],
+                    current_price=new_data['live_price']
+                )
                 
-                if stock_record:
-                    # Update existing record with new live price
-                    data_hash = self._get_data_hash(
-                        ticker, 
-                        new_data['stock_name'], 
-                        new_data['sector'], 
-                        new_data['live_price']
-                    )
-                    
-                    # Always update live price (even if same hash, update timestamp)
-                    stock_record.stock_name = new_data['stock_name']
-                    stock_record.sector = new_data['sector']
-                    stock_record.live_price = new_data['live_price']  # Update live price
-                    stock_record.price_source = new_data['price_source']
-                    stock_record.last_updated = datetime.utcnow()
-                    stock_record.data_hash = data_hash
-                    stock_record.error_count = 0
-                    stock_record.last_error = None
-                    stock_record.is_active = True
-                    
-                    session.commit()
-                    print(f"✅ Updated live price for {ticker}: ₹{new_data['live_price']:.2f} - {new_data['sector']}")
-                    
-                    # Also update sector information in transactions table
-                    try:
-                        from database_config_supabase import SessionLocal as TransactionSessionLocal
-                        transaction_session = TransactionSessionLocal()
-                        # Update all transactions with this ticker to have the correct sector
-                        from database_config_supabase import InvestmentTransaction
-                        transactions_to_update = transaction_session.query(InvestmentTransaction).filter(
-                            InvestmentTransaction.ticker == ticker,
-                            InvestmentTransaction.sector.in_(['Unknown', ''])
-                        ).all()
-                        
-                        for transaction in transactions_to_update:
-                            transaction.sector = new_data['sector']
-                        
-                        if transactions_to_update:
-                            transaction_session.commit()
-                            print(f"✅ Updated {len(transactions_to_update)} transactions for {ticker} to {new_data['sector']} sector")
-                        
-                        transaction_session.close()
-                    except Exception as e:
-                        print(f"⚠️ Could not update transaction sectors for {ticker}: {e}")
-                    
-                    return True
-                else:
-                    # Create new record
-                    data_hash = self._get_data_hash(
-                        ticker, 
-                        new_data['stock_name'], 
-                        new_data['sector'], 
-                        new_data['live_price']
-                    )
-                    
-                    new_stock = StockData(
-                        ticker=ticker,
-                        stock_name=new_data['stock_name'],
-                        sector=new_data['sector'],
-                        live_price=new_data['live_price'],
-                        price_source=new_data['price_source'],
-                        data_hash=data_hash
-                    )
-                    
-                    session.add(new_stock)
-                    session.commit()
-                    print(f"✅ Added new stock {ticker}: ₹{new_data['live_price']:.2f} - {new_data['sector']}")
-                    return True
+                print(f"✅ Updated live price for {ticker}: ₹{new_data['live_price']:.2f} - {new_data['sector']}")
+                
+                # Also update sector information in transactions table
+                try:
+                    # Update all transactions with this ticker to have the correct sector
+                    update_transaction_sector_supabase(ticker, new_data['sector'])
+                except Exception as e:
+                    print(f"⚠️ Could not update transaction sectors for {ticker}: {e}")
+                
+                return True
             else:
-                # Handle failed fetch
-                stock_record = session.query(StockData).filter_by(ticker=ticker).first()
-                if stock_record:
-                    stock_record.error_count += 1
-                    stock_record.last_error = f"Failed to fetch live data at {datetime.utcnow()}"
-                    if stock_record.error_count >= self.max_retries:
-                        stock_record.is_active = False
-                    session.commit()
-                
                 print(f"❌ Failed to fetch live data for {ticker}")
                 return False
                 
         except Exception as e:
             print(f"❌ Error updating live price for {ticker}: {e}")
             return False
-        finally:
-            session.close()
     
     def _update_all_stock_data(self):
         """Update all stock data using bulk updates"""
