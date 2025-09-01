@@ -759,7 +759,7 @@ def get_transactions(user_id: int = None) -> List[Dict]:
 
 def get_transactions_with_historical_prices(user_id: int = None) -> List[Dict]:
     """Get investment transactions with historical prices (legacy function)"""
-    return get_transactions_with_historical_prices(user_id)
+    return get_transactions_supabase(user_id)
 
 def save_file_record_to_db(filename: str, file_path: str, user_id: int) -> Optional[Dict]:
     """Save file record (legacy function)"""

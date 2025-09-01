@@ -1607,21 +1607,32 @@ class WebAgent:
                 
                 # File Upload Section for users with existing data
                 is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
-                if is_streamlit_cloud and user_id and user_id != 1:
-                    folder_path = self.session_state.get('folder_path', '')
-                    if folder_path:
-                        uploaded_files = st.file_uploader(
-                            "Choose CSV files",
-                            type=['csv'],
-                            accept_multiple_files=True,
-                            help="Upload additional CSV files with transaction data"
-                        )
-                        
-                        if uploaded_files:
-                            if st.button("📊 Process Files", type="primary"):
+                
+                if is_streamlit_cloud:
+                    # Streamlit Cloud - always show file upload
+                    st.info("🌐 **Cloud Mode**: Upload your CSV transaction files for automatic processing.")
+                    
+                    uploaded_files = st.file_uploader(
+                        "Choose CSV files",
+                        type=['csv'],
+                        accept_multiple_files=True,
+                        help="Upload additional CSV files with transaction data"
+                    )
+                    
+                    if uploaded_files:
+                        if st.button("📊 Process Files", type="primary"):
+                            # Get folder path or create one
+                            folder_path = self.session_state.get('folder_path', '')
+                            if not folder_path and user_id:
+                                folder_path = f"/tmp/{username}_investments"
+                                self.session_state['folder_path'] = folder_path
+                            
+                            if folder_path:
                                 self._process_uploaded_files(uploaded_files, folder_path)
                                 st.rerun()
-                            st.info(f"Selected {len(uploaded_files)} file(s)")
+                            else:
+                                st.error("❌ Could not determine folder path for file processing")
+                        st.info(f"Selected {len(uploaded_files)} file(s)")
                 else:
                     st.info("📁 **Local Mode**: Place CSV files in your transaction folder for automatic processing.")
                 
@@ -1687,37 +1698,46 @@ class WebAgent:
                 
                 # File Upload Section for new users
                 is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
-                if is_streamlit_cloud and user_id and user_id != 1:
-                    folder_path = self.session_state.get('folder_path', '')
-                    if folder_path:
-                        st.info("🌐 **Cloud Mode**: Upload your CSV transaction files for automatic processing with historical price calculation.")
-                        
-                        uploaded_files = st.file_uploader(
-                            "Choose CSV files",
-                            type=['csv'],
-                            accept_multiple_files=True,
-                            help="Upload CSV files with transaction data. Files will be processed automatically with historical price fetching."
-                        )
-                        
-                        if uploaded_files:
-                            if st.button("📊 Process Files & Start Analysis", type="primary", use_container_width=True):
+                
+                if is_streamlit_cloud:
+                    # Streamlit Cloud - always show file upload for new users
+                    st.info("🌐 **Cloud Mode**: Upload your CSV transaction files for automatic processing with historical price calculation.")
+                    
+                    uploaded_files = st.file_uploader(
+                        "Choose CSV files",
+                        type=['csv'],
+                        accept_multiple_files=True,
+                        help="Upload CSV files with transaction data. Files will be processed automatically with historical price fetching."
+                    )
+                    
+                    if uploaded_files:
+                        if st.button("📊 Process Files & Start Analysis", type="primary", use_container_width=True):
+                            # Get folder path or create one
+                            folder_path = self.session_state.get('folder_path', '')
+                            if not folder_path and user_id:
+                                folder_path = f"/tmp/{username}_investments"
+                                self.session_state['folder_path'] = folder_path
+                            
+                            if folder_path:
                                 self._process_uploaded_files(uploaded_files, folder_path)
                                 st.rerun()
-                            st.info(f"Selected {len(uploaded_files)} file(s) for processing")
-                        
-                        # Show sample CSV format
-                        with st.expander("📋 Sample CSV Format"):
-                            st.markdown("""
-                            Your CSV file should have these columns:
-                            - **date**: Transaction date (YYYY-MM-DD)
-                            - **ticker**: Stock symbol (e.g., AAPL, MSFT)
-                            - **quantity**: Number of shares
-                            - **price**: Price per share
-                            - **transaction_type**: 'buy' or 'sell'
-                            - **stock_name**: Company name (optional)
-                            - **channel**: Investment channel (optional)
-                            - **sector**: Stock sector (optional)
-                            """)
+                            else:
+                                st.error("❌ Could not determine folder path for file processing")
+                        st.info(f"Selected {len(uploaded_files)} file(s) for processing")
+                    
+                    # Show sample CSV format
+                    with st.expander("📋 Sample CSV Format"):
+                        st.markdown("""
+                        Your CSV file should have these columns:
+                        - **date**: Transaction date (YYYY-MM-DD)
+                        - **ticker**: Stock symbol (e.g., AAPL, MSFT)
+                        - **quantity**: Number of shares
+                        - **price**: Price per share
+                        - **transaction_type**: 'buy' or 'sell'
+                        - **stock_name**: Company name (optional)
+                        - **channel**: Investment channel (optional)
+                        - **sector**: Stock sector (optional)
+                        """)
                 else:
                     st.info("📁 **Local Mode**: Place CSV files in your transaction folder for automatic processing.")
                     st.markdown("""
