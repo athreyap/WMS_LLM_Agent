@@ -512,6 +512,11 @@ class WebAgent:
             
             df = pd.DataFrame(df_data)
             
+            # Debug: Print DataFrame info
+            print(f"🔍 DataFrame created: shape={df.shape}, columns={list(df.columns)}")
+            if not df.empty:
+                print(f"🔍 Sample data: {df.head(2).to_dict()}")
+            
             if df.empty:
                 st.warning("⚠️ No transactions found in database")
                 return pd.DataFrame()
@@ -1605,36 +1610,30 @@ class WebAgent:
                 st.markdown("### 📤 Upload More Files")
                 st.info("Add more transaction files to your portfolio")
                 
-                # File Upload Section for users with existing data
-                is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
+                # File Upload Section - Always Cloud Mode
+                st.info("🌐 **Cloud Mode**: Upload your CSV transaction files for automatic processing.")
                 
-                if is_streamlit_cloud:
-                    # Streamlit Cloud - always show file upload
-                    st.info("🌐 **Cloud Mode**: Upload your CSV transaction files for automatic processing.")
-                    
-                    uploaded_files = st.file_uploader(
-                        "Choose CSV files",
-                        type=['csv'],
-                        accept_multiple_files=True,
-                        help="Upload additional CSV files with transaction data"
-                    )
-                    
-                    if uploaded_files:
-                        if st.button("📊 Process Files", type="primary"):
-                            # Get folder path or create one
-                            folder_path = self.session_state.get('folder_path', '')
-                            if not folder_path and user_id:
-                                folder_path = f"/tmp/{username}_investments"
-                                self.session_state['folder_path'] = folder_path
-                            
-                            if folder_path:
-                                self._process_uploaded_files(uploaded_files, folder_path)
-                                st.rerun()
-                            else:
-                                st.error("❌ Could not determine folder path for file processing")
-                        st.info(f"Selected {len(uploaded_files)} file(s)")
-                else:
-                    st.info("📁 **Local Mode**: Place CSV files in your transaction folder for automatic processing.")
+                uploaded_files = st.file_uploader(
+                    "Choose CSV files",
+                    type=['csv'],
+                    accept_multiple_files=True,
+                    help="Upload additional CSV files with transaction data"
+                )
+                
+                if uploaded_files:
+                    if st.button("📊 Process Files", type="primary"):
+                        # Get folder path or create one
+                        folder_path = self.session_state.get('folder_path', '')
+                        if not folder_path and user_id:
+                            folder_path = f"/tmp/{username}_investments"
+                            self.session_state['folder_path'] = folder_path
+                        
+                        if folder_path:
+                            self._process_uploaded_files(uploaded_files, folder_path)
+                            st.rerun()
+                        else:
+                            st.error("❌ Could not determine folder path for file processing")
+                    st.info(f"Selected {len(uploaded_files)} file(s)")
                 
                 # Manual refresh button for live prices and sectors
                 if st.button("🔄 Refresh Live Prices & Sectors", help="Force update live prices and sector information for your stocks"):
@@ -1671,16 +1670,25 @@ class WebAgent:
                 
                 # Show quick stats
                 if len(df) > 0:
-                    unique_stocks = df['ticker'].nunique()
-                    total_buy = len(df[df['transaction_type'] == 'buy'])
-                    total_sell = len(df[df['transaction_type'] == 'sell'])
-                    
-                    st.markdown(f"""
-                    **Quick Stats:**
-                    - 📊 **Unique Stocks**: {unique_stocks}
-                    - 📈 **Buy Transactions**: {total_buy}
-                    - 📉 **Sell Transactions**: {total_sell}
-                    """)
+                    try:
+                        # Check if required columns exist
+                        if 'ticker' in df.columns and 'transaction_type' in df.columns:
+                            unique_stocks = df['ticker'].nunique()
+                            total_buy = len(df[df['transaction_type'] == 'buy'])
+                            total_sell = len(df[df['transaction_type'] == 'sell'])
+                            
+                            st.markdown(f"""
+                            **Quick Stats:**
+                            - 📊 **Unique Stocks**: {unique_stocks}
+                            - 📈 **Buy Transactions**: {total_buy}
+                            - 📉 **Sell Transactions**: {total_sell}
+                            """)
+                        else:
+                            st.warning("⚠️ Data format issue: Missing required columns (ticker, transaction_type)")
+                            st.info(f"Available columns: {list(df.columns)}")
+                    except Exception as e:
+                        st.error(f"❌ Error calculating stats: {e}")
+                        st.info(f"DataFrame shape: {df.shape}, Columns: {list(df.columns)}")
                 
         else:
             # User has no transactions - show prominent file upload option
