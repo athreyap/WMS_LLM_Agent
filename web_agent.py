@@ -698,6 +698,20 @@ class WebAgent:
                 transactions = get_transactions_with_historical_prices(user_id=user_id)
                 print(f"🔍 Transactions fetched: {len(transactions) if transactions else 0} records")
                 
+                # If no transactions found, try direct database query immediately
+                if not transactions:
+                    print(f"🔄 No transactions found, trying direct database query...")
+                    try:
+                        from database_config_supabase import get_transactions_supabase
+                        direct_transactions = get_transactions_supabase(user_id)
+                        if direct_transactions:
+                            print(f"✅ Direct query successful: {len(direct_transactions)} transactions found")
+                            transactions = direct_transactions
+                        else:
+                            print(f"❌ Direct query also failed: No transactions found")
+                    except Exception as e:
+                        print(f"❌ Direct query error: {e}")
+                
                 # Debug: Check if transactions exist but are empty
                 if transactions and len(transactions) > 0:
                     print(f"🔍 First transaction sample: {transactions[0] if transactions else 'None'}")
@@ -1828,6 +1842,22 @@ class WebAgent:
                         if folder_path:
                             self._process_uploaded_files(uploaded_files, folder_path)
                             st.sidebar.success("✅ Files processed! Click 'Refresh Data' below to update your portfolio.")
+                            
+                            # Immediately verify data was saved and force reload
+                            st.sidebar.info("🔍 Verifying data was saved...")
+                            try:
+                                from database_config_supabase import get_transactions_supabase
+                                saved_transactions = get_transactions_supabase(user_id)
+                                if saved_transactions:
+                                    st.sidebar.success(f"✅ Data verified: {len(saved_transactions)} transactions found in database")
+                                    # Force immediate data reload
+                                    st.sidebar.info("🔄 Forcing immediate data reload...")
+                                    self.session_state['force_immediate_reload'] = True
+                                    st.rerun()
+                                else:
+                                    st.sidebar.warning("⚠️ No transactions found in database after processing")
+                            except Exception as e:
+                                st.sidebar.error(f"❌ Data verification failed: {e}")
                         else:
                             st.error("❌ Could not determine folder path for file processing")
                     st.sidebar.info(f"Selected {len(uploaded_files)} file(s)")
@@ -1939,6 +1969,23 @@ class WebAgent:
                             
                         except Exception as e:
                             st.sidebar.error(f"❌ Fix failed: {e}")
+                
+                # Force immediate data reload button
+                if st.sidebar.button("🚀 Force Immediate Reload", type="secondary", help="Force reload data immediately"):
+                    if user_id and user_id != 1:
+                        st.sidebar.info("🚀 Forcing immediate data reload...")
+                        try:
+                            # Clear session state
+                            if 'current_df' in self.session_state:
+                                del self.session_state['current_df']
+                            if 'data_processing_complete' in self.session_state:
+                                del self.session_state['data_processing_complete']
+                            
+                            # Force reload
+                            self.session_state['force_immediate_reload'] = True
+                            st.rerun()
+                        except Exception as e:
+                            st.sidebar.error(f"❌ Force reload failed: {e}")
                 
                 # Show file history
                 st.sidebar.markdown("---")
