@@ -504,7 +504,7 @@ def update_stock_data_supabase(ticker: str, stock_name: str = None, sector: str 
         if sector:
             data["sector"] = sector
         if current_price:
-            data["current_price"] = current_price
+            data["live_price"] = current_price  # Use live_price instead of current_price
         
         # Try to update existing record, if not exists, insert new one
         result = supabase.table("stock_data").upsert({
@@ -518,7 +518,31 @@ def update_stock_data_supabase(ticker: str, stock_name: str = None, sector: str 
             print(f"❌ Failed to update stock data for {ticker}")
             
     except Exception as e:
-        print(f"❌ Error updating stock data: {e}")
+        # Handle schema cache error gracefully
+        if "live_price" in str(e) and "schema cache" in str(e):
+            print(f"⚠️ Schema cache issue for {ticker}, trying without live_price...")
+            try:
+                # Try without live_price column
+                data_without_price = {
+                    "ticker": ticker,
+                    "last_updated": datetime.utcnow().isoformat()
+                }
+                
+                if stock_name:
+                    data_without_price["stock_name"] = stock_name
+                if sector:
+                    data_without_price["sector"] = sector
+                
+                result = supabase.table("stock_data").upsert(data_without_price).execute()
+                
+                if result.data:
+                    print(f"✅ Stock data updated for {ticker} (without price)")
+                else:
+                    print(f"❌ Failed to update stock data for {ticker}")
+            except Exception as e2:
+                print(f"❌ Error updating stock data (fallback): {e2}")
+        else:
+            print(f"❌ Error updating stock data: {e}")
 
 def get_stock_data_supabase(ticker: str = None) -> List[Dict]:
     """Get stock data using Supabase client"""
@@ -706,7 +730,7 @@ def create_database():
             ticker VARCHAR(20) UNIQUE NOT NULL,
             stock_name VARCHAR(100),
             sector VARCHAR(50),
-            current_price DECIMAL(10,2),
+            live_price DECIMAL(10,2),
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """

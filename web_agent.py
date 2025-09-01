@@ -1505,27 +1505,11 @@ class WebAgent:
             st.warning("⚠️ No data available. Please upload files or check database.")
             return
         
-        # Use cached holdings if available, otherwise calculate
+        # Always calculate holdings from fresh data (no cache for live prices)
         user_id = self.session_state.get('user_id', 1)
-        holdings_cache_key = f'holdings_user_{user_id}'
         
-        # Check if we need to recalculate holdings (only if data changed)
-        if not df.empty and all(col in df.columns for col in ['ticker', 'quantity', 'price', 'live_price', 'transaction_type']):
-            data_hash = hash(str(df[['ticker', 'quantity', 'price', 'live_price', 'transaction_type']].values.tobytes()))
-            cached_data_hash = self.session_state.get(f'{holdings_cache_key}_hash', None)
-        else:
-            # If DataFrame is empty or missing columns, force recalculation
-            data_hash = None
-            cached_data_hash = None
-        
-        if cached_data_hash == data_hash and holdings_cache_key in self.session_state:
-            # Use cached holdings
-            all_holdings = self.session_state[holdings_cache_key]
-        else:
-            # Calculate holdings and cache them
-            all_holdings = self.calculate_holdings(df)
-            self.session_state[holdings_cache_key] = all_holdings
-            self.session_state[f'{holdings_cache_key}_hash'] = data_hash
+        # Calculate holdings directly from the fresh DataFrame
+        all_holdings = self.calculate_holdings(df)
         
         # Filter holdings based on the filtered DataFrame (if any filters are applied)
         if len(df) < len(self.session_state.get('original_df', df)):
@@ -1627,6 +1611,33 @@ class WebAgent:
                 # Settings button
                 if st.sidebar.button("⚙️ Settings"):
                     st.session_state['show_settings'] = True
+                
+                # File upload section in sidebar below settings
+                st.sidebar.markdown("---")
+                st.sidebar.markdown("### 📤 Upload Files")
+                st.sidebar.info("Upload your CSV transaction files for automatic processing.")
+                
+                uploaded_files = st.sidebar.file_uploader(
+                    "Choose CSV files",
+                    type=['csv'],
+                    accept_multiple_files=True,
+                    help="Upload CSV files with transaction data"
+                )
+                
+                if uploaded_files:
+                    if st.sidebar.button("📊 Process Files", type="primary"):
+                        # Get folder path or create one
+                        folder_path = self.session_state.get('folder_path', '')
+                        if not folder_path and user_id:
+                            folder_path = f"/tmp/{username}_investments"
+                            self.session_state['folder_path'] = folder_path
+                        
+                        if folder_path:
+                            self._process_uploaded_files(uploaded_files, folder_path)
+                            st.rerun()
+                        else:
+                            st.error("❌ Could not determine folder path for file processing")
+                    st.sidebar.info(f"Selected {len(uploaded_files)} file(s)")
                 
                 # Show admin panel if requested
                 if st.session_state.get('show_admin_panel', False):
@@ -2010,33 +2021,6 @@ class WebAgent:
                 
                 # Check if user has transactions
                 has_transactions = not df.empty
-                
-                # Simple file upload section below user section
-                st.markdown("---")
-                st.markdown("### 📤 Upload Transaction Files")
-                st.info("Upload your CSV transaction files for automatic processing.")
-                
-                uploaded_files = st.file_uploader(
-                    "Choose CSV files",
-                    type=['csv'],
-                    accept_multiple_files=True,
-                    help="Upload CSV files with transaction data"
-                )
-                
-                if uploaded_files:
-                    if st.button("📊 Process Files", type="primary"):
-                        # Get folder path or create one
-                        folder_path = self.session_state.get('folder_path', '')
-                        if not folder_path and user_id:
-                            folder_path = f"/tmp/{username}_investments"
-                            self.session_state['folder_path'] = folder_path
-                        
-                        if folder_path:
-                            self._process_uploaded_files(uploaded_files, folder_path)
-                            st.rerun()
-                        else:
-                            st.error("❌ Could not determine folder path for file processing")
-                    st.info(f"Selected {len(uploaded_files)} file(s)")
                 
                 # Show portfolio data if user has transactions
                 if has_transactions:
