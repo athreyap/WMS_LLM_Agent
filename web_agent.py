@@ -18,14 +18,16 @@ warnings.filterwarnings('ignore')
 from stock_data_agent import stock_agent, get_live_price, get_sector, get_stock_name, get_all_live_prices, get_user_live_prices, get_stock_data_stats, update_user_stock_prices
 from user_file_reading_agent import user_file_agent, process_user_files_on_login, get_user_transactions_data, start_user_file_monitoring, stop_user_file_monitoring
 from database_config_supabase import (
-    SessionLocal, 
-    get_transactions_with_historical_prices,
-    get_transactions_by_user_id,
-    InvestmentTransaction,
-    InvestmentFile,
-    UserLogin,
-    get_all_users,
-    create_user
+    get_transactions_supabase,
+    get_user_by_id_supabase,
+    create_user_supabase,
+    get_user_by_username_supabase,
+    update_user_login_supabase,
+    save_transaction_supabase,
+    save_file_record_supabase,
+    get_file_records_supabase,
+    update_stock_data_supabase,
+    get_stock_data_supabase
 )
 
 # Import login system
@@ -37,11 +39,11 @@ try:
         require_admin,
         login_page,
         admin_panel,
-        get_user_by_username,
+        get_user_by_username_supabase,
         main_login_system,
         authenticate_user,
-        create_user,
-        get_user_by_id
+        create_user_supabase,
+        get_user_by_id_supabase
     )
     LOGIN_SYSTEM_AVAILABLE = True
     

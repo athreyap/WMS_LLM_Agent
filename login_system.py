@@ -11,7 +11,12 @@ import string
 import re
 from datetime import datetime, timedelta
 import pandas as pd
-from database_config_supabase import SessionLocal, UserLogin, create_database
+from database_config_supabase import (
+    create_user_supabase,
+    get_user_by_username_supabase,
+    get_user_by_id_supabase,
+    update_user_login_supabase
+)
 from sqlalchemy.exc import IntegrityError
 import os
 
@@ -79,18 +84,12 @@ def validate_email(email):
     return re.match(pattern, email) is not None
 
 def create_user(username, email, password, role="user", folder_path=None):
-    """Create a new user account"""
-    session = SessionLocal()
+    """Create a new user account using Supabase client"""
     try:
         # Check if username already exists
-        existing_user = session.query(UserLogin).filter_by(username=username).first()
+        existing_user = get_user_by_username_supabase(username)
         if existing_user:
             return False, "Username already exists"
-        
-        # Check if email already exists
-        existing_email = session.query(UserLogin).filter_by(email=email).first()
-        if existing_email:
-            return False, "Email already registered"
         
         # Validate password strength
         is_valid, message = validate_password_strength(password)
@@ -122,119 +121,106 @@ def create_user(username, email, password, role="user", folder_path=None):
         # Hash password
         hashed_password, salt = hash_password(password)
         
-        # Create new user
-        new_user = UserLogin(
+        # Create new user using Supabase client
+        user_data = create_user_supabase(
             username=username,
-            email=email,
             password_hash=hashed_password,
-            password_salt=salt,
+            email=email,
             role=role,
-            folder_path=folder_path,  # Required folder path
-            created_at=datetime.now(),
-            last_login=None,
-            is_active=True,
-            failed_attempts=0,
-            locked_until=None
+            folder_path=folder_path
         )
         
-        session.add(new_user)
-        session.commit()
+        if user_data:
+            return True, "User account created successfully"
+        else:
+            return False, "Failed to create user account"
         
-        return True, "User account created successfully"
-        
-    except IntegrityError:
-        session.rollback()
-        return False, "Database error occurred"
     except Exception as e:
-        session.rollback()
         return False, f"Error creating user: {str(e)}"
-    finally:
-        session.close()
 
 def authenticate_user(username, password):
-    """Authenticate user login"""
-    session = SessionLocal()
+    """Authenticate user login using Supabase client"""
     try:
         # Find user by username
-        user = session.query(UserLogin).filter_by(username=username).first()
+        user = get_user_by_username_supabase(username)
         
         if not user:
             return False, "Invalid username or password"
         
         # Check if account is locked
-        if user.locked_until and user.locked_until > datetime.now():
-            remaining_time = user.locked_until - datetime.now()
-            minutes = int(remaining_time.total_seconds() / 60)
-            return False, f"Account is locked. Try again in {minutes} minutes"
+        if user.get('is_locked', False):
+            return False, "Account is locked. Please contact administrator"
         
         # Verify password
-        if not verify_password(password, user.password_hash, user.password_salt):
+        if not verify_password(password, user['password_hash'], user.get('password_salt', '')):
             # Increment failed attempts
-            user.failed_attempts += 1
+            login_attempts = user.get('login_attempts', 0) + 1
+            is_locked = login_attempts >= MAX_LOGIN_ATTEMPTS
             
-            # Lock account if max attempts exceeded
-            if user.failed_attempts >= MAX_LOGIN_ATTEMPTS:
-                user.locked_until = datetime.now() + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
-                session.commit()
+            # Update user login info
+            update_user_login_supabase(
+                user_id=user['id'],
+                login_attempts=login_attempts,
+                is_locked=is_locked
+            )
+            
+            if is_locked:
                 return False, f"Account locked due to too many failed attempts. Try again in {LOCKOUT_DURATION_MINUTES} minutes"
-            
-            session.commit()
-            remaining_attempts = MAX_LOGIN_ATTEMPTS - user.failed_attempts
-            return False, f"Invalid password. {remaining_attempts} attempts remaining"
+            else:
+                remaining_attempts = MAX_LOGIN_ATTEMPTS - login_attempts
+                return False, f"Invalid password. {remaining_attempts} attempts remaining"
         
         # Reset failed attempts on successful login
-        user.failed_attempts = 0
-        user.locked_until = None
-        user.last_login = datetime.now()
-        session.commit()
+        update_user_login_supabase(
+            user_id=user['id'],
+            login_attempts=0,
+            is_locked=False
+        )
         
         return True, "Login successful"
         
     except Exception as e:
-        session.rollback()
         return False, f"Authentication error: {str(e)}"
-    finally:
-        session.close()
 
 def get_user_by_username(username):
-    """Get user details by username"""
-    session = SessionLocal()
+    """Get user details by username using Supabase client"""
     try:
-        user = session.query(UserLogin).filter_by(username=username).first()
+        user = get_user_by_username_supabase(username)
         if user:
             return {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'role': user.role,
-                'folder_path': user.folder_path,
-                'created_at': user.created_at,
-                'last_login': user.last_login,
-                'is_active': user.is_active
+                'id': user['id'],
+                'username': user['username'],
+                'email': user.get('email'),
+                'role': user.get('role', 'user'),
+                'folder_path': user.get('folder_path'),
+                'created_at': user.get('created_at'),
+                'last_login': user.get('last_login'),
+                'is_active': user.get('is_active', True)
             }
         return None
-    finally:
-        session.close()
+    except Exception as e:
+        print(f"Error getting user by username: {e}")
+        return None
 
 def get_user_by_id(user_id):
-    """Get user details by user ID"""
-    session = SessionLocal()
+    """Get user details by user ID using Supabase client"""
     try:
-        user = session.query(UserLogin).filter_by(id=user_id).first()
+        user = get_user_by_id_supabase(user_id)
         if user:
             return {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'role': user.role,
-                'folder_path': user.folder_path,
-                'created_at': user.created_at,
-                'last_login': user.last_login,
-                'is_active': user.is_active
+                'id': user['id'],
+                'username': user['username'],
+                'email': user.get('email'),
+                'role': user.get('role', 'user'),
+                'folder_path': user.get('folder_path'),
+                'created_at': user.get('created_at'),
+                'last_login': user.get('last_login'),
+                'is_active': user.get('is_active', True)
             }
         return None
-    finally:
-        session.close()
+    except Exception as e:
+        print(f"Error getting user by ID: {e}")
+        return None
 
 def update_user_password(username, new_password):
     """Update user password"""

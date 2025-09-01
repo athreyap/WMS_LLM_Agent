@@ -13,6 +13,14 @@ from functools import wraps
 import random
 import socket
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+from supabase import create_client, Client
+
+# Supabase configuration
+SUPABASE_URL = os.getenv('SUPABASE_URL', 'https://rolcoegikoeblxzqgkix.supabase.co')
+SUPABASE_KEY = os.getenv('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJvbGNvZWdpa29lYmx4enFna2l4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY1NDM2MjUsImV4cCI6MjA3MjExOTYyNX0.Vwg2hgdKNQGizJiulgTlxXkTLfy-J3vFNkX8gA_6ul4')
+
+# Initialize Supabase client
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def build_ipv4_dsn():
     """
@@ -56,14 +64,9 @@ def build_ipv4_dsn():
 def get_database_url():
     """
     Get database URL with multiple fallback options for Streamlit Cloud
+    Prioritizes Supabase Connection Pooler for cloud deployment
     """
-    # Method 1: Try to resolve hostname to IPv4
-    try:
-        return build_ipv4_dsn()
-    except Exception as e:
-        print(f"⚠️ Method 1 (DNS resolution) failed: {e}")
-    
-    # Method 2: Use Supabase Connection Pooler (recommended for Streamlit Cloud)
+    # Method 1: Use Supabase Connection Pooler (recommended for Streamlit Cloud)
     try:
         # Connection pooler uses port 6543 instead of 5432
         raw = os.getenv('DATABASE_URL', "postgresql://postgres:wmssupabase123@db.rolcoegikoeblxzqgkix.supabase.co:5432/postgres")
@@ -74,10 +77,16 @@ def get_database_url():
             netloc=parsed.netloc.replace(':5432', ':6543'),
             query="sslmode=require"
         ))
-        print("✅ Using Method 2: Supabase Connection Pooler (port 6543)")
+        print("✅ Using Method 1: Supabase Connection Pooler (port 6543)")
         return pooler_url
     except Exception as e:
-        print(f"⚠️ Method 2 (connection pooler) failed: {e}")
+        print(f"⚠️ Method 1 (connection pooler) failed: {e}")
+    
+    # Method 2: Try to resolve hostname to IPv4
+    try:
+        return build_ipv4_dsn()
+    except Exception as e:
+        print(f"⚠️ Method 2 (DNS resolution) failed: {e}")
     
     # Method 3: Use hardcoded IPv4 address for Supabase
     try:
@@ -138,7 +147,8 @@ def get_database_url():
     return os.getenv('DATABASE_URL', "postgresql://postgres:wmssupabase123@db.rolcoegikoeblxzqgkix.supabase.co:5432/postgres?sslmode=require")
 
 # PostgreSQL connection string for Supabase with IPv4 forcing
-DATABASE_URL = get_database_url()
+# Use connection pooler directly to avoid IPv6 issues on Streamlit Cloud
+DATABASE_URL = os.getenv('DATABASE_URL', "postgresql://postgres:wmssupabase123@db.rolcoegikoeblxzqgkix.supabase.co:6543/postgres?sslmode=require")
 
 def get_db_session_with_retry(max_retries=3, base_delay=1):
     """Get database session with retry logic for cloud environments"""
@@ -223,875 +233,286 @@ class InvestmentFile(Base):
     original_filename = Column(String, nullable=False)
     file_hash = Column(String, unique=True, nullable=False)
     customer_name = Column(String)
-    customer_id = Column(String)
-    customer_email = Column(String)
-    customer_phone = Column(String)
-    file_path = Column(String, nullable=False)
-    upload_date = Column(DateTime, default=datetime.utcnow)
-    file_size = Column(Integer)
-    status = Column(String, default='active')
+    processed_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String, default="processed")
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    email = Column(String)
+    role = Column(String, default="user")
+    folder_path = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime)
+    login_attempts = Column(Integer, default=0)
+    is_locked = Column(Boolean, default=False)
 
 class InvestmentTransaction(Base):
     __tablename__ = "investment_transactions"
     
     id = Column(Integer, primary_key=True, index=True)
-    file_id = Column(Integer)
-    user_id = Column(Integer, nullable=True)
+    user_id = Column(Integer, nullable=False)
+    stock_name = Column(String, nullable=False)
+    ticker = Column(String, nullable=False)
+    quantity = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)
+    transaction_type = Column(String, nullable=False)  # 'buy' or 'sell'
+    date = Column(Date, nullable=False)
     channel = Column(String)
+    sector = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class StockData(Base):
+    __tablename__ = "stock_data"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    ticker = Column(String, unique=True, index=True, nullable=False)
     stock_name = Column(String)
-    ticker = Column(String)
-    sector = Column(String, nullable=True)  # Add sector column
-    quantity = Column(Float)
-    price = Column(Float)
-    transaction_type = Column(String)
-    date = Column(String)
-    amount = Column(Float)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    sector = Column(String)
+    current_price = Column(Float)
+    last_updated = Column(DateTime, default=datetime.utcnow)
 
-class HistoricalPrice(Base):
-    __tablename__ = "historical_prices"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    transaction_id = Column(Integer)  # Reference to InvestmentTransaction.id
-    file_id = Column(Integer)  # Reference to InvestmentFile.id
-    ticker = Column(String)
-    transaction_date = Column(Date)  # The date of the transaction
-    historical_price = Column(Float)  # The price on the transaction date
-    current_price = Column(Float)  # Current price when stored
-    price_source = Column(String)  # 'yfinance', 'indstocks', 'mftool', etc.
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-class UserLogin(Base):
-    __tablename__ = "user_login"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
-    email = Column(String, unique=True, index=True)
-    password_hash = Column(String)
-    password_salt = Column(String)
-    role = Column(String, default="user")
-    folder_path = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_login = Column(DateTime, nullable=True)
-    is_active = Column(Boolean, default=True)
-    failed_attempts = Column(Integer, default=0)
-    locked_until = Column(DateTime, nullable=True)
-
-def create_database():
-    """Create PostgreSQL database tables if they do not exist"""
+# Supabase Client Functions
+def create_user_supabase(username: str, password_hash: str, email: str = None, role: str = "user", folder_path: str = None) -> Optional[Dict]:
+    """Create a new user using Supabase client"""
     try:
-        Base.metadata.create_all(bind=engine)
-        print("✅ Supabase PostgreSQL database tables created successfully!")
+        data = {
+            "username": username,
+            "password_hash": password_hash,
+            "email": email,
+            "role": role,
+            "folder_path": folder_path,
+            "created_at": datetime.utcnow().isoformat()
+        }
+        
+        result = supabase.table("users").insert(data).execute()
+        
+        if result.data:
+            print(f"✅ User {username} created successfully")
+            return result.data[0]
+        else:
+            print(f"❌ Failed to create user {username}")
+            return None
+            
     except Exception as e:
-        print(f"❌ Error creating database tables: {e}")
-
-def get_file_hash(file_content):
-    """Generate SHA-256 hash of file content"""
-    return hashlib.sha256(file_content).hexdigest()
-
-def save_file_to_db(file, customer_info=None):
-    """Save file information to database"""
-    try:
-        # Create investments folder if it doesn't exist
-        investments_folder = "investments"
-        if not os.path.exists(investments_folder):
-            os.makedirs(investments_folder)
-        
-        # Generate file hash
-        file_content = file.read()
-        file_hash = get_file_hash(file_content)
-        
-        # Reset file pointer
-        file.seek(0)
-        
-        # Check if file already exists in database
-        session = SessionLocal()
-        existing_file = session.query(InvestmentFile).filter_by(file_hash=file_hash).first()
-        
-        if existing_file:
-            print(f"File already exists in database: {existing_file.original_filename}")
-            session.close()
-            return existing_file.id, False  # False indicates duplicate
-        
-        # Determine per-customer subfolder (based on filename)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename_without_ext = os.path.splitext(file.name)[0]
-        file_extension = os.path.splitext(file.name)[1]
-        # Sanitize folder name
-        safe_folder = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in filename_without_ext).strip("._-") or "customer"
-        target_dir = os.path.join(investments_folder, safe_folder)
-        if not os.path.exists(target_dir):
-            os.makedirs(target_dir, exist_ok=True)
-        
-        # Save file to per-customer folder
-        new_filename = f"{filename_without_ext}_{timestamp}{file_extension}"
-        file_path = os.path.join(target_dir, new_filename)
-        
-        with open(file_path, "wb") as f:
-            f.write(file_content)
-        
-        # Save to database
-        db_file = InvestmentFile(
-            filename=new_filename,
-            original_filename=file.name,
-            file_hash=file_hash,
-            customer_name=customer_info.get('name', '') if customer_info else '',
-            customer_id=customer_info.get('id', '') if customer_info else '',
-            customer_email=customer_info.get('email', '') if customer_info else '',
-            customer_phone=customer_info.get('phone', '') if customer_info else '',
-            file_path=file_path,
-            file_size=len(file_content)
-        )
-        
-        session.add(db_file)
-        session.commit()
-        session.refresh(db_file)
-        session.close()
-        
-        print(f"File saved successfully: {new_filename}")
-        return db_file.id, True  # True indicates new file
-        
-    except Exception as e:
-        print(f"Error saving file to database: {e}")
-        return None, False
-
-def save_file_record_to_db(session, filename, file_path, user_id):
-    """Save file record to database with session, filename, file_path, and user_id"""
-    try:
-        # Generate file hash from file content
-        with open(file_path, 'rb') as f:
-            file_content = f.read()
-        file_hash = get_file_hash(file_content)
-        
-        # Check if file already exists in database
-        existing_file = session.query(InvestmentFile).filter_by(file_hash=file_hash).first()
-        
-        if existing_file:
-            print(f"File already exists in database: {existing_file.original_filename}")
-            return existing_file
-        
-        # Save to database
-        db_file = InvestmentFile(
-            filename=filename,
-            original_filename=filename,
-            file_hash=file_hash,
-            customer_name='',  # Will be filled by user info
-            customer_id=str(user_id),
-            customer_email='',  # Will be filled by user info
-            customer_phone='',  # Will be filled by user info
-            file_path=file_path,
-            file_size=len(file_content)
-        )
-        
-        session.add(db_file)
-        session.commit()
-        session.refresh(db_file)
-        
-        print(f"File record saved successfully: {filename}")
-        return db_file
-        
-    except Exception as e:
-        print(f"Error saving file record to database: {e}")
-        session.rollback()
+        print(f"❌ Error creating user {username}: {e}")
         return None
 
-def get_all_files():
-    """Get all files from database"""
+def get_user_by_username_supabase(username: str) -> Optional[Dict]:
+    """Get user by username using Supabase client"""
     try:
-        session = SessionLocal()
-        files = session.query(InvestmentFile).filter_by(status='active').all()
-        session.close()
-        return files
-    except Exception as e:
-        print(f"Error getting files from database: {e}")
-        return []
-
-def fetch_historical_price_for_transaction(ticker, transaction_date_str):
-    """Fetch historical price for a specific transaction date with optimized error handling"""
-    try:
-        import yfinance as yf
-        from datetime import datetime, timedelta
-        import time
+        result = supabase.table("users").select("*").eq("username", username).execute()
         
-        # Parse the transaction date
-        transaction_date = datetime.strptime(transaction_date_str, '%Y-%m-%d').date()
-        
-        # Add .NS suffix if not present for Indian stocks
-        if not ticker.endswith(('.NS', '.BO')):
-            ticker_with_suffix = f"{ticker}.NS"
+        if result.data:
+            return result.data[0]
         else:
-            ticker_with_suffix = ticker
-        
-        # Try INDstocks first (faster and more reliable for Indian stocks)
-        try:
-            from indstocks_api import get_indstocks_client
-            api_client = get_indstocks_client()
-            if api_client and hasattr(api_client, 'available') and api_client.available:
-                # Get current price as fallback (faster than historical)
-                current_price_data = api_client.get_stock_price(ticker)
-                if current_price_data and 'price' in current_price_data:
-                    return float(current_price_data['price']), 'indstocks'
-        except Exception as e:
-            # Silently continue to yfinance
-            pass
-        
-        # Try yfinance with timeout
-        try:
-            stock = yf.Ticker(ticker_with_suffix)
-            # Get data for a range around the transaction date (±3 days instead of 5)
-            start_date = transaction_date - timedelta(days=3)
-            end_date = transaction_date + timedelta(days=3)
+            return None
             
-            # Convert to timezone-aware datetime for yfinance
-            start_datetime = datetime.combine(start_date, datetime.min.time())
-            end_datetime = datetime.combine(end_date, datetime.min.time())
-            
-            # Add timeout for yfinance calls
-            hist_data = stock.history(start=start_datetime, end=end_datetime, timeout=10)
-            
-            if not hist_data.empty:
-                # Find the closest date to the transaction date
-                transaction_datetime = datetime.combine(transaction_date, datetime.min.time())
-                closest_date = min(hist_data.index, key=lambda x: abs((x - transaction_datetime).days))
-                historical_price = hist_data.loc[closest_date, 'Close']
-                return historical_price, 'yfinance'
-            else:
-                # Try without .NS suffix
-                if ticker_with_suffix.endswith('.NS'):
-                    stock = yf.Ticker(ticker)
-                    hist_data = stock.history(start=start_datetime, end=end_datetime, timeout=10)
-                    if not hist_data.empty:
-                        transaction_datetime = datetime.combine(transaction_date, datetime.min.time())
-                        closest_date = min(hist_data.index, key=lambda x: abs((x - transaction_datetime).days))
-                        historical_price = hist_data.loc[closest_date, 'Close']
-                        return historical_price, 'yfinance'
-        except Exception as e:
-            # Silently continue to final fallback
-            pass
+    except Exception as e:
+        print(f"❌ Error getting user {username}: {e}")
+        return None
+
+def get_user_by_id_supabase(user_id: int) -> Optional[Dict]:
+    """Get user by ID using Supabase client"""
+    try:
+        result = supabase.table("users").select("*").eq("id", user_id).execute()
         
-        # Final fallback: try INDstocks again without availability check
-        try:
-            from indstocks_api import get_indstocks_client
-            api_client = get_indstocks_client()
-            if api_client:
-                current_price_data = api_client.get_stock_price(ticker)
-                if current_price_data and 'price' in current_price_data:
-                    return float(current_price_data['price']), 'indstocks_fallback'
-        except Exception as e:
-            # Silently fail
-            pass
+        if result.data:
+            return result.data[0]
+        else:
+            return None
+            
+    except Exception as e:
+        print(f"❌ Error getting user ID {user_id}: {e}")
+        return None
+
+def update_user_login_supabase(user_id: int, login_attempts: int = 0, is_locked: bool = False):
+    """Update user login information using Supabase client"""
+    try:
+        data = {
+            "last_login": datetime.utcnow().isoformat(),
+            "login_attempts": login_attempts,
+            "is_locked": is_locked
+        }
         
-        return None, None
+        supabase.table("users").update(data).eq("id", user_id).execute()
+        print(f"✅ Updated login info for user ID {user_id}")
         
     except Exception as e:
-        # Don't print errors for individual tickers to reduce noise
-        return None, None
+        print(f"❌ Error updating user login info: {e}")
 
-def save_transactions_to_db(file_id, df, user_id=None):
-    """Save transaction data to database with historical price fetching in batches"""
+def save_transaction_supabase(user_id: int, stock_name: str, ticker: str, quantity: float, price: float, 
+                            transaction_type: str, date: str, channel: str = None, sector: str = None) -> Optional[Dict]:
+    """Save investment transaction using Supabase client"""
     try:
-        print(f"🔍 Supabase PostgreSQL: Saving transactions - file_id: {file_id}, user_id: {user_id}, rows: {len(df)}")
-        session = SessionLocal()
+        data = {
+            "user_id": user_id,
+            "stock_name": stock_name,
+            "ticker": ticker,
+            "quantity": quantity,
+            "price": price,
+            "transaction_type": transaction_type,
+            "date": date,
+            "channel": channel,
+            "sector": sector,
+            "created_at": datetime.utcnow().isoformat()
+        }
         
-        # Call the session-based version
-        return save_transactions_to_db_with_session(session, df, file_id, user_id)
+        result = supabase.table("investment_transactions").insert(data).execute()
         
+        if result.data:
+            print(f"✅ Transaction saved for {ticker}")
+            return result.data[0]
+        else:
+            print(f"❌ Failed to save transaction for {ticker}")
+            return None
+            
     except Exception as e:
-        print(f"❌ Supabase PostgreSQL: Error saving transactions: {e}")
-        return False
+        print(f"❌ Error saving transaction: {e}")
+        return None
 
-def save_transactions_to_db_with_session(session, df, file_id, user_id=None):
-    """Save transaction data to database with session - for use by file reading agents"""
+def get_transactions_supabase(user_id: int = None) -> List[Dict]:
+    """Get investment transactions using Supabase client"""
     try:
-        print(f"🚀 FAST SAVE: Saving transactions - file_id: {file_id}, user_id: {user_id}, rows: {len(df)}")
-        
-        # Clear existing transactions and historical prices for this file
-        session.query(InvestmentTransaction).filter_by(file_id=file_id).delete()
-        session.query(HistoricalPrice).filter_by(file_id=file_id).delete()
-        session.commit()  # Commit the deletion first
-        
-        # Use bulk insert for maximum speed - skip historical price fetching on first load
-        batch_size = 200  # Larger batch size for bulk operations
-        total_rows = len(df)
-        
-        for batch_start in range(0, total_rows, batch_size):
-            batch_end = min(batch_start + batch_size, total_rows)
-            batch_df = df.iloc[batch_start:batch_end]
-            
-            transactions_to_add = []
-            for _, row in batch_df.iterrows():
-                # Get sector information if available
-                sector = row.get('sector', 'Unknown')
-                if sector == 'Unknown' or pd.isna(sector):
-                    # For now, set unknown tickers as mutual funds if they're numeric
-                    ticker = row.get('ticker', '')
-                    if ticker and ticker.isdigit():
-                        sector = 'Mutual Funds'
-                    else:
-                        sector = 'Unknown'
-                
-                transaction = InvestmentTransaction(
-                    file_id=file_id,
-                    user_id=user_id,
-                    channel=row.get('channel', ''),
-                    stock_name=row.get('stock_name', ''),
-                    ticker=row.get('ticker', ''),
-                    sector=sector,  # Add sector information
-                    quantity=row.get('quantity', 0),
-                    price=row.get('price', 0),
-                    transaction_type=row.get('transaction_type', ''),
-                    date=row.get('date', ''),
-                    amount=row.get('quantity', 0) * row.get('price', 0)
-                )
-                transactions_to_add.append(transaction)
-            
-            # Bulk insert batch
-            session.bulk_save_objects(transactions_to_add)
-            session.commit()
-            
-            print(f"   ✅ Batch {batch_start//batch_size + 1}/{(total_rows + batch_size - 1)//batch_size} completed")
-        
-        session.close()
-        
-        print(f"✅ FAST SAVE: Transactions saved for file ID: {file_id}, user ID: {user_id}")
-        print(f"💡 Historical prices will be fetched in background for better performance")
-        return True
-        
-    except Exception as e:
-        print(f"❌ FAST SAVE: Error saving transactions: {e}")
-        if 'session' in locals():
-            session.rollback()
-            session.close()
-        return False
-
-def save_transactions_to_db_fast(file_id, df, user_id=None):
-    """Save transaction data to database without historical price fetching for maximum speed"""
-    try:
-        print(f"🚀 Fast Save: Saving transactions - file_id: {file_id}, user_id: {user_id}, rows: {len(df)}")
-        session = SessionLocal()
-        
-        # Clear existing transactions and historical prices for this file
-        session.query(InvestmentTransaction).filter_by(file_id=file_id).delete()
-        session.query(HistoricalPrice).filter_by(file_id=file_id).delete()
-        session.commit()  # Commit the deletion first
-        
-        # Use bulk insert for faster processing with larger batches
-        batch_size = 100  # Increased batch size for bulk operations
-        total_rows = len(df)
-        
-        for batch_start in range(0, total_rows, batch_size):
-            batch_end = min(batch_start + batch_size, total_rows)
-            batch_df = df.iloc[batch_start:batch_end]
-            
-            transactions_to_add = []
-            for _, row in batch_df.iterrows():
-                # Get sector information if available
-                sector = row.get('sector', 'Unknown')
-                if sector == 'Unknown' or pd.isna(sector):
-                    # For now, set unknown tickers as mutual funds if they're numeric
-                    ticker = row.get('ticker', '')
-                    if ticker and ticker.isdigit():
-                        sector = 'Mutual Funds'
-                    else:
-                        sector = 'Unknown'
-                
-                transaction = InvestmentTransaction(
-                    file_id=file_id,
-                    user_id=user_id,
-                    channel=row.get('channel', ''),
-                    stock_name=row.get('stock_name', ''),
-                    ticker=row.get('ticker', ''),
-                    sector=sector,  # Add sector information
-                    quantity=row.get('quantity', 0),
-                    price=row.get('price', 0),
-                    transaction_type=row.get('transaction_type', ''),
-                    date=row.get('date', ''),
-                    amount=row.get('quantity', 0) * row.get('price', 0)
-                )
-                transactions_to_add.append(transaction)
-            
-            # Bulk insert batch
-            session.bulk_save_objects(transactions_to_add)
-            session.commit()
-            
-            print(f"   ✅ Batch {batch_start//batch_size + 1}/{(total_rows + batch_size - 1)//batch_size} completed")
-        
-        session.close()
-        
-        print(f"✅ Fast Save: Transactions saved for file ID: {file_id}, user ID: {user_id}")
-        
-    except Exception as e:
-        print(f"❌ Fast Save: Error saving transactions: {e}")
-        if 'session' in locals():
-            session.rollback()
-            session.close()
-
-def get_transactions_by_file_id(file_id):
-    """Get transactions for a specific file"""
-    try:
-        session = SessionLocal()
-        transactions = session.query(InvestmentTransaction).filter_by(file_id=file_id).all()
-        session.close()
-        return transactions
-    except Exception as e:
-        print(f"Error getting transactions: {e}")
-        return []
-
-def get_transactions_by_user_id(user_id):
-    """Get all transactions for a specific user"""
-    try:
-        session = SessionLocal()
-        transactions = session.query(InvestmentTransaction).filter_by(user_id=user_id).all()
-        session.close()
-        return transactions
-    except Exception as e:
-        print(f"Error getting user transactions: {e}")
-        return []
-
-def get_transactions_dataframe(user_id=None):
-    """Get transactions as pandas DataFrame"""
-    try:
-        session = SessionLocal()
-        query = session.query(InvestmentTransaction)
         if user_id:
-            query = query.filter_by(user_id=user_id)
-        
-        transactions = query.all()
-        session.close()
-        
-        if transactions:
-            # Convert to DataFrame
-            data = []
-            for t in transactions:
-                data.append({
-                    'id': t.id,
-                    'file_id': t.file_id,
-                    'user_id': t.user_id,
-                    'channel': t.channel,
-                    'stock_name': t.stock_name,
-                    'ticker': t.ticker,
-                    'sector': t.sector,  # Include sector information
-                    'quantity': t.quantity,
-                    'price': t.price,
-                    'transaction_type': t.transaction_type,
-                    'date': t.date,
-                    'amount': t.amount,
-                    'created_at': t.created_at
-                })
-            return pd.DataFrame(data)
+            result = supabase.table("investment_transactions").select("*").eq("user_id", user_id).execute()
         else:
-            return pd.DataFrame()
-    except Exception as e:
-        print(f"Error getting transactions DataFrame: {e}")
-        return pd.DataFrame()
-
-# User authentication functions
-def create_user(username, email, password_hash, password_salt, folder_path=None):
-    """Create a new user with retry logic"""
-    try:
-        session = get_db_session_with_retry()
-        user = UserLogin(
-            username=username,
-            email=email,
-            password_hash=password_hash,
-            password_salt=password_salt,
-            folder_path=folder_path,
-            role='user',
-            is_active=True
-        )
-        session.add(user)
-        session.commit()
-        session.refresh(user)
-        session.close()
-        return user
-    except Exception as e:
-        print(f"Error creating user: {e}")
-        return None
-
-@cache_result(ttl_seconds=600)  # Cache for 10 minutes
-def get_user_by_username(username):
-    """Get user by username - with caching and retry logic"""
-    try:
-        session = get_db_session_with_retry()
-        user = session.query(UserLogin).filter_by(username=username).first()
-        session.close()
+            result = supabase.table("investment_transactions").select("*").execute()
         
-        if user:
-            return {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'role': user.role,
-                'folder_path': user.folder_path,
-                'created_at': user.created_at,
-                'last_login': user.last_login,
-                'is_active': user.is_active
-            }
-        return None
-    except Exception as e:
-        print(f"Error getting user: {e}")
-        return None
-
-@cache_result(ttl_seconds=600)  # Cache for 10 minutes
-def get_user_by_id(user_id):
-    """Get user by ID - with caching"""
-    try:
-        session = SessionLocal()
-        user = session.query(UserLogin).filter_by(id=user_id).first()
-        session.close()
-        
-        if user:
-            return {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'role': user.role,
-                'folder_path': user.folder_path,
-                'created_at': user.created_at,
-                'last_login': user.last_login,
-                'is_active': user.is_active
-            }
-        return None
-    except Exception as e:
-        print(f"Error getting user by ID: {e}")
-        return None
-
-def get_user_by_email(email):
-    """Get user by email"""
-    try:
-        session = SessionLocal()
-        user = session.query(UserLogin).filter_by(email=email).first()
-        session.close()
-        return user
-    except Exception as e:
-        print(f"Error getting user: {e}")
-        return None
-
-def update_user_login_time(user_id):
-    """Update user's last login time"""
-    try:
-        session = SessionLocal()
-        user = session.query(UserLogin).filter_by(id=user_id).first()
-        if user:
-            user.last_login = datetime.now()
-            session.commit()
-        session.close()
-    except Exception as e:
-        print(f"Error updating user login time: {e}")
-
-def update_user_failed_attempts(user_id, failed_attempts, locked_until=None):
-    """Update user's failed login attempts"""
-    try:
-        session = SessionLocal()
-        user = session.query(UserLogin).filter_by(id=user_id).first()
-        if user:
-            user.failed_attempts = failed_attempts
-            if locked_until:
-                user.locked_until = locked_until
-            session.commit()
-        session.close()
-    except Exception as e:
-        print(f"Error updating user failed attempts: {e}")
-
-def update_user_folder_path(user_id, folder_path):
-    """Update user's folder path"""
-    try:
-        session = SessionLocal()
-        user = session.query(UserLogin).filter_by(id=user_id).first()
-        if user:
-            user.folder_path = folder_path
-            session.commit()
-            session.close()
-            return True
-        session.close()
-        return False
-    except Exception as e:
-        print(f"Error updating user folder path: {e}")
-        return False
-
-def get_all_users():
-    """Get all users from database"""
-    try:
-        session = SessionLocal()
-        users = session.query(UserLogin).filter_by(is_active=True).all()
-        session.close()
-        
-        # Convert to list of dictionaries
-        user_list = []
-        for user in users:
-            user_list.append({
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'role': user.role,
-                'folder_path': user.folder_path,
-                'created_at': user.created_at,
-                'last_login': user.last_login
-            })
-        return user_list
-    except Exception as e:
-        print(f"Error getting all users: {e}")
-        return []
-
-def get_historical_prices_by_file_id(file_id):
-    """Get historical prices for a specific file"""
-    try:
-        session = SessionLocal()
-        historical_prices = session.query(HistoricalPrice).filter_by(file_id=file_id).all()
-        session.close()
-        return historical_prices
-    except Exception as e:
-        print(f"Error getting historical prices: {e}")
-        return []
-
-def get_historical_prices_by_user_id(user_id):
-    """Get all historical prices for a specific user"""
-    try:
-        session = SessionLocal()
-        # Join with transactions to get historical prices for user's transactions
-        historical_prices = session.query(HistoricalPrice).join(
-            InvestmentTransaction, 
-            HistoricalPrice.transaction_id == InvestmentTransaction.id
-        ).filter(InvestmentTransaction.user_id == user_id).all()
-        session.close()
-        return historical_prices
-    except Exception as e:
-        print(f"Error getting historical prices for user: {e}")
-        return []
-
-@cache_result(ttl_seconds=300)  # Cache for 5 minutes
-def get_transactions_with_historical_prices(file_id=None, user_id=None):
-    """Get transactions with their historical prices - optimized with caching and fast startup"""
-    try:
-        session = SessionLocal()
-        
-        # Use a single optimized query with JOIN instead of multiple queries
-        if file_id:
-            # Query for specific file
-            query = session.query(
-                InvestmentTransaction,
-                HistoricalPrice.historical_price,
-                HistoricalPrice.price_source,
-                HistoricalPrice.transaction_date,
-                HistoricalPrice.current_price
-            ).outerjoin(
-                HistoricalPrice, 
-                InvestmentTransaction.id == HistoricalPrice.transaction_id
-            ).filter(InvestmentTransaction.file_id == file_id)
-        elif user_id:
-            # Query for specific user - optimized for speed
-            query = session.query(
-                InvestmentTransaction,
-                HistoricalPrice.historical_price,
-                HistoricalPrice.price_source,
-                HistoricalPrice.transaction_date,
-                HistoricalPrice.current_price
-            ).outerjoin(
-                HistoricalPrice, 
-                InvestmentTransaction.id == HistoricalPrice.transaction_id
-            ).filter(InvestmentTransaction.user_id == user_id)
+        if result.data:
+            return result.data
         else:
-            # Query for all transactions
-            query = session.query(
-                InvestmentTransaction,
-                HistoricalPrice.historical_price,
-                HistoricalPrice.price_source,
-                HistoricalPrice.transaction_date,
-                HistoricalPrice.current_price
-            ).outerjoin(
-                HistoricalPrice, 
-                InvestmentTransaction.id == HistoricalPrice.transaction_id
-            )
-        
-        # Execute query and fetch all results at once - optimized for speed
-        results = query.all()
-        
-        # Process results efficiently with list comprehension for speed
-        result = [
-            {
-                'id': transaction.id,
-                'file_id': transaction.file_id,
-                'user_id': transaction.user_id,
-                'channel': transaction.channel,
-                'stock_name': transaction.stock_name,
-                'ticker': transaction.ticker,
-                'sector': transaction.sector,  # Include sector information
-                'quantity': transaction.quantity,
-                'price': transaction.price,
-                'transaction_type': transaction.transaction_type,
-                'date': transaction.date,
-                'amount': transaction.amount,
-                'created_at': transaction.created_at,
-                'historical_price': hist_price,
-                'price_source': price_source,
-                'transaction_date': trans_date,
-                'current_price': current_price,
-                'original_price': current_price if current_price is not None else transaction.price
-            }
-            for transaction, hist_price, price_source, trans_date, current_price in results
-        ]
-        
-        session.close()
-        
-        # Log performance info
-        if user_id:
-            print(f"🚀 Fast load: Retrieved {len(result)} transactions for user {user_id}")
-        
-        return result
-        
-    except Exception as e:
-        print(f"Error getting transactions with historical prices: {e}")
-        return []
-
-def check_transaction_exists(file_id, ticker, date, transaction_type):
-    """Check if a transaction already exists in the database"""
-    try:
-        session = SessionLocal()
-        existing_transaction = session.query(InvestmentTransaction).filter_by(
-            file_id=file_id,
-            ticker=ticker,
-            date=date,
-            transaction_type=transaction_type
-        ).first()
-        session.close()
-        return existing_transaction is not None
-    except Exception as e:
-        print(f"Error checking transaction existence: {e}")
-        return False
-
-def fetch_and_update_historical_prices(user_id=None):
-    """Fetch and update historical prices for existing transactions"""
-    try:
-        session = SessionLocal()
-        
-        # Get transactions without historical prices or with file prices
-        if user_id:
-            transactions = session.query(InvestmentTransaction).filter_by(user_id=user_id).all()
-        else:
-            transactions = session.query(InvestmentTransaction).all()
-        
-        updated_count = 0
-        batch_size = 50  # Process in larger batches for better performance
-        
-        for i in range(0, len(transactions), batch_size):
-            batch_transactions = transactions[i:i+batch_size]
+            return []
             
-            for transaction in batch_transactions:
-                try:
-                    # Check if we already have a historical price record
-                    existing_historical = session.query(HistoricalPrice).filter_by(
-                        transaction_id=transaction.id
-                    ).first()
-                    
-                    if existing_historical and existing_historical.price_source not in ['file', None]:
-                        # Skip if we already have a good historical price
-                        continue
-                    
-                    # Fetch historical price
-                    if transaction.date and transaction.ticker:
-                        historical_price, price_source = fetch_historical_price_for_transaction(
-                            transaction.ticker, transaction.date
-                        )
-                        
-                        if historical_price is not None:
-                            # Update transaction price
-                            transaction.price = historical_price
-                            transaction.amount = transaction.quantity * historical_price
-                            
-                            # Update or create historical price record
-                            if existing_historical:
-                                existing_historical.historical_price = historical_price
-                                existing_historical.price_source = price_source
-                                existing_historical.current_price = historical_price
-                            else:
-                                # Create new historical price record
-                                transaction_date = datetime.strptime(transaction.date, '%Y-%m-%d').date()
-                                historical_price_record = HistoricalPrice(
-                                    transaction_id=transaction.id,
-                                    file_id=transaction.file_id,
-                                    ticker=transaction.ticker,
-                                    transaction_date=transaction_date,
-                                    historical_price=historical_price,
-                                    current_price=historical_price,
-                                    price_source=price_source
-                                )
-                                session.add(historical_price_record)
-                            
-                            updated_count += 1
-                    
-                except Exception as e:
-                    print(f"Error updating transaction {transaction.id}: {e}")
-                    continue
-            
-            # Commit each batch
-            session.commit()
-            print(f"   ✅ Batch {i//batch_size + 1}/{(len(transactions) + batch_size - 1)//batch_size} completed - Updated {updated_count} transactions so far...")
-        
-        session.close()
-        
-        print(f"✅ Updated {updated_count} transactions with historical prices")
-        return updated_count
-        
     except Exception as e:
-        print(f"❌ Error fetching and updating historical prices: {e}")
-        if 'session' in locals():
-            session.rollback()
-            session.close()
-        return 0
+        print(f"❌ Error getting transactions: {e}")
+        return []
 
-def update_mutual_fund_sectors():
-    """Update sector information for numeric tickers to classify them as Mutual Funds"""
+def save_file_record_supabase(filename: str, original_filename: str, file_hash: str, customer_name: str = None) -> Optional[Dict]:
+    """Save file record using Supabase client"""
     try:
-        session = SessionLocal()
+        data = {
+            "filename": filename,
+            "original_filename": original_filename,
+            "file_hash": file_hash,
+            "customer_name": customer_name,
+            "processed_at": datetime.utcnow().isoformat(),
+            "status": "processed"
+        }
         
-        # Find transactions with numeric tickers that have 'Unknown' sector
-        transactions = session.query(InvestmentTransaction).filter(
-            InvestmentTransaction.sector.in_(['Unknown', '']),
-            InvestmentTransaction.ticker.isnot(None)
-        ).all()
+        result = supabase.table("investment_files").insert(data).execute()
         
-        updated_count = 0
-        for transaction in transactions:
-            if transaction.ticker and transaction.ticker.isdigit():
-                transaction.sector = 'Mutual Funds'
-                updated_count += 1
-        
-        if updated_count > 0:
-            session.commit()
-            print(f"✅ Updated {updated_count} transactions with Mutual Funds sector")
+        if result.data:
+            print(f"✅ File record saved for {filename}")
+            return result.data[0]
         else:
-            print("ℹ️ No transactions needed sector updates")
-        
-        session.close()
-        return updated_count
-        
+            print(f"❌ Failed to save file record for {filename}")
+            return None
+            
     except Exception as e:
-        print(f"❌ Error updating mutual fund sectors: {e}")
-        if 'session' in locals():
-            session.rollback()
-            session.close()
-        return 0
+        print(f"❌ Error saving file record: {e}")
+        return None
 
-def fetch_historical_prices_background(user_id=None):
-    """Background function to fetch historical prices without blocking the UI"""
+def get_file_records_supabase() -> List[Dict]:
+    """Get file records using Supabase client"""
     try:
-        import threading
-        import time
+        result = supabase.table("investment_files").select("*").execute()
         
-        def background_task():
-            time.sleep(2)  # Wait 2 seconds before starting
-            print(f"🔄 Starting background historical price fetch for user {user_id}...")
-            # First update mutual fund sectors
-            update_mutual_fund_sectors()
-            # Then fetch historical prices
-            fetch_and_update_historical_prices(user_id)
-            print(f"✅ Background historical price fetch completed for user {user_id}")
-        
-        # Start background thread
-        thread = threading.Thread(target=background_task, daemon=True)
-        thread.start()
-        return True
-        
+        if result.data:
+            return result.data
+        else:
+            return []
+            
     except Exception as e:
-        print(f"❌ Error starting background historical price fetch: {e}")
-        return False
+        print(f"❌ Error getting file records: {e}")
+        return []
+
+def update_stock_data_supabase(ticker: str, stock_name: str = None, sector: str = None, current_price: float = None):
+    """Update stock data using Supabase client"""
+    try:
+        data = {
+            "last_updated": datetime.utcnow().isoformat()
+        }
+        
+        if stock_name:
+            data["stock_name"] = stock_name
+        if sector:
+            data["sector"] = sector
+        if current_price:
+            data["current_price"] = current_price
+        
+        # Try to update existing record, if not exists, insert new one
+        result = supabase.table("stock_data").upsert({
+            "ticker": ticker,
+            **data
+        }).execute()
+        
+        if result.data:
+            print(f"✅ Stock data updated for {ticker}")
+        else:
+            print(f"❌ Failed to update stock data for {ticker}")
+            
+    except Exception as e:
+        print(f"❌ Error updating stock data: {e}")
+
+def get_stock_data_supabase(ticker: str = None) -> List[Dict]:
+    """Get stock data using Supabase client"""
+    try:
+        if ticker:
+            result = supabase.table("stock_data").select("*").eq("ticker", ticker).execute()
+        else:
+            result = supabase.table("stock_data").select("*").execute()
+        
+        if result.data:
+            return result.data
+        else:
+            return []
+            
+    except Exception as e:
+        print(f"❌ Error getting stock data: {e}")
+        return []
+
+# Legacy functions for backward compatibility
+def create_user(username: str, password_hash: str, email: str = None, role: str = "user", folder_path: str = None) -> Optional[Dict]:
+    """Create a new user (legacy function)"""
+    return create_user_supabase(username, password_hash, email, role, folder_path)
+
+def get_user_by_username(username: str) -> Optional[Dict]:
+    """Get user by username (legacy function)"""
+    return get_user_by_username_supabase(username)
+
+def get_user_by_id(user_id: int) -> Optional[Dict]:
+    """Get user by ID (legacy function)"""
+    return get_user_by_id_supabase(user_id)
+
+def update_user_login(user_id: int, login_attempts: int = 0, is_locked: bool = False):
+    """Update user login information (legacy function)"""
+    return update_user_login_supabase(user_id, login_attempts, is_locked)
+
+def save_transaction(user_id: int, stock_name: str, ticker: str, quantity: float, price: float, 
+                   transaction_type: str, date: str, channel: str = None, sector: str = None) -> Optional[Dict]:
+    """Save investment transaction (legacy function)"""
+    return save_transaction_supabase(user_id, stock_name, ticker, quantity, price, transaction_type, date, channel, sector)
+
+def get_transactions(user_id: int = None) -> List[Dict]:
+    """Get investment transactions (legacy function)"""
+    return get_transactions_supabase(user_id)
+
+def save_file_record_to_db(filename: str, original_filename: str, file_hash: str, customer_name: str = None) -> Optional[Dict]:
+    """Save file record (legacy function)"""
+    return save_file_record_supabase(filename, original_filename, file_hash, customer_name)
+
+def get_file_records() -> List[Dict]:
+    """Get file records (legacy function)"""
+    return get_file_records_supabase()
+
+def update_stock_data(ticker: str, stock_name: str = None, sector: str = None, current_price: float = None):
+    """Update stock data (legacy function)"""
+    return update_stock_data_supabase(ticker, stock_name, sector, current_price)
+
+def get_stock_data(ticker: str = None) -> List[Dict]:
+    """Get stock data (legacy function)"""
+    return get_stock_data_supabase(ticker)
