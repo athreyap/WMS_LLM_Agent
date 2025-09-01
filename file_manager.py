@@ -119,7 +119,7 @@ def process_single_file(file_path, user_id, file_hash=None):
         # Extract channel from filename if not present
         if 'channel' not in df.columns or df['channel'].isna().all():
             filename = os.path.basename(file_path)
-            channel_name = Path(filename).stem  # Remove extension
+            channel_name = filename.replace('.csv', '').replace('_', ' ')
             df['channel'] = channel_name
         
         # Ensure date column is datetime

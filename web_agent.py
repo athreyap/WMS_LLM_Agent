@@ -248,6 +248,54 @@ class WebAgent:
             st.markdown("### 📤 File Upload")
             st.info("Upload your CSV transaction files for automatic processing and historical price calculation.")
             
+            # Sample file download section
+            st.markdown("#### 📋 Sample CSV Format")
+            st.info("Download the sample file below to see the correct column format:")
+            
+            # Create sample CSV content directly (works on Streamlit Cloud)
+            sample_csv_content = """date,ticker,quantity,price,transaction_type,stock_name,sector
+2024-01-15,RELIANCE.NS,100,,buy,Reliance Industries Ltd,Oil & Gas
+2024-01-20,TCS.NS,50,3800.75,buy,Tata Consultancy Services Ltd,Technology
+2024-02-01,INFY.NS,75,,buy,Infosys Ltd,Technology
+2024-02-15,RELIANCE.NS,50,2600.00,sell,Reliance Industries Ltd,Oil & Gas
+2024-03-01,HDFCBANK.NS,25,,buy,HDFC Bank Ltd,Banking
+2024-03-15,120828,100,45.50,buy,ICICI Prudential Technology Fund,Mutual Funds
+2024-04-01,TCS.NS,25,,sell,Tata Consultancy Services Ltd,Technology
+2024-04-15,MF_120828,200,46.20,buy,ICICI Prudential Technology Fund,Mutual Funds"""
+            
+            st.download_button(
+                label="📥 Download Sample CSV File",
+                data=sample_csv_content,
+                file_name="sample_transaction_file.csv",
+                mime="text/csv",
+                help="Download this sample file to see the correct column format"
+            )
+            
+            # Show column requirements
+            with st.expander("📋 Required Column Format"):
+                st.markdown("""
+                Your CSV file must have these columns:
+                
+                **Required Columns:**
+                - **`date`**: Transaction date (YYYY-MM-DD format)
+                - **`ticker`**: Stock/Mutual Fund symbol (e.g., RELIANCE.NS, TCS.NS, 120828, MF_120828)
+                - **`quantity`**: Number of shares/units
+                - **`transaction_type`**: 'buy' or 'sell'
+                
+                **Optional Columns:**
+                - **`price`**: Price per share (if not provided, will be fetched automatically)
+                - **`stock_name`**: Company/Fund name
+                - **`channel`**: Investment channel (e.g., Direct, Broker)
+                - **`sector`**: Stock sector (e.g., Technology, Banking, Mutual Funds)
+                
+                **Important Notes:**
+                - For Indian stocks, use `.NS` suffix (e.g., RELIANCE.NS, TCS.NS)
+                - For mutual funds, use numeric codes (e.g., 120828) or MF_ prefix (e.g., MF_120828)
+                - Date format must be YYYY-MM-DD
+                - Transaction type must be exactly 'buy' or 'sell'
+                - **Price column is optional** - historical prices will be fetched automatically if missing
+                """)
+            
             uploaded_files = st.file_uploader(
                 "Choose CSV files",
                 type=['csv'],
@@ -325,11 +373,14 @@ class WebAgent:
                         df['channel'] = channel_name
                     
                     # Ensure required columns exist
-                    required_columns = ['stock_name', 'ticker', 'quantity', 'transaction_type', 'date']
+                    required_columns = ['ticker', 'quantity', 'transaction_type', 'date']
                     missing_columns = [col for col in required_columns if col not in df.columns]
                     
                     if missing_columns:
                         st.error(f"❌ Missing required columns in {uploaded_file.name}: {missing_columns}")
+                        st.info("Required columns: date, ticker, quantity, transaction_type")
+                        st.info("Optional columns: price, stock_name, sector")
+                        st.info("Note: If 'channel' column is missing, it will be auto-generated from the filename")
                         failed_count += 1
                         continue
                     
@@ -363,7 +414,12 @@ class WebAgent:
                     # Fetch historical prices for missing price values
                     if 'price' not in df.columns or df['price'].isna().any():
                         status_text.text(f"🔍 Fetching historical prices for {uploaded_file.name}...")
-                        df = self._fetch_historical_prices_for_upload(df)
+                        try:
+                            df = self._fetch_historical_prices_for_upload(df)
+                        except ValueError as e:
+                            st.error(f"❌ SECURITY ERROR: {e}")
+                            failed_count += 1
+                            continue
                     
                     # Add user_id to DataFrame
                     df['user_id'] = user_id
@@ -409,18 +465,45 @@ class WebAgent:
         try:
             st.info("🔄 **Batch Historical Price Fetching** - Processing uploaded file...")
             
+            # Ensure price column exists - create it if missing
+            if 'price' not in df.columns:
+                df['price'] = None
+                st.info("📝 Price column not found, creating it with None values")
+            
+            # Validate required columns exist - CRITICAL SECURITY CHECK
+            required_columns = ['ticker', 'date']
+            missing_columns = [col for col in required_columns if col not in df.columns]
+            if missing_columns:
+                error_msg = f"❌ SECURITY ERROR: Missing required columns: {missing_columns}. File processing stopped."
+                st.error(error_msg)
+                raise ValueError(error_msg)
+            
             # Get unique tickers and their transaction dates
             ticker_date_pairs = []
             price_indices = []
             
             for idx, row in df.iterrows():
-                ticker = row['ticker']
-                transaction_date = row['date']
-                
-                # Only fetch if price is missing
-                if pd.isna(row['price']) or row['price'] == 0:
-                    ticker_date_pairs.append((ticker, transaction_date))
-                    price_indices.append(idx)
+                try:
+                    ticker = row['ticker']
+                    transaction_date = row['date']
+                    
+                    # Skip if ticker or date is missing/invalid
+                    if pd.isna(ticker) or pd.isna(transaction_date):
+                        continue
+                    
+                    # Only fetch if price is missing or zero
+                    current_price = row.get('price', None)
+                    if pd.isna(current_price) or current_price == 0 or current_price is None:
+                        ticker_date_pairs.append((ticker, transaction_date))
+                        price_indices.append(idx)
+                except KeyError as e:
+                    error_msg = f"❌ SECURITY ERROR: Missing column in row {idx}: {e}. File processing stopped."
+                    st.error(error_msg)
+                    raise ValueError(error_msg)
+                except Exception as e:
+                    error_msg = f"❌ SECURITY ERROR: Error processing row {idx}: {e}. File processing stopped."
+                    st.error(error_msg)
+                    raise ValueError(error_msg)
             
             if not ticker_date_pairs:
                 st.info("ℹ️ All transactions already have historical prices")
@@ -1804,7 +1887,7 @@ class WebAgent:
                                     - **price**: Price per share
                                     - **transaction_type**: 'buy' or 'sell'
                                     - **stock_name**: Company name (optional)
-                                    - **channel**: Investment channel (optional)
+                                    - **channel**: Investment channel (optional - auto-generated from filename if missing)
                                     - **sector**: Stock sector (optional)
                                     """)
                             else:
@@ -2062,7 +2145,7 @@ class WebAgent:
                                 - **price**: Price per share
                                 - **transaction_type**: 'buy' or 'sell'
                                 - **stock_name**: Company name (optional)
-                                - **channel**: Investment channel (optional)
+                                - **channel**: Investment channel (optional - auto-generated from filename if missing)
                                 - **sector**: Stock sector (optional)
                                 """)
                         else:

@@ -701,6 +701,44 @@ def get_all_users_supabase() -> List[Dict]:
         print(f"❌ Error getting all users: {e}")
         return []
 
+def save_transactions_bulk_supabase(df: pd.DataFrame, file_id: int, user_id: int) -> bool:
+    """Save multiple transactions from DataFrame using Supabase client"""
+    try:
+        if df.empty:
+            print("⚠️ No transactions to save")
+            return True
+        
+        # Prepare bulk data
+        bulk_data = []
+        for _, row in df.iterrows():
+            transaction_data = {
+                "user_id": user_id,
+                "file_id": file_id,
+                "stock_name": row.get('stock_name', ''),
+                "ticker": row.get('ticker', ''),
+                "quantity": float(row.get('quantity', 0)),
+                "price": float(row.get('price', 0)) if pd.notna(row.get('price')) else None,
+                "transaction_type": row.get('transaction_type', ''),
+                "date": str(row.get('date', '')),
+                "channel": row.get('channel', ''),
+                "created_at": datetime.utcnow().isoformat()
+            }
+            bulk_data.append(transaction_data)
+        
+        # Insert all transactions in bulk
+        result = supabase.table("investment_transactions").insert(bulk_data).execute()
+        
+        if result.data:
+            print(f"✅ Successfully saved {len(result.data)} transactions for file {file_id}")
+            return True
+        else:
+            print(f"❌ Failed to save transactions for file {file_id}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error saving bulk transactions: {e}")
+        return False
+
 # Database initialization function
 def create_database():
     """Create database tables if they don't exist"""
@@ -727,6 +765,7 @@ def create_database():
         transactions_table_sql = """
         CREATE TABLE IF NOT EXISTS investment_transactions (
             id SERIAL PRIMARY KEY,
+            file_id INTEGER REFERENCES investment_files(id),
             user_id INTEGER REFERENCES users(id),
             stock_name VARCHAR(100) NOT NULL,
             ticker VARCHAR(20) NOT NULL,

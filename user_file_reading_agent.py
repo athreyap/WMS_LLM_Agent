@@ -140,13 +140,9 @@ class UserFileReadingAgent:
     
     def _extract_channel_from_filename(self, filename: str) -> str:
         """Extract channel name from filename"""
-        # Remove timestamp and extension
-        name_parts = filename.replace('.csv', '').split('_')
-        if len(name_parts) >= 2:
-            # Remove timestamp (last part)
-            channel_parts = name_parts[:-1]
-            return '_'.join(channel_parts)
-        return "default"
+        # Remove extension and replace underscores with spaces
+        channel_name = filename.replace('.csv', '').replace('_', ' ')
+        return channel_name
     
     def _read_csv_file(self, file_path: Path) -> Optional[pd.DataFrame]:
         """Read and parse CSV file"""
@@ -183,12 +179,14 @@ class UserFileReadingAgent:
                 df['channel'] = channel_name
             
             # Ensure required columns exist (price is optional as it will be fetched automatically)
-            required_columns = ['stock_name', 'ticker', 'quantity', 'transaction_type', 'date']
+            required_columns = ['ticker', 'quantity', 'transaction_type', 'date']
             missing_columns = [col for col in required_columns if col not in df.columns]
             
             if missing_columns:
                 print(f"❌ Missing required columns in {file_path.name}: {missing_columns}")
                 print(f"ℹ️ Required columns: {required_columns}")
+                print(f"ℹ️ Optional columns: price, stock_name, sector")
+                print(f"ℹ️ Note: If 'channel' column is missing, it will be auto-generated from the filename")
                 print(f"ℹ️ Available columns: {list(df.columns)}")
                 print(f"ℹ️ File will be skipped to avoid repeated processing attempts")
                 return None
@@ -274,7 +272,8 @@ class UserFileReadingAgent:
                     return False
                 
                 # Save transactions to database using Supabase client
-                success = save_transaction_supabase(
+                from database_config_supabase import save_transactions_bulk_supabase
+                success = save_transactions_bulk_supabase(
                     df=df,
                     file_id=file_record['id'],
                     user_id=user_id
@@ -595,12 +594,21 @@ class UserFileReadingAgent:
     def _fetch_historical_prices_for_upload(self, df):
         """Fetch historical prices for uploaded file data - BATCH PROCESSING"""
         try:
+            import streamlit as st
             print("🔄 **Batch Historical Price Fetching** - Processing uploaded file...")
             
             # Ensure price column exists
             if 'price' not in df.columns:
                 df['price'] = None
                 print("📝 Price column not found, creating it with None values")
+            
+            # Validate required columns exist - CRITICAL SECURITY CHECK
+            required_columns = ['ticker', 'date']
+            missing_columns = [col for col in required_columns if col not in df.columns]
+            if missing_columns:
+                error_msg = f"❌ SECURITY ERROR: Missing required columns: {missing_columns}. File processing stopped."
+                print(error_msg)
+                raise ValueError(error_msg)
             
             # Get unique tickers and their transaction dates
             ticker_date_pairs = []
@@ -611,16 +619,22 @@ class UserFileReadingAgent:
                     ticker = row['ticker']
                     transaction_date = row['date']
                     
+                    # Skip if ticker or date is missing/invalid
+                    if pd.isna(ticker) or pd.isna(transaction_date):
+                        continue
+                    
                     # Only fetch if price is missing
                     if pd.isna(row['price']) or row['price'] == 0:
                         ticker_date_pairs.append((ticker, transaction_date))
                         price_indices.append(idx)
                 except KeyError as e:
-                    print(f"⚠️ Missing column in row {idx}: {e}")
-                    continue
+                    error_msg = f"❌ SECURITY ERROR: Missing column in row {idx}: {e}. File processing stopped."
+                    print(error_msg)
+                    raise ValueError(error_msg)
                 except Exception as e:
-                    print(f"⚠️ Error processing row {idx}: {e}")
-                    continue
+                    error_msg = f"❌ SECURITY ERROR: Error processing row {idx}: {e}. File processing stopped."
+                    print(error_msg)
+                    raise ValueError(error_msg)
             
             if not ticker_date_pairs:
                 print("ℹ️ All transactions already have historical prices")
@@ -731,7 +745,11 @@ class UserFileReadingAgent:
             # Step 1: Fetch historical prices for missing price values
             if 'price' not in df.columns or df['price'].isna().any():
                 print(f"🔍 Fetching historical prices for {filename}...")
-                df = self._fetch_historical_prices_for_upload(df)
+                try:
+                    df = self._fetch_historical_prices_for_upload(df)
+                except ValueError as e:
+                    print(f"❌ SECURITY ERROR: {e}")
+                    return False
             
             # Step 2: Save file record and transactions to database
             try:
@@ -746,7 +764,8 @@ class UserFileReadingAgent:
                     return False
                 
                 # Save transactions to database using Supabase client
-                success = save_transaction_supabase(
+                from database_config_supabase import save_transactions_bulk_supabase
+                success = save_transactions_bulk_supabase(
                     df=df,
                     file_id=file_record['id'],
                     user_id=user_id
@@ -782,7 +801,7 @@ class UserFileReadingAgent:
                                 from database_config_supabase import update_stock_data_supabase
                                 update_stock_data_supabase(
                                     ticker=ticker,
-                                    live_price=live_price,
+                                    current_price=live_price,
                                     sector=sector,
                                     stock_name=stock_name
                                 )
@@ -842,7 +861,8 @@ class UserFileReadingAgent:
                     return False
                 
                 # Save transactions to database using Supabase client
-                success = save_transaction_supabase(
+                from database_config_supabase import save_transactions_bulk_supabase
+                success = save_transactions_bulk_supabase(
                     df=df,
                     file_id=file_record['id'],
                     user_id=user_id

@@ -434,8 +434,8 @@ def login_page():
                 - **price**: Price per share
                 - **transaction_type**: 'buy' or 'sell'
                 - **stock_name**: Company name (optional)
-                - **channel**: Investment channel (optional)
-                - **sector**: Stock sector (optional)
+                                 - **channel**: Investment channel (optional - auto-generated from filename if missing)
+                 - **sector**: Stock sector (optional)
                 """)
         
         # Password strength indicator
@@ -653,11 +653,14 @@ def process_uploaded_files_during_registration(uploaded_files, folder_path, user
                     df['channel'] = channel_name
                 
                 # Ensure required columns exist
-                required_columns = ['stock_name', 'ticker', 'quantity', 'transaction_type', 'date']
+                required_columns = ['ticker', 'quantity', 'transaction_type', 'date']
                 missing_columns = [col for col in required_columns if col not in df.columns]
                 
                 if missing_columns:
                     st.error(f"❌ Missing required columns in {uploaded_file.name}: {missing_columns}")
+                    st.info("Required columns: date, ticker, quantity, transaction_type")
+                    st.info("Optional columns: price, stock_name, sector")
+                    st.info("Note: If 'channel' column is missing, it will be auto-generated from the filename")
                     failed_count += 1
                     continue
                 
@@ -694,7 +697,12 @@ def process_uploaded_files_during_registration(uploaded_files, folder_path, user
                 # Fetch historical prices for missing price values
                 if 'price' not in df.columns or df['price'].isna().any():
                     status_text.text(f"🔍 Fetching historical prices for {uploaded_file.name}...")
-                    df = fetch_historical_prices_for_upload(df)
+                    try:
+                        df = fetch_historical_prices_for_upload(df)
+                    except ValueError as e:
+                        print(f"❌ SECURITY ERROR: {e}")
+                        failed_count += 1
+                        continue
                 
                 # Save directly to database using user file agent (same as old users)
                 from user_file_reading_agent import user_file_agent
@@ -741,12 +749,13 @@ def fetch_historical_prices_for_upload(df):
         import streamlit as st
         import pandas as pd
         
-        # Validate required columns exist
+        # Validate required columns exist - CRITICAL SECURITY CHECK
         required_columns = ['ticker', 'date']
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
-            print(f"❌ Missing required columns: {missing_columns}")
-            return df
+            error_msg = f"❌ SECURITY ERROR: Missing required columns: {missing_columns}. File processing stopped."
+            print(error_msg)
+            raise ValueError(error_msg)
         
         # Initialize mftool for mutual funds
         mf = Mftool()
@@ -767,11 +776,13 @@ def fetch_historical_prices_for_upload(df):
                 tickers_with_dates.append((ticker, transaction_date))
                 price_indices.append(idx)
             except KeyError as e:
-                print(f"⚠️ Missing column in row {idx}: {e}")
-                continue
+                error_msg = f"❌ SECURITY ERROR: Missing column in row {idx}: {e}. File processing stopped."
+                print(error_msg)
+                raise ValueError(error_msg)
             except Exception as e:
-                print(f"⚠️ Error processing row {idx}: {e}")
-                continue
+                error_msg = f"❌ SECURITY ERROR: Error processing row {idx}: {e}. File processing stopped."
+                print(error_msg)
+                raise ValueError(error_msg)
         
         if not tickers_with_dates:
             print("ℹ️ No valid ticker/date pairs found for price fetching")
