@@ -18,7 +18,8 @@ from database_config_supabase import (
     update_user_login_supabase,
     update_user_password_supabase,
     delete_user_supabase,
-    get_all_users_supabase
+    get_all_users_supabase,
+    create_database
 )
 from sqlalchemy.exc import IntegrityError
 import os
