@@ -1916,6 +1916,30 @@ class WebAgent:
                     except Exception as e:
                         st.sidebar.error(f"❌ Database diagnosis failed: {e}")
                 
+                # Check session state button
+                if st.sidebar.button("🔍 Check Session State", type="secondary", help="Check current session state values"):
+                    st.sidebar.info("🔍 Checking session state...")
+                    st.sidebar.info(f"🔍 Current user_id: {self.session_state.get('user_id', 'Not Set')}")
+                    st.sidebar.info(f"🔍 Current username: {self.session_state.get('username', 'Not Set')}")
+                    st.sidebar.info(f"🔍 Session keys: {list(self.session_state.keys())}")
+                
+                # Fix user_id mismatch button
+                if st.sidebar.button("🔧 Fix User ID Mismatch", type="secondary", help="Fix transactions with wrong user_id"):
+                    if user_id and user_id != 1:
+                        st.sidebar.info("🔧 Fixing user_id mismatch...")
+                        try:
+                            from database_config_supabase import supabase
+                            # Update transactions with wrong user_id to current user_id
+                            result = supabase.table("investment_transactions").update({"user_id": user_id}).eq("user_id", 5).execute()
+                            st.sidebar.success(f"✅ Updated {len(result.data) if result.data else 0} transactions to user_id {user_id}")
+                            
+                            # Also update file records
+                            file_result = supabase.table("investment_files").update({"user_id": user_id}).eq("user_id", 5).execute()
+                            st.sidebar.success(f"✅ Updated {len(file_result.data) if file_result.data else 0} file records to user_id {user_id}")
+                            
+                        except Exception as e:
+                            st.sidebar.error(f"❌ Fix failed: {e}")
+                
                 # Show file history
                 st.sidebar.markdown("---")
                 st.sidebar.markdown("### 📋 File History")
