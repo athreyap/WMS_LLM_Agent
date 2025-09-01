@@ -620,13 +620,48 @@ class WebAgent:
             total_transactions = len(df)
             print(f"🔍 Final live prices: {zero_prices}/{total_transactions} transactions have zero prices")
             
-
+            # If all prices are zero or missing, try to fetch them again
+            if zero_prices == total_transactions and total_transactions > 0:
+                print(f"⚠️ All prices are zero, attempting to fetch fresh prices...")
+                try:
+                    if user_id and user_id != 1:
+                        # First try to update prices in database
+                        update_result = update_user_stock_prices(user_id)
+                        if update_result.get('updated', 0) > 0:
+                            # Get fresh live prices from database
+                            fresh_live_prices = get_user_live_prices(user_id)
+                            df['live_price'] = df['ticker'].map(fresh_live_prices).fillna(df['price'])
+                            print(f"✅ Refreshed prices from database: {len(fresh_live_prices)} prices fetched")
+                        else:
+                            # If database update failed, try direct price fetching
+                            print(f"⚠️ Database update failed, trying direct price fetching...")
+                            direct_prices = {}
+                            unique_tickers = df['ticker'].unique()
+                            
+                            for ticker in unique_tickers:
+                                try:
+                                    price = get_live_price(ticker)
+                                    if price and price > 0:
+                                        direct_prices[ticker] = price
+                                except Exception as e:
+                                    print(f"⚠️ Error fetching price for {ticker}: {e}")
+                            
+                            if direct_prices:
+                                df['live_price'] = df['ticker'].map(direct_prices).fillna(df['price'])
+                                print(f"✅ Direct price fetching: {len(direct_prices)} prices fetched")
+                except Exception as e:
+                    print(f"❌ Error refreshing prices: {e}")
             
             # Calculate current values and gains
             df['current_value'] = df['quantity'] * df['live_price']
             df['invested_amount'] = df['quantity'] * df['price']
             df['abs_gain'] = df['current_value'] - df['invested_amount']
-            df['pct_gain'] = (df['abs_gain'] / df['invested_amount']) * 100
+            
+            # Calculate percentage gain with division by zero protection
+            df['pct_gain'] = df.apply(
+                lambda row: (row['abs_gain'] / row['invested_amount'] * 100) if row['invested_amount'] > 0 else 0, 
+                axis=1
+            )
             
             # Add sector information if not present or if all sectors are Unknown
             if 'sector' not in df.columns or df['sector'].isna().all() or (df['sector'] == 'Unknown').all():
@@ -1594,7 +1629,37 @@ class WebAgent:
                 except Exception as e:
                     pass  # Silently handle monitoring errors
         
+        # Load data and ensure prices are fetched
         df = self.load_data_from_agents(user_id)
+        
+        # Force refresh live prices if they're missing or zero
+        if not df.empty and user_id and user_id != 1:
+            # Check if live prices are missing or zero
+            if 'live_price' in df.columns:
+                zero_prices = (df['live_price'] == 0).sum()
+                total_transactions = len(df)
+                
+                if zero_prices > 0 or zero_prices == total_transactions:
+                    st.info("🔄 Fetching live prices for your portfolio...")
+                    try:
+                        # Force update live prices
+                        update_result = update_user_stock_prices(user_id)
+                        if update_result.get('updated', 0) > 0:
+                            st.success(f"✅ Updated {update_result['updated']} stock prices")
+                            
+                            # Reload data with fresh prices
+                            df = self.load_data_from_agents(user_id)
+                        else:
+                            st.warning("⚠️ Could not update live prices. Using historical prices.")
+                            
+                            # Show debug information
+                            with st.expander("🔍 Debug: Price Fetching Details"):
+                                st.write(f"**Update Result:** {update_result}")
+                                st.write(f"**Zero Prices:** {zero_prices}/{total_transactions}")
+                                st.write(f"**Unique Tickers:** {df['ticker'].nunique()}")
+                                st.write(f"**Sample Tickers:** {list(df['ticker'].unique())[:10]}")
+                    except Exception as e:
+                        st.error(f"❌ Error updating prices: {e}")
         
         # Check if user has transactions
         has_transactions = not df.empty
