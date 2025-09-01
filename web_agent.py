@@ -1691,7 +1691,7 @@ class WebAgent:
                         st.info(f"DataFrame shape: {df.shape}, Columns: {list(df.columns)}")
                 
         else:
-            # User has no transactions - show prominent file upload option
+            # User has no transactions - show welcome message
             st.markdown('<h2 class="section-header">🚀 Welcome to Your Portfolio Analytics!</h2>', unsafe_allow_html=True)
             
             # Create a centered layout for new users
@@ -1699,39 +1699,19 @@ class WebAgent:
             
             with col2:
                 st.markdown("""
-                ### 📤 Get Started with Your Portfolio
+                ### 📊 Your Portfolio Dashboard
                 
-                To begin analyzing your portfolio, you need to upload your transaction files.
+                Welcome! Your portfolio dashboard is ready.
                 """)
                 
-                # File Upload Section for new users
-                is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
-                
-                if is_streamlit_cloud:
-                    # Streamlit Cloud - always show file upload for new users
-                    st.info("🌐 **Cloud Mode**: Upload your CSV transaction files for automatic processing with historical price calculation.")
-                    
-                    uploaded_files = st.file_uploader(
-                        "Choose CSV files",
-                        type=['csv'],
-                        accept_multiple_files=True,
-                        help="Upload CSV files with transaction data. Files will be processed automatically with historical price fetching."
-                    )
-                    
-                    if uploaded_files:
-                        if st.button("📊 Process Files & Start Analysis", type="primary", use_container_width=True):
-                            # Get folder path or create one
-                            folder_path = self.session_state.get('folder_path', '')
-                            if not folder_path and user_id:
-                                folder_path = f"/tmp/{username}_investments"
-                                self.session_state['folder_path'] = folder_path
-                            
-                            if folder_path:
-                                self._process_uploaded_files(uploaded_files, folder_path)
-                                st.rerun()
-                            else:
-                                st.error("❌ Could not determine folder path for file processing")
-                        st.info(f"Selected {len(uploaded_files)} file(s) for processing")
+                # Check if user just registered and has no data yet
+                if user_id and user_id != 1:
+                    st.info("""
+                    **Next Steps:**
+                    - 📤 **Upload Files**: Use the file upload option in the left sidebar to add your transaction files
+                    - 📊 **View Analytics**: Once files are processed, you'll see your portfolio analysis here
+                    - 🔄 **Refresh Data**: Use the refresh button to update live prices and sectors
+                    """)
                     
                     # Show sample CSV format
                     with st.expander("📋 Sample CSV Format"):
@@ -1747,21 +1727,20 @@ class WebAgent:
                         - **sector**: Stock sector (optional)
                         """)
                 else:
-                    st.info("📁 **Local Mode**: Place CSV files in your transaction folder for automatic processing.")
-                    st.markdown("""
-                    ### 📁 Setup Instructions:
-                    1. Create a folder for your transaction files
-                    2. Place your CSV files in that folder
-                    3. The system will automatically detect and process them
+                    st.info("""
+                    **Getting Started:**
+                    - 📤 **Upload Files**: Use the file upload option in the left sidebar
+                    - 📊 **View Analytics**: Your portfolio analysis will appear here
+                    - 🔄 **Refresh Data**: Keep your data up to date
                     """)
                 
                 # Show what happens after upload
                 st.markdown("""
-                ### 🎯 What Happens After Upload:
-                - ✅ **Automatic Processing**: Files are processed with historical price data
-                - 📊 **Portfolio Analysis**: Get detailed analytics and insights
-                - 📈 **Performance Tracking**: Monitor your investment performance
-                - 🔄 **Live Updates**: Real-time price updates and sector information
+                ### 🎯 What You'll See:
+                - 📊 **Portfolio Overview**: Complete analysis of your investments
+                - 📈 **Performance Metrics**: Returns, gains, and losses
+                - 🏆 **Top Performers**: Your best and worst performing stocks
+                - 📋 **Detailed Analytics**: Sector analysis, channel breakdown, and more
                 """)
         
         # Store original DataFrame for comparison

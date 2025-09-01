@@ -402,46 +402,108 @@ def login_page():
     with tab2:
         st.markdown("### Create Account")
         
-        with st.form("register_form"):
-             new_username = st.text_input("Username", key="register_username")
-             new_email = st.text_input("Email", key="register_email")
-             new_password = st.text_input("Password", type="password", key="register_password")
-             confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
-             
-             # File upload mode info
-             st.info("📤 **File Upload Mode**: You can upload your transaction files directly through the web interface after registration.")
-             
-             # Password strength indicator
-             if new_password:
-                 is_valid, message = validate_password_strength(new_password)
-                 if is_valid:
-                     st.success("✅ " + message)
-                 else:
-                     st.error("❌ " + message)
-             
-             # Generate strong password button
-             if st.form_submit_button("Generate Strong Password"):
-                 strong_password = generate_strong_password()
-                 st.session_state['register_password'] = strong_password
-                 st.session_state['confirm_password'] = strong_password
-                 st.rerun()
-             
-             register_button = st.form_submit_button("Register", type="primary")
-             
-             if register_button:
-                 if not all([new_username, new_email, new_password, confirm_password]):
-                     st.error("Please fill in all required fields")
-                 elif not validate_email(new_email):
-                     st.error("Please enter a valid email address")
-                 elif new_password != confirm_password:
-                     st.error("Passwords do not match")
-                 else:
-                     # No folder path needed - will be auto-generated
-                     success, message = create_user(new_username, new_email, new_password, folder_path=None)
-                     if success:
-                         st.success("Account created successfully! You can now login.")
-                     else:
-                         st.error(message)
+    with tab2:
+        st.markdown("### Create Account")
+        
+        # Registration form with file upload
+        new_username = st.text_input("Username", key="register_username")
+        new_email = st.text_input("Email", key="register_email")
+        new_password = st.text_input("Password", type="password", key="register_password")
+        confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
+        
+        # File upload section during registration
+        st.markdown("### 📤 Upload Your Transaction Files")
+        st.info("🌐 **Upload your CSV transaction files during registration for immediate portfolio analysis.**")
+        
+        uploaded_files = st.file_uploader(
+            "Choose CSV files (optional)",
+            type=['csv'],
+            accept_multiple_files=True,
+            help="Upload CSV files with transaction data. Files will be processed automatically after registration."
+        )
+        
+        if uploaded_files:
+            st.success(f"✅ Selected {len(uploaded_files)} file(s) for processing")
+            
+            # Show sample CSV format
+            with st.expander("📋 Sample CSV Format"):
+                st.markdown("""
+                Your CSV file should have these columns:
+                - **date**: Transaction date (YYYY-MM-DD)
+                - **ticker**: Stock symbol (e.g., AAPL, MSFT)
+                - **quantity**: Number of shares
+                - **price**: Price per share
+                - **transaction_type**: 'buy' or 'sell'
+                - **stock_name**: Company name (optional)
+                - **channel**: Investment channel (optional)
+                - **sector**: Stock sector (optional)
+                """)
+        
+        # Password strength indicator
+        if new_password:
+            is_valid, message = validate_password_strength(new_password)
+            if is_valid:
+                st.success("✅ " + message)
+            else:
+                st.error("❌ " + message)
+        
+        # Generate strong password button
+        if st.button("Generate Strong Password"):
+            strong_password = generate_strong_password()
+            st.session_state['register_password'] = strong_password
+            st.session_state['confirm_password'] = strong_password
+            st.rerun()
+        
+        # Registration button
+        if st.button("Create Account & Process Files", type="primary", use_container_width=True):
+            if not all([new_username, new_email, new_password, confirm_password]):
+                st.error("Please fill in all required fields")
+            elif not validate_email(new_email):
+                st.error("Please enter a valid email address")
+            elif new_password != confirm_password:
+                st.error("Passwords do not match")
+            else:
+                # Create user account
+                success, message = create_user(new_username, new_email, new_password, folder_path=None)
+                if success:
+                    st.success("✅ Account created successfully!")
+                    
+                    # Process uploaded files if any
+                    if uploaded_files:
+                        st.info("🔄 Processing uploaded files...")
+                        
+                        # Get user info to get user_id
+                        user_info = get_user_by_username(new_username)
+                        if user_info:
+                            user_id = user_info['id']
+                            
+                            # Create folder path for the user
+                            folder_path = f"/tmp/{new_username}_investments"
+                            
+                            # Process the uploaded files
+                            try:
+                                from web_agent import web_agent
+                                web_agent._process_uploaded_files(uploaded_files, folder_path)
+                                st.success(f"✅ Successfully processed {len(uploaded_files)} file(s)!")
+                                st.success("🎉 Your portfolio is ready for analysis!")
+                                
+                                # Auto-login the user
+                                st.session_state['user_authenticated'] = True
+                                st.session_state['username'] = new_username
+                                st.session_state['user_id'] = user_id
+                                st.session_state['user_role'] = user_info['role']
+                                st.session_state['login_time'] = datetime.now()
+                                
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error processing files: {e}")
+                                st.info("You can still login and upload files later.")
+                        else:
+                            st.error("❌ Could not retrieve user information")
+                    else:
+                        st.success("🎉 Account created! You can login and upload files later.")
+                else:
+                    st.error(message)
     
     st.markdown('</div>', unsafe_allow_html=True)
 
