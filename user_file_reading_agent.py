@@ -592,6 +592,211 @@ class UserFileReadingAgent:
         except Exception as e:
             print(f"❌ Error cleaning up old files for user {user_id}: {e}")
     
+    def _fetch_historical_prices_for_upload(self, df):
+        """Fetch historical prices for uploaded file data - BATCH PROCESSING"""
+        try:
+            print("🔄 **Batch Historical Price Fetching** - Processing uploaded file...")
+            
+            # Get unique tickers and their transaction dates
+            ticker_date_pairs = []
+            price_indices = []
+            
+            for idx, row in df.iterrows():
+                ticker = row['ticker']
+                transaction_date = row['date']
+                
+                # Only fetch if price is missing
+                if pd.isna(row['price']) or row['price'] == 0:
+                    ticker_date_pairs.append((ticker, transaction_date))
+                    price_indices.append(idx)
+            
+            if not ticker_date_pairs:
+                print("ℹ️ All transactions already have historical prices")
+                return df
+            
+            print(f"📊 Fetching historical prices for {len(ticker_date_pairs)} transactions...")
+            
+            # Batch fetch prices
+            prices_found = 0
+            
+            for i, (ticker, transaction_date) in enumerate(ticker_date_pairs):
+                try:
+                    # Check if it's a mutual fund (numeric ticker or MF_ prefixed)
+                    clean_ticker = str(ticker).strip().upper()
+                    clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
+                    
+                    if clean_ticker.isdigit() or clean_ticker.startswith('MF_'):
+                        # Mutual fund - use mftool
+                        print(f"🔍 Fetching mutual fund historical price for {ticker} using mftool...")
+                        try:
+                            from mf_price_fetcher import fetch_mutual_fund_historical_price
+                            price = fetch_mutual_fund_historical_price(ticker, transaction_date)
+                            if price and price > 0:
+                                idx = price_indices[i]
+                                df.at[idx, 'price'] = price
+                                # Set sector to Mutual Funds for mutual fund tickers
+                                df.at[idx, 'sector'] = 'Mutual Funds'
+                                df.at[idx, 'stock_name'] = f"MF-{ticker}"
+                                prices_found += 1
+                                print(f"✅ MF {ticker}: ₹{price} for {transaction_date} - Mutual Funds")
+                        except Exception as e:
+                            print(f"⚠️ MFTool failed for {ticker}: {e}")
+                    else:
+                        # Regular stock - try multiple price sources
+                        price = None
+                        
+                        # Method 1: Try file_manager
+                        try:
+                            from file_manager import fetch_historical_price
+                            price = fetch_historical_price(ticker, transaction_date)
+                        except:
+                            pass
+                        
+                        # Method 2: Try yfinance
+                        if not price:
+                            try:
+                                import yfinance as yf
+                                stock = yf.Ticker(ticker)
+                                hist = stock.history(start=transaction_date, end=transaction_date + pd.Timedelta(days=1))
+                                if not hist.empty:
+                                    price = hist['Close'].iloc[0]
+                            except:
+                                pass
+                        
+                        # Method 3: Try indstocks API
+                        if not price:
+                            try:
+                                from indstocks_api import get_indstocks_client
+                                api_client = get_indstocks_client()
+                                if api_client and api_client.available:
+                                    price_data = api_client.get_historical_price(ticker, transaction_date)
+                                    if price_data and isinstance(price_data, dict) and price_data.get('price'):
+                                        price = price_data['price']
+                            except Exception as e:
+                                print(f"⚠️ Indstocks API failed for {ticker}: {e}")
+                                pass
+                        
+                        # Update DataFrame if price found
+                        if price and price > 0:
+                            idx = price_indices[i]
+                            df.at[idx, 'price'] = price
+                            prices_found += 1
+                            print(f"✅ {ticker}: ₹{price} for {transaction_date}")
+                        else:
+                            print(f"❌ {ticker}: No historical price found for {transaction_date}")
+                    
+                except Exception as e:
+                    print(f"⚠️ Error fetching historical price for {ticker}: {e}")
+            
+            # Final status
+            print(f"✅ **Historical Price Fetch Complete**: {prices_found}/{len(ticker_date_pairs)} transactions got prices")
+            
+            return df
+            
+        except Exception as e:
+            print(f"❌ Error in batch historical price fetching: {e}")
+            return df
+    
+    def _process_uploaded_file_direct(self, df: pd.DataFrame, user_id: int, filename: str) -> bool:
+        """Process uploaded file data directly without saving to disk"""
+        try:
+            print(f"🔄 Processing uploaded file directly: {filename} for user {user_id}")
+            
+            # Create user agent if not exists
+            if user_id not in self.user_agents:
+                folder_path = self._get_user_folder_path(user_id)
+                if not folder_path:
+                    print(f"❌ No folder path found for user {user_id}")
+                    return False
+                self._create_user_agent(user_id, folder_path)
+            
+            user_agent_data = self.user_agents[user_id]
+            
+            # Step 1: Fetch historical prices for missing price values
+            if 'price' not in df.columns or df['price'].isna().any():
+                print(f"🔍 Fetching historical prices for {filename}...")
+                df = self._fetch_historical_prices_for_upload(df)
+            
+            # Step 2: Save file record and transactions to database
+            try:
+                file_record = save_file_record_supabase(
+                    filename=filename,
+                    file_path=f"uploaded_{filename}",  # Virtual path for uploaded files
+                    user_id=user_id
+                )
+                
+                if file_record is None:
+                    print(f"❌ Failed to save file record for {filename}")
+                    return False
+                
+                # Save transactions to database using Supabase client
+                success = save_transaction_supabase(
+                    df=df,
+                    file_id=file_record['id'],
+                    user_id=user_id
+                )
+                
+                if success:
+                    # Step 3: Fetch live prices and sector data for new tickers
+                    new_tickers = df['ticker'].unique().tolist()
+                    print(f"🔄 Fetching live prices and sector data for {len(new_tickers)} tickers...")
+                    
+                    # Use stock_agent to fetch fresh live prices and sector data
+                    from stock_data_agent import stock_agent
+                    for ticker in new_tickers:
+                        try:
+                            # Check if it's a mutual fund (numeric ticker or MF_ prefixed)
+                            is_mf = ticker.isdigit() or ticker.startswith('MF_')
+                            
+                            if is_mf:
+                                # Use mftool for mutual funds
+                                from mf_price_fetcher import fetch_mutual_fund_price
+                                live_price = fetch_mutual_fund_price(ticker)
+                                sector = 'Mutual Funds'
+                                stock_name = f"MF-{ticker}"
+                            else:
+                                # Use stock_agent for regular stocks
+                                stock_data = stock_agent._fetch_stock_data(ticker)
+                                live_price = stock_data.get('live_price') if stock_data else None
+                                sector = stock_data.get('sector') if stock_data else None
+                                stock_name = stock_data.get('stock_name') if stock_data else None
+                            
+                            # Update stock_data table
+                            if live_price:
+                                from database_config_supabase import update_stock_data_supabase
+                                update_stock_data_supabase(
+                                    ticker=ticker,
+                                    live_price=live_price,
+                                    sector=sector,
+                                    stock_name=stock_name
+                                )
+                                print(f"✅ {ticker}: Live=₹{live_price}, Sector={sector}")
+                            else:
+                                print(f"❌ {ticker}: No live price available")
+                                
+                        except Exception as e:
+                            print(f"❌ Error updating stock data for {ticker}: {e}")
+                    
+                    # Mark as processed (no file hash needed for direct uploads)
+                    user_agent_data['processed_files'].add(f"uploaded_{filename}")
+                    
+                    # Save processed files cache
+                    self._save_user_processed_files(user_id, user_agent_data)
+                    
+                    print(f"✅ Successfully processed uploaded file {filename} for user {user_id}")
+                    return True
+                else:
+                    print(f"❌ Failed to save transactions for {filename}")
+                    return False
+                    
+            except Exception as e:
+                print(f"❌ Error saving to database: {e}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error processing uploaded file {filename} for user {user_id}: {e}")
+            return False
+    
     def _process_uploaded_file(self, file_path: str, user_id: int, df: pd.DataFrame) -> bool:
         """Process an uploaded file that has already been processed with historical prices"""
         try:

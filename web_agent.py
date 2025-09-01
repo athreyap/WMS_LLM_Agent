@@ -365,17 +365,19 @@ class WebAgent:
                         status_text.text(f"🔍 Fetching historical prices for {uploaded_file.name}...")
                         df = self._fetch_historical_prices_for_upload(df)
                     
-                    # Save file to user's folder
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    filename = f"{uploaded_file.name.replace('.csv', '')}_{timestamp}.csv"
-                    file_path = os.path.join(folder_path, filename)
+                    # Add user_id to DataFrame
+                    df['user_id'] = user_id
                     
-                    # Save processed DataFrame
-                    df.to_csv(file_path, index=False)
-                    
-                    # Save to database using user file agent
+                    # Save directly to database using user file agent
                     from user_file_reading_agent import user_file_agent
-                    success = user_file_agent._process_uploaded_file(file_path, user_id, df)
+                    success = user_file_agent._process_uploaded_file_direct(df, user_id, uploaded_file.name)
+                    
+                    if success:
+                        processed_count += 1
+                        st.success(f"✅ Successfully processed {uploaded_file.name}")
+                    else:
+                        failed_count += 1
+                        st.error(f"❌ Failed to process {uploaded_file.name}")
                     
                     if success:
                         processed_count += 1
@@ -489,9 +491,10 @@ class WebAgent:
                                 api_client = get_indstocks_client()
                                 if api_client and api_client.available:
                                     price_data = api_client.get_historical_price(ticker, transaction_date)
-                                    if price_data and price_data.get('price'):
+                                    if price_data and isinstance(price_data, dict) and price_data.get('price'):
                                         price = price_data['price']
-                            except:
+                            except Exception as e:
+                                print(f"⚠️ Indstocks API failed for {ticker}: {e}")
                                 pass
                         
                         # Update DataFrame if price found
