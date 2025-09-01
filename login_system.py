@@ -100,24 +100,24 @@ def create_user(username, email, password, role="user", folder_path=None):
         if not is_valid:
             return False, message
         
-        # For Streamlit Cloud, we don't validate local folder paths
-        # The GitHub path conversion will handle this automatically
-        is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
-        
-        if not is_streamlit_cloud:
-            # Only validate folder path for local development
-            if not folder_path or not folder_path.strip():
-                return False, "Folder path is required for local development"
-            
+        # Make folder path optional - will be auto-generated if not provided
+        if folder_path and folder_path.strip():
             folder_path = folder_path.strip()
             
-            # Check if folder exists (only for local development)
-            if not os.path.exists(folder_path):
-                return False, f"Folder path does not exist: {folder_path}"
+            # Only validate folder path for local development if it's provided
+            is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
             
-            # Check if it's a directory
-            if not os.path.isdir(folder_path):
-                return False, f"Path is not a directory: {folder_path}"
+            if not is_streamlit_cloud:
+                # Check if folder exists (only for local development)
+                if not os.path.exists(folder_path):
+                    return False, f"Folder path does not exist: {folder_path}"
+                
+                # Check if it's a directory
+                if not os.path.isdir(folder_path):
+                    return False, f"Path is not a directory: {folder_path}"
+        else:
+            # No folder path provided - will be auto-generated
+            folder_path = None
         
         # Hash password
         hashed_password, salt = hash_password(password)
@@ -396,62 +396,45 @@ def login_page():
         st.markdown("### Create Account")
         
         with st.form("register_form"):
-            new_username = st.text_input("Username", key="register_username")
-            new_email = st.text_input("Email", key="register_email")
-            new_password = st.text_input("Password", type="password", key="register_password")
-            confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
-            # Check if running on Streamlit Cloud
-            is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
-            
-            if is_streamlit_cloud:
-                st.info("🌐 **Streamlit Cloud Mode**: Your files will be stored in a cloud-based folder structure.")
-                folder_path = st.text_input(
-                    "Local Folder Name (Optional)",
-                    key="register_folder_path",
-                    placeholder="e.g., my_portfolio or investments",
-                    help="Optional: Provide a folder name for your files. If left empty, a default folder will be created."
-                )
-            else:
-                folder_path = st.text_input(
-                    "Transaction Folder Path *",
-                    key="register_folder_path",
-                    placeholder="e.g., C:/MyPortfolio or ./my_transactions",
-                    help="Path to folder containing your transaction CSV files. This folder will be used to automatically process your transaction files."
-                )
-            
-            # Password strength indicator
-            if new_password:
-                is_valid, message = validate_password_strength(new_password)
-                if is_valid:
-                    st.success("✅ " + message)
-                else:
-                    st.error("❌ " + message)
-            
-            # Generate strong password button
-            if st.form_submit_button("Generate Strong Password"):
-                strong_password = generate_strong_password()
-                st.session_state['register_password'] = strong_password
-                st.session_state['confirm_password'] = strong_password
-                st.rerun()
-            
-            register_button = st.form_submit_button("Register", type="primary")
-            
-            if register_button:
-                if not all([new_username, new_email, new_password, confirm_password]):
-                    st.error("Please fill in all required fields")
-                elif not validate_email(new_email):
-                    st.error("Please enter a valid email address")
-                elif new_password != confirm_password:
-                    st.error("Passwords do not match")
-                else:
-                    # Use folder_path if provided, otherwise empty string
-                    # GitHub path conversion will happen in create_user function
-                    user_folder_path = folder_path.strip() if folder_path.strip() else ""
-                    success, message = create_user(new_username, new_email, new_password, folder_path=user_folder_path)
-                    if success:
-                        st.success("Account created successfully! You can now login.")
-                    else:
-                        st.error(message)
+             new_username = st.text_input("Username", key="register_username")
+             new_email = st.text_input("Email", key="register_email")
+             new_password = st.text_input("Password", type="password", key="register_password")
+             confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
+             
+             # File upload mode info
+             st.info("📤 **File Upload Mode**: You can upload your transaction files directly through the web interface after registration.")
+             
+             # Password strength indicator
+             if new_password:
+                 is_valid, message = validate_password_strength(new_password)
+                 if is_valid:
+                     st.success("✅ " + message)
+                 else:
+                     st.error("❌ " + message)
+             
+             # Generate strong password button
+             if st.form_submit_button("Generate Strong Password"):
+                 strong_password = generate_strong_password()
+                 st.session_state['register_password'] = strong_password
+                 st.session_state['confirm_password'] = strong_password
+                 st.rerun()
+             
+             register_button = st.form_submit_button("Register", type="primary")
+             
+             if register_button:
+                 if not all([new_username, new_email, new_password, confirm_password]):
+                     st.error("Please fill in all required fields")
+                 elif not validate_email(new_email):
+                     st.error("Please enter a valid email address")
+                 elif new_password != confirm_password:
+                     st.error("Passwords do not match")
+                 else:
+                     # No folder path needed - will be auto-generated
+                     success, message = create_user(new_username, new_email, new_password, folder_path=None)
+                     if success:
+                         st.success("Account created successfully! You can now login.")
+                     else:
+                         st.error(message)
     
     st.markdown('</div>', unsafe_allow_html=True)
 
