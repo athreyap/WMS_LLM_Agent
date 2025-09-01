@@ -411,44 +411,92 @@ class WebAgent:
             status_text.empty()
     
     def _fetch_historical_prices_for_upload(self, df):
-        """Fetch historical prices for uploaded file data"""
+        """Fetch historical prices for uploaded file data - BATCH PROCESSING"""
         try:
-            # Prepare tickers and dates for bulk fetching
-            tickers_with_dates = []
+            st.info("🔄 **Batch Historical Price Fetching** - Processing uploaded file...")
+            
+            # Get unique tickers and their transaction dates
+            ticker_date_pairs = []
             price_indices = []
             
             for idx, row in df.iterrows():
                 ticker = row['ticker']
                 transaction_date = row['date']
                 
-                tickers_with_dates.append((ticker, transaction_date))
-                price_indices.append(idx)
+                # Only fetch if price is missing
+                if pd.isna(row['price']) or row['price'] == 0:
+                    ticker_date_pairs.append((ticker, transaction_date))
+                    price_indices.append(idx)
             
-            if not tickers_with_dates:
+            if not ticker_date_pairs:
+                st.info("ℹ️ All transactions already have historical prices")
                 return df
             
-            # Bulk fetch prices
-            from file_manager import fetch_prices_bulk
-            bulk_prices = fetch_prices_bulk(tickers_with_dates)
+            st.info(f"📊 Fetching historical prices for {len(ticker_date_pairs)} transactions...")
             
-            # Add price column if it doesn't exist
-            if 'price' not in df.columns:
-                df['price'] = None
+            # Batch fetch prices with progress tracking
+            progress_bar = st.progress(0)
+            prices_found = 0
             
-            # Update prices in DataFrame
-            for i, (ticker, transaction_date) in enumerate(tickers_with_dates):
-                idx = price_indices[i]
-                price = bulk_prices.get(ticker)
-                df.at[idx, 'price'] = price
+            for i, (ticker, transaction_date) in enumerate(ticker_date_pairs):
+                try:
+                    # Try multiple price sources
+                    price = None
+                    
+                    # Method 1: Try file_manager
+                    try:
+                        from file_manager import fetch_historical_price
+                        price = fetch_historical_price(ticker, transaction_date)
+                    except:
+                        pass
+                    
+                    # Method 2: Try yfinance
+                    if not price:
+                        try:
+                            import yfinance as yf
+                            stock = yf.Ticker(ticker)
+                            hist = stock.history(start=transaction_date, end=transaction_date + pd.Timedelta(days=1))
+                            if not hist.empty:
+                                price = hist['Close'].iloc[0]
+                        except:
+                            pass
+                    
+                    # Method 3: Try indstocks API
+                    if not price:
+                        try:
+                            from indstocks_api import get_indstocks_client
+                            api_client = get_indstocks_client()
+                            if api_client and api_client.available:
+                                price_data = api_client.get_historical_price(ticker, transaction_date)
+                                if price_data and price_data.get('price'):
+                                    price = price_data['price']
+                        except:
+                            pass
+                    
+                    # Update DataFrame if price found
+                    if price and price > 0:
+                        idx = price_indices[i]
+                        df.at[idx, 'price'] = price
+                        prices_found += 1
+                        print(f"✅ {ticker}: ₹{price} for {transaction_date}")
+                    else:
+                        print(f"❌ {ticker}: No historical price found for {transaction_date}")
+                    
+                    # Update progress
+                    progress = (i + 1) / len(ticker_date_pairs)
+                    progress_bar.progress(progress)
+                    
+                except Exception as e:
+                    print(f"⚠️ Error fetching historical price for {ticker}: {e}")
             
-            # Show summary
-            prices_found = sum(1 for price in bulk_prices.values() if price is not None)
-            st.info(f"🔍 Price summary: {prices_found}/{len(tickers_with_dates)} transactions got historical prices")
+            # Final status
+            progress_bar.progress(1.0)
+            st.success(f"✅ **Historical Price Fetch Complete**: {prices_found}/{len(ticker_date_pairs)} transactions got prices")
             
             return df
             
         except Exception as e:
-            st.error(f"❌ Error fetching historical prices: {e}")
+            st.error(f"❌ Error in batch historical price fetching: {e}")
             return df
     
     def initialize_agents(self):
@@ -1644,6 +1692,137 @@ class WebAgent:
                 # Load data and ensure prices are fetched
                 df = self.load_data_from_agents(user_id)
                 
+                # BATCH PROCESSING: Historical Prices → Live Prices → Sector Data → Database Storage
+                if not df.empty and user_id and user_id != 1:
+                    st.info("🔄 **Batch Processing** - Fetching historical prices, live prices, and sector data...")
+                    
+                    # Step 1: Get unique tickers for batch processing
+                    unique_tickers = df['ticker'].unique()
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    # Step 2: Batch fetch historical prices for missing prices
+                    status_text.text("📊 Step 1/3: Fetching historical prices...")
+                    historical_prices = {}
+                    
+                    for i, ticker in enumerate(unique_tickers):
+                        try:
+                            # Check if we need historical prices for this ticker
+                            ticker_transactions = df[df['ticker'] == ticker]
+                            missing_prices = ticker_transactions['price'].isna().sum()
+                            
+                            if missing_prices > 0:
+                                # Fetch historical prices for transaction dates
+                                for idx, row in ticker_transactions.iterrows():
+                                    if pd.isna(row['price']):
+                                        transaction_date = row['date']
+                                        try:
+                                            from file_manager import fetch_historical_price
+                                            price = fetch_historical_price(ticker, transaction_date)
+                                            if price and price > 0:
+                                                df.at[idx, 'price'] = price
+                                                historical_prices[ticker] = price
+                                        except Exception as e:
+                                            print(f"⚠️ Error fetching historical price for {ticker}: {e}")
+                            
+                            # Update progress
+                            progress = (i + 1) / len(unique_tickers)
+                            progress_bar.progress(progress)
+                            
+                        except Exception as e:
+                            print(f"❌ Error processing {ticker}: {e}")
+                    
+                    # Step 3: Batch fetch live prices and sector data
+                    status_text.text("📈 Step 2/3: Fetching live prices and sector data...")
+                    live_prices = {}
+                    sector_data = {}
+                    
+                    for i, ticker in enumerate(unique_tickers):
+                        try:
+                            # Fetch live price
+                            price = get_live_price(ticker)
+                            if price and price > 0:
+                                live_prices[ticker] = price
+                            
+                            # Fetch sector data
+                            sector = get_sector(ticker)
+                            stock_name = get_stock_name(ticker)
+                            if sector:
+                                sector_data[ticker] = {
+                                    'sector': sector,
+                                    'stock_name': stock_name
+                                }
+                            
+                            print(f"✅ {ticker}: Live=₹{price}, Sector={sector}")
+                            
+                            # Update progress
+                            progress = (i + 1) / len(unique_tickers)
+                            progress_bar.progress(progress)
+                            
+                        except Exception as e:
+                            print(f"❌ Error fetching live data for {ticker}: {e}")
+                    
+                    # Step 4: Batch update stock_data table
+                    status_text.text("💾 Step 3/3: Updating stock_data table...")
+                    stock_data_updates = 0
+                    
+                    for ticker in unique_tickers:
+                        try:
+                            if ticker in live_prices and ticker in sector_data:
+                                # Update stock_data table with live price and sector
+                                update_stock_data_supabase(
+                                    ticker=ticker,
+                                    stock_name=sector_data[ticker]['stock_name'],
+                                    sector=sector_data[ticker]['sector'],
+                                    current_price=live_prices[ticker]
+                                )
+                                stock_data_updates += 1
+                        except Exception as e:
+                            print(f"❌ Error updating stock_data for {ticker}: {e}")
+                    
+                    # Step 5: Update DataFrame with live prices
+                    if live_prices:
+                        df['live_price'] = df['ticker'].map(live_prices).fillna(df['price'])
+                        
+                        # Recalculate P&L
+                        df['current_value'] = df['quantity'] * df['live_price']
+                        df['invested_amount'] = df['quantity'] * df['price']
+                        df['abs_gain'] = df['current_value'] - df['invested_amount']
+                        df['pct_gain'] = df.apply(
+                            lambda row: (row['abs_gain'] / row['invested_amount'] * 100) if row['invested_amount'] > 0 else 0, 
+                            axis=1
+                        )
+                        
+                        # Update sector information in DataFrame
+                        for ticker, data in sector_data.items():
+                            ticker_mask = df['ticker'] == ticker
+                            df.loc[ticker_mask, 'sector'] = data['sector']
+                            df.loc[ticker_mask, 'stock_name'] = data['stock_name']
+                    
+                    # Final status
+                    status_text.text("✅ Batch processing complete!")
+                    progress_bar.progress(1.0)
+                    
+                    # Show batch processing summary
+                    st.success(f"""
+                    **Batch Processing Summary:**
+                    - 📊 **Historical Prices**: {len(historical_prices)} tickers updated
+                    - 📈 **Live Prices**: {len(live_prices)} tickers fetched
+                    - 🏢 **Sector Data**: {len(sector_data)} tickers updated
+                    - 💾 **Database Updates**: {stock_data_updates} records in stock_data table
+                    """)
+                    
+                    # Show P&L summary
+                    if 'live_price' in df.columns and 'abs_gain' in df.columns:
+                        total_invested = df['invested_amount'].sum()
+                        total_current = df['current_value'].sum()
+                        total_gain = df['abs_gain'].sum()
+                        if total_invested > 0:
+                            gain_pct = (total_gain / total_invested * 100)
+                            st.success(f"💰 **Portfolio P&L**: ₹{total_gain:,.2f} ({gain_pct:+.2f}%)")
+                else:
+                    st.warning("⚠️ **No Data Available** - No transactions found for batch processing")
+                
                 # Force refresh live prices if they're missing or zero - ENHANCED LOGIC
                 if not df.empty and user_id and user_id != 1:
                     # Check if live prices are missing or zero
@@ -1684,6 +1863,60 @@ class WebAgent:
                                     st.write(f"**Zero Prices:** {zero_prices}/{total_transactions}")
                                     st.write(f"**Unique Tickers:** {df['ticker'].nunique()}")
                                     st.write(f"**Sample Tickers:** {list(df['ticker'].unique())[:10]}")
+                                    
+                                    # AUTOMATIC MANUAL PRICE FETCHING
+                                    st.info("🔄 **Automatic Manual Price Fetching** - Attempting to fetch prices directly...")
+                                    try:
+                                        # Get unique tickers
+                                        unique_tickers = df['ticker'].unique()
+                                        manual_prices = {}
+                                        progress_bar = st.progress(0)
+                                        
+                                        for i, ticker in enumerate(unique_tickers):
+                                            try:
+                                                price = get_live_price(ticker)
+                                                if price and price > 0:
+                                                    manual_prices[ticker] = price
+                                                    st.write(f"✅ {ticker}: ₹{price}")
+                                                else:
+                                                    st.write(f"❌ {ticker}: No price available")
+                                            except Exception as e:
+                                                st.write(f"❌ {ticker}: Error - {e}")
+                                            
+                                            # Update progress
+                                            progress = (i + 1) / len(unique_tickers)
+                                            progress_bar.progress(progress)
+                                        
+                                        if manual_prices:
+                                            # Update DataFrame with manual prices
+                                            df['live_price'] = df['ticker'].map(manual_prices).fillna(df['price'])
+                                            
+                                            # Recalculate P&L
+                                            df['current_value'] = df['quantity'] * df['live_price']
+                                            df['invested_amount'] = df['quantity'] * df['price']
+                                            df['abs_gain'] = df['current_value'] - df['invested_amount']
+                                            df['pct_gain'] = df.apply(
+                                                lambda row: (row['abs_gain'] / row['invested_amount'] * 100) if row['invested_amount'] > 0 else 0, 
+                                                axis=1
+                                            )
+                                            
+                                            st.success(f"✅ **Manual Price Fetch Successful!** Updated {len(manual_prices)}/{len(unique_tickers)} tickers")
+                                            
+                                            # Show P&L summary
+                                            total_invested = df['invested_amount'].sum()
+                                            total_current = df['current_value'].sum()
+                                            total_gain = df['abs_gain'].sum()
+                                            if total_invested > 0:
+                                                gain_pct = (total_gain / total_invested * 100)
+                                                st.success(f"💰 **Portfolio P&L**: ₹{total_gain:,.2f} ({gain_pct:+.2f}%)")
+                                            
+                                            # Force page refresh to show updated P&L
+                                            st.rerun()
+                                        else:
+                                            st.error("❌ **Manual Price Fetch Failed** - No prices could be fetched")
+                                            
+                                    except Exception as e:
+                                        st.error(f"❌ **Manual Price Fetch Error**: {e}")
                                     
                                     # Try manual price fetching for sample tickers
                                     if st.button("🔄 Try Manual Price Fetch"):
