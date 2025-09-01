@@ -1555,38 +1555,6 @@ class WebAgent:
             st.warning("⚠️ No data available. Please upload files or check database.")
             return
         
-        # Check if data processing is complete before rendering graphs
-        data_processing_complete = self.session_state.get('data_processing_complete', False)
-        if not data_processing_complete:
-            st.info("🔄 **Data Processing in Progress** - Please wait for historical prices, live prices, and P&L calculation to complete before viewing graphs.")
-            
-            # Show a loading bar for data processing
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            # Show current processing status
-            status_text.text("📊 **Processing Status**: Waiting for batch processing to complete...")
-            progress_bar.progress(0.3)
-            
-            # Add a spinner to show activity
-            with st.spinner("🔄 Processing data..."):
-                # Wait a bit to show the loading state
-                time.sleep(1)
-                progress_bar.progress(0.6)
-                status_text.text("📈 **Processing Status**: Fetching live prices and calculating P&L...")
-                time.sleep(1)
-                progress_bar.progress(0.9)
-                status_text.text("💰 **Processing Status**: Finalizing calculations...")
-                time.sleep(0.5)
-            
-            # Final completion
-            progress_bar.progress(1.0)
-            status_text.text("✅ **Ready to display graphs!**")
-            
-            st.info("📊 **Status**: Batch processing is running to ensure all data is accurate and complete.")
-            st.info("💡 **Tip**: If processing seems stuck, try refreshing the page.")
-            return
-        
         # Use cached holdings if available, otherwise calculate
         user_id = self.session_state.get('user_id', 1)
         holdings_cache_key = f'holdings_user_{user_id}'
@@ -1934,192 +1902,151 @@ class WebAgent:
                 # Load data and ensure prices are fetched
                 df = self.load_data_from_agents(user_id)
                 
-                # Use processed data from session state if available
+                                # Use processed data from session state if available
                 if 'current_df' in self.session_state and self.session_state.get('data_processing_complete', False):
                     df = self.session_state['current_df']
                 
                 # BATCH PROCESSING: Historical Prices → Live Prices → Sector Data → Database Storage
                 if not df.empty and user_id and user_id != 1:
-                    st.info("🔄 **Batch Processing** - Fetching historical prices, live prices, and sector data...")
+                    # Step 1: Get unique tickers for batch processing
+                    unique_tickers = df['ticker'].unique()
                     
-                    # Add a container for batch processing status
-                    batch_container = st.container()
-                    with batch_container:
-                        st.markdown("### 📊 Data Processing Status")
-                        
-                        # Step 1: Get unique tickers for batch processing
-                        unique_tickers = df['ticker'].unique()
-                        progress_bar = st.progress(0)
-                        status_text = st.empty()
-                        
-                        # Step 2: Batch fetch historical prices for missing prices
-                        status_text.text("📊 Step 1/3: Fetching historical prices...")
-                        historical_prices = {}
-                        
-                        for i, ticker in enumerate(unique_tickers):
-                            try:
-                                # Check if we need historical prices for this ticker
-                                ticker_transactions = df[df['ticker'] == ticker]
-                                missing_prices = ticker_transactions['price'].isna().sum()
-                                
-                                if missing_prices > 0:
-                                    # Check if it's a mutual fund (numeric ticker)
-                                    clean_ticker = str(ticker).strip().upper()
-                                    clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
-                                    
-                                    if clean_ticker.isdigit():
-                                        # Mutual fund - use mftool for historical prices
-                                        print(f"🔍 Fetching mutual fund historical price for {ticker} using mftool...")
-                                        try:
-                                            from mf_price_fetcher import fetch_mutual_fund_historical_price
-                                            for idx, row in ticker_transactions.iterrows():
-                                                if pd.isna(row['price']):
-                                                    transaction_date = row['date']
-                                                    price = fetch_mutual_fund_historical_price(ticker, transaction_date)
-                                                    if price and price > 0:
-                                                        df.at[idx, 'price'] = price
-                                                        historical_prices[ticker] = price
-                                                        print(f"✅ MF {ticker}: ₹{price} for {transaction_date}")
-                                        except Exception as e:
-                                            print(f"⚠️ MFTool failed for {ticker}: {e}")
-                                    else:
-                                        # Regular stock - use existing methods
-                                        for idx, row in ticker_transactions.iterrows():
-                                            if pd.isna(row['price']):
-                                                transaction_date = row['date']
-                                                try:
-                                                    from file_manager import fetch_historical_price
-                                                    price = fetch_historical_price(ticker, transaction_date)
-                                                    if price and price > 0:
-                                                        df.at[idx, 'price'] = price
-                                                        historical_prices[ticker] = price
-                                                except Exception as e:
-                                                    print(f"⚠️ Error fetching historical price for {ticker}: {e}")
-                                
-                                # Update progress
-                                progress = (i + 1) / len(unique_tickers)
-                                progress_bar.progress(progress)
-                                
-                            except Exception as e:
-                                print(f"❌ Error processing {ticker}: {e}")
-                        
-                        # Step 3: Batch fetch live prices and sector data
-                        status_text.text("📈 Step 2/3: Fetching live prices and sector data...")
-                        live_prices = {}
-                        sector_data = {}
-                        
-                        for i, ticker in enumerate(unique_tickers):
-                            try:
+                    # Step 2: Batch fetch historical prices for missing prices
+                    historical_prices = {}
+                    
+                    for i, ticker in enumerate(unique_tickers):
+                        try:
+                            # Check if we need historical prices for this ticker
+                            ticker_transactions = df[df['ticker'] == ticker]
+                            missing_prices = ticker_transactions['price'].isna().sum()
+                            
+                            if missing_prices > 0:
                                 # Check if it's a mutual fund (numeric ticker)
                                 clean_ticker = str(ticker).strip().upper()
                                 clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
                                 
                                 if clean_ticker.isdigit():
-                                    # Mutual fund - use mftool for live prices
-                                    print(f"🔍 Fetching mutual fund live price for {ticker} using mftool...")
+                                    # Mutual fund - use mftool for historical prices
+                                    print(f"🔍 Fetching mutual fund historical price for {ticker} using mftool...")
                                     try:
-                                        from mf_price_fetcher import fetch_mutual_fund_price
-                                        price = fetch_mutual_fund_price(ticker, None)  # None for current price
-                                        if price and price > 0:
-                                            live_prices[ticker] = price
-                                            sector_data[ticker] = {
-                                                'sector': 'Mutual Funds',
-                                                'stock_name': f"MF-{ticker}"
-                                            }
-                                            print(f"✅ MF {ticker}: ₹{price} - Mutual Funds")
+                                        from mf_price_fetcher import fetch_mutual_fund_historical_price
+                                        for idx, row in ticker_transactions.iterrows():
+                                            if pd.isna(row['price']):
+                                                transaction_date = row['date']
+                                                price = fetch_mutual_fund_historical_price(ticker, transaction_date)
+                                                if price and price > 0:
+                                                    df.at[idx, 'price'] = price
+                                                    historical_prices[ticker] = price
+                                                    print(f"✅ MF {ticker}: ₹{price} for {transaction_date}")
                                     except Exception as e:
                                         print(f"⚠️ MFTool failed for {ticker}: {e}")
                                 else:
                                     # Regular stock - use existing methods
-                                    price = get_live_price(ticker)
+                                    for idx, row in ticker_transactions.iterrows():
+                                        if pd.isna(row['price']):
+                                            transaction_date = row['date']
+                                            try:
+                                                from file_manager import fetch_historical_price
+                                                price = fetch_historical_price(ticker, transaction_date)
+                                                if price and price > 0:
+                                                    df.at[idx, 'price'] = price
+                                                    historical_prices[ticker] = price
+                                            except Exception as e:
+                                                print(f"⚠️ Error fetching historical price for {ticker}: {e}")
+                            
+                        except Exception as e:
+                            print(f"❌ Error processing {ticker}: {e}")
+                    
+                    # Step 3: Batch fetch live prices and sector data
+                    live_prices = {}
+                    sector_data = {}
+                    
+                    for i, ticker in enumerate(unique_tickers):
+                        try:
+                            # Check if it's a mutual fund (numeric ticker)
+                            clean_ticker = str(ticker).strip().upper()
+                            clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
+                            
+                            if clean_ticker.isdigit():
+                                # Mutual fund - use mftool for live prices
+                                print(f"🔍 Fetching mutual fund live price for {ticker} using mftool...")
+                                try:
+                                    from mf_price_fetcher import fetch_mutual_fund_price
+                                    price = fetch_mutual_fund_price(ticker, None)  # None for current price
                                     if price and price > 0:
                                         live_prices[ticker] = price
-                                    
-                                    sector = get_sector(ticker)
-                                    stock_name = get_stock_name(ticker)
-                                    if sector:
+                                        sector_data[ticker] = {
+                                            'sector': 'Mutual Funds',
+                                            'stock_name': f"MF-{ticker}"
+                                        }
+                                        print(f"✅ MF {ticker}: ₹{price} - Mutual Funds")
+                                except Exception as e:
+                                    print(f"⚠️ MFTool failed for {ticker}: {e}")
+                            else:
+                                # Regular stock - use existing methods
+                                try:
+                                    # Use the stock agent's fetch method to get fresh live prices
+                                    fresh_data = stock_agent._fetch_stock_data(ticker)
+                                    if fresh_data and fresh_data.get('live_price'):
+                                        price = fresh_data['live_price']
+                                        live_prices[ticker] = price
+                                        
+                                        sector = fresh_data.get('sector', 'Unknown')
+                                        stock_name = fresh_data.get('stock_name', ticker)
                                         sector_data[ticker] = {
                                             'sector': sector,
                                             'stock_name': stock_name
                                         }
-                                    
-                                    print(f"✅ {ticker}: Live=₹{price}, Sector={sector}")
-                                
-                                # Update progress
-                                progress = (i + 1) / len(unique_tickers)
-                                progress_bar.progress(progress)
-                                
-                            except Exception as e:
-                                print(f"❌ Error fetching live data for {ticker}: {e}")
-                        
-                        # Step 4: Batch update stock_data table
-                        status_text.text("💾 Step 3/3: Updating stock_data table...")
-                        stock_data_updates = 0
-                        
-                        for ticker in unique_tickers:
-                            try:
-                                if ticker in live_prices and ticker in sector_data:
-                                    # Update stock_data table with live price and sector
-                                    update_stock_data_supabase(
-                                        ticker=ticker,
-                                        stock_name=sector_data[ticker]['stock_name'],
-                                        sector=sector_data[ticker]['sector'],
-                                        current_price=live_prices[ticker]
-                                    )
-                                    stock_data_updates += 1
-                            except Exception as e:
-                                print(f"❌ Error updating stock_data for {ticker}: {e}")
-                        
-                        # Step 5: Update DataFrame with live prices and recalculate P&L
-                        if live_prices:
-                            df['live_price'] = df['ticker'].map(live_prices).fillna(df['price'])
+                                        print(f"✅ {ticker}: Live=₹{price}, Sector={sector}")
+                                    else:
+                                        print(f"❌ {ticker}: No fresh price data available")
+                                except Exception as e:
+                                    print(f"❌ Error fetching live data for {ticker}: {e}")
                             
-                            # Recalculate P&L
-                            df['current_value'] = df['quantity'] * df['live_price']
-                            df['invested_amount'] = df['quantity'] * df['price']
-                            df['abs_gain'] = df['current_value'] - df['invested_amount']
-                            df['pct_gain'] = df.apply(
-                                lambda row: (row['abs_gain'] / row['invested_amount'] * 100) if row['invested_amount'] > 0 else 0, 
-                                axis=1
-                            )
-                            
-                            # Update sector information in DataFrame
-                            for ticker, data in sector_data.items():
-                                ticker_mask = df['ticker'] == ticker
-                                df.loc[ticker_mask, 'sector'] = data['sector']
-                                df.loc[ticker_mask, 'stock_name'] = data['stock_name']
-                            
-                            # Store updated DataFrame in session state
-                            self.session_state['current_df'] = df.copy()
-                            
-                            # Mark data processing as complete
-                            self.session_state['data_processing_complete'] = True
+                        except Exception as e:
+                            print(f"❌ Error fetching live data for {ticker}: {e}")
+                    
+                    # Step 4: Batch update stock_data table
+                    stock_data_updates = 0
+                    
+                    for ticker in unique_tickers:
+                        try:
+                            if ticker in live_prices and ticker in sector_data:
+                                # Update stock_data table with live price and sector
+                                update_stock_data_supabase(
+                                    ticker=ticker,
+                                    stock_name=sector_data[ticker]['stock_name'],
+                                    sector=sector_data[ticker]['sector'],
+                                    current_price=live_prices[ticker]
+                                )
+                                stock_data_updates += 1
+                        except Exception as e:
+                            print(f"❌ Error updating stock_data for {ticker}: {e}")
+                    
+                    # Step 5: Update DataFrame with live prices and recalculate P&L
+                    if live_prices:
+                        df['live_price'] = df['ticker'].map(live_prices).fillna(df['price'])
                         
-                        # Final status
-                        status_text.text("✅ Batch processing complete!")
-                        progress_bar.progress(1.0)
+                        # Recalculate P&L
+                        df['current_value'] = df['quantity'] * df['live_price']
+                        df['invested_amount'] = df['quantity'] * df['price']
+                        df['abs_gain'] = df['current_value'] - df['invested_amount']
+                        df['pct_gain'] = df.apply(
+                            lambda row: (row['abs_gain'] / row['invested_amount'] * 100) if row['invested_amount'] > 0 else 0, 
+                            axis=1
+                        )
                         
-                        # Show batch processing summary
-                        st.success(f"""
-                        **Batch Processing Summary:**
-                        - 📊 **Historical Prices**: {len(historical_prices)} tickers updated
-                        - 📈 **Live Prices**: {len(live_prices)} tickers fetched
-                        - 🏢 **Sector Data**: {len(sector_data)} tickers updated
-                        - 💾 **Database Updates**: {stock_data_updates} records in stock_data table
-                        """)
+                        # Update sector information in DataFrame
+                        for ticker, data in sector_data.items():
+                            ticker_mask = df['ticker'] == ticker
+                            df.loc[ticker_mask, 'sector'] = data['sector']
+                            df.loc[ticker_mask, 'stock_name'] = data['stock_name']
                         
-                        # Show P&L summary
-                        if 'live_price' in df.columns and 'abs_gain' in df.columns:
-                            total_invested = df['invested_amount'].sum()
-                            total_current = df['current_value'].sum()
-                            total_gain = df['abs_gain'].sum()
-                            if total_invested > 0:
-                                gain_pct = (total_gain / total_invested * 100)
-                                st.success(f"💰 **Portfolio P&L**: ₹{total_gain:,.2f} ({gain_pct:+.2f}%)")
-                else:
-                    st.warning("⚠️ **No Data Available** - No transactions found for batch processing")
-                    # Mark data processing as complete even if no data
-                    self.session_state['data_processing_complete'] = True
+                        # Store updated DataFrame in session state
+                        self.session_state['current_df'] = df.copy()
+                        
+                        # Mark data processing as complete
+                        self.session_state['data_processing_complete'] = True
                 
                 # For default user (user_id == 1), also mark data processing as complete
                 if user_id == 1:
@@ -2130,16 +2057,6 @@ class WebAgent:
                 
                 # Main Portfolio Data Section (when not in settings)
                 if has_transactions:
-                    # Check P&L calculation status and show warning if needed
-                    if 'live_price' in df.columns and 'abs_gain' in df.columns:
-                        zero_pnl_count = (df['abs_gain'] == 0).sum()
-                        total_transactions = len(df)
-                        
-                        if zero_pnl_count == total_transactions and total_transactions > 0:
-                            st.warning("⚠️ **P&L Alert**: All P&L values are zero. This indicates missing live prices. Please use the 'Refresh Live Prices & Sectors' button below to update prices.")
-                        elif zero_pnl_count > 0:
-                            st.info(f"ℹ️ **P&L Status**: {zero_pnl_count}/{total_transactions} transactions have zero P&L due to missing live prices.")
-                    
                     # User has transactions - show data with file upload option on the left
                     st.markdown('<h2 class="section-header">📊 Your Portfolio Data</h2>', unsafe_allow_html=True)
                     
