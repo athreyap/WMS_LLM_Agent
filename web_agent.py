@@ -652,16 +652,33 @@ class WebAgent:
                 except Exception as e:
                     print(f"❌ Error refreshing prices: {e}")
             
-            # Calculate current values and gains
+            # Calculate current values and gains with enhanced error handling
             df['current_value'] = df['quantity'] * df['live_price']
             df['invested_amount'] = df['quantity'] * df['price']
             df['abs_gain'] = df['current_value'] - df['invested_amount']
             
-            # Calculate percentage gain with division by zero protection
+            # Calculate percentage gain with division by zero protection and better handling
             df['pct_gain'] = df.apply(
                 lambda row: (row['abs_gain'] / row['invested_amount'] * 100) if row['invested_amount'] > 0 else 0, 
                 axis=1
             )
+            
+            # Debug: Check P&L calculation results
+            if not df.empty:
+                total_invested = df['invested_amount'].sum()
+                total_current = df['current_value'].sum()
+                total_gain = df['abs_gain'].sum()
+                avg_gain_pct = (total_gain / total_invested * 100) if total_invested > 0 else 0
+                
+                print(f"🔍 P&L Debug: Invested={total_invested:.2f}, Current={total_current:.2f}, Gain={total_gain:.2f}, Gain%={avg_gain_pct:.2f}%")
+                
+                # Check for zero P&L issues
+                zero_pnl_count = (df['abs_gain'] == 0).sum()
+                if zero_pnl_count == len(df) and len(df) > 0:
+                    print(f"⚠️ Warning: All P&L values are zero! This might indicate missing live prices.")
+                    print(f"🔍 Live prices sample: {df[['ticker', 'live_price', 'price']].head(5).to_dict()}")
+            
+            # Add sector information if not present or if all sectors are Unknown
             
             # Add sector information if not present or if all sectors are Unknown
             if 'sector' not in df.columns or df['sector'].isna().all() or (df['sector'] == 'Unknown').all():
@@ -1607,245 +1624,326 @@ class WebAgent:
                         st.session_state['show_settings'] = False
                         st.rerun()
                     st.stop()
-        else:
-            if 'user_authenticated' not in st.session_state:
-                st.session_state['user_authenticated'] = True
-                st.session_state['username'] = 'User'
-                st.session_state['user_role'] = 'user'
-        
-        # Initialize agents
-        self.initialize_agents()
-        
-        # Load data first
-        user_id = self.session_state.get('user_id', 1)
-        username = self.session_state.get('username', 'Unknown')
-        
-        # Check user folder access and start file monitoring (silently)
-        if user_id and user_id != 1:  # Not default user
-            folder_access_ok, folder_message = self.check_user_folder_access()
-            if folder_access_ok:
-                try:
-                    start_user_file_monitoring(user_id)
-                except Exception as e:
-                    pass  # Silently handle monitoring errors
-        
-        # Load data and ensure prices are fetched
-        df = self.load_data_from_agents(user_id)
-        
-        # Force refresh live prices if they're missing or zero
-        if not df.empty and user_id and user_id != 1:
-            # Check if live prices are missing or zero
-            if 'live_price' in df.columns:
-                zero_prices = (df['live_price'] == 0).sum()
-                total_transactions = len(df)
                 
-                if zero_prices > 0 or zero_prices == total_transactions:
-                    st.info("🔄 Fetching live prices for your portfolio...")
-                    try:
-                        # Force update live prices
-                        update_result = update_user_stock_prices(user_id)
-                        if update_result.get('updated', 0) > 0:
-                            st.success(f"✅ Updated {update_result['updated']} stock prices")
-                            
-                            # Reload data with fresh prices
-                            df = self.load_data_from_agents(user_id)
-                        else:
-                            st.warning("⚠️ Could not update live prices. Using historical prices.")
-                            
-                            # Show debug information
-                            with st.expander("🔍 Debug: Price Fetching Details"):
-                                st.write(f"**Update Result:** {update_result}")
-                                st.write(f"**Zero Prices:** {zero_prices}/{total_transactions}")
-                                st.write(f"**Unique Tickers:** {df['ticker'].nunique()}")
-                                st.write(f"**Sample Tickers:** {list(df['ticker'].unique())[:10]}")
-                    except Exception as e:
-                        st.error(f"❌ Error updating prices: {e}")
-        
-        # Check if user has transactions
-        has_transactions = not df.empty
-        
-        if has_transactions:
-            # User has transactions - show data with file upload option on the left
-            st.markdown('<h2 class="section-header">📊 Your Portfolio Data</h2>', unsafe_allow_html=True)
-            
-            # Create two columns: left for file upload and summary, right for data
-            col1, col2 = st.columns([1, 3])
-            
-            with col1:
-                st.markdown("### 📤 Upload More Files")
-                st.info("Add more transaction files to your portfolio")
+                # Initialize agents
+                self.initialize_agents()
                 
-                # File Upload Section - Always Cloud Mode
-                st.info("🌐 **Cloud Mode**: Upload your CSV transaction files for automatic processing.")
+                # Load data first
+                user_id = self.session_state.get('user_id', 1)
+                username = self.session_state.get('username', 'Unknown')
                 
-                uploaded_files = st.file_uploader(
-                    "Choose CSV files",
-                    type=['csv'],
-                    accept_multiple_files=True,
-                    help="Upload additional CSV files with transaction data"
-                )
+                # Check user folder access and start file monitoring (silently)
+                if user_id and user_id != 1:  # Not default user
+                    folder_access_ok, folder_message = self.check_user_folder_access()
+                    if folder_access_ok:
+                        try:
+                            start_user_file_monitoring(user_id)
+                        except Exception as e:
+                            pass  # Silently handle monitoring errors
                 
-                if uploaded_files:
-                    if st.button("📊 Process Files", type="primary"):
-                        # Get folder path or create one
-                        folder_path = self.session_state.get('folder_path', '')
-                        if not folder_path and user_id:
-                            folder_path = f"/tmp/{username}_investments"
-                            self.session_state['folder_path'] = folder_path
+                # Load data and ensure prices are fetched
+                df = self.load_data_from_agents(user_id)
+                
+                # Force refresh live prices if they're missing or zero - ENHANCED LOGIC
+                if not df.empty and user_id and user_id != 1:
+                    # Check if live prices are missing or zero
+                    if 'live_price' in df.columns:
+                        zero_prices = (df['live_price'] == 0).sum()
+                        total_transactions = len(df)
                         
-                        if folder_path:
-                            self._process_uploaded_files(uploaded_files, folder_path)
-                            st.rerun()
-                        else:
-                            st.error("❌ Could not determine folder path for file processing")
-                    st.info(f"Selected {len(uploaded_files)} file(s)")
-                
-                # Manual refresh button for live prices and sectors
-                if st.button("🔄 Refresh Live Prices & Sectors", help="Force update live prices and sector information for your stocks"):
-                    try:
-                        if user_id and user_id != 1:
-                            # Clear cache to force refresh
+                        # Always try to fetch fresh prices on login to ensure P&L is calculated
+                        st.info("🔄 Fetching live prices for your portfolio...")
+                        try:
+                            # Clear any existing cache to force fresh fetch
                             cache_key = f'live_prices_user_{user_id}'
                             cache_timestamp_key = f'live_prices_timestamp_user_{user_id}'
                             self.session_state.pop(cache_key, None)
                             self.session_state.pop(cache_timestamp_key, None)
                             
-                            # Update live prices and sectors
+                            # Force update live prices
                             update_result = update_user_stock_prices(user_id)
                             if update_result.get('updated', 0) > 0:
-                                # Clear holdings and quarterly cache since prices changed
-                                holdings_cache_key = f'holdings_user_{user_id}'
-                                quarterly_cache_key = f'quarterly_analysis_user_{user_id}'
-                                self.session_state.pop(holdings_cache_key, None)
-                                self.session_state.pop(f'{holdings_cache_key}_hash', None)
-                                self.session_state.pop(quarterly_cache_key, None)
-                                self.session_state.pop(f'{quarterly_cache_key}_hash', None)
-                                st.success(f"✅ Updated {update_result['updated']} stock prices and sectors")
+                                st.success(f"✅ Updated {update_result['updated']} stock prices")
+                                
+                                # Reload data with fresh prices
+                                df = self.load_data_from_agents(user_id)
+                                
+                                # Verify prices were fetched
+                                if 'live_price' in df.columns:
+                                    new_zero_prices = (df['live_price'] == 0).sum()
+                                    if new_zero_prices < zero_prices:
+                                        st.success(f"✅ P&L calculation ready! {new_zero_prices}/{total_transactions} stocks need prices")
+                                    else:
+                                        st.warning(f"⚠️ Still {new_zero_prices}/{total_transactions} stocks have zero prices")
                             else:
-                                st.info("ℹ️ No updates needed")
+                                st.warning("⚠️ Could not update live prices. Using historical prices.")
+                                
+                                # Show debug information
+                                with st.expander("🔍 Debug: Price Fetching Details"):
+                                    st.write(f"**Update Result:** {update_result}")
+                                    st.write(f"**Zero Prices:** {zero_prices}/{total_transactions}")
+                                    st.write(f"**Unique Tickers:** {df['ticker'].nunique()}")
+                                    st.write(f"**Sample Tickers:** {list(df['ticker'].unique())[:10]}")
+                                    
+                                    # Try manual price fetching for sample tickers
+                                    if st.button("🔄 Try Manual Price Fetch"):
+                                        sample_tickers = df['ticker'].unique()[:5]
+                                        manual_prices = {}
+                                        for ticker in sample_tickers:
+                                            try:
+                                                price = get_live_price(ticker)
+                                                if price and price > 0:
+                                                    manual_prices[ticker] = price
+                                            except Exception as e:
+                                                st.write(f"❌ Error fetching {ticker}: {e}")
+                                        
+                                        if manual_prices:
+                                            st.success(f"✅ Manual fetch successful: {manual_prices}")
+                                        else:
+                                            st.error("❌ Manual fetch failed for all tickers")
+                        except Exception as e:
+                            st.error(f"❌ Error updating prices: {e}")
                             
-                            st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Error refreshing prices: {e}")
+                            # Show debug information
+                            with st.expander("🔍 Debug: Price Fetching Error"):
+                                st.write(f"**Error:** {e}")
+                                st.write(f"**User ID:** {user_id}")
+                                st.write(f"**DataFrame Shape:** {df.shape}")
+                                if not df.empty:
+                                    st.write(f"**Sample Data:** {df.head(3).to_dict()}")
+                elif not df.empty and user_id == 1:
+                    # For default user, also ensure prices are fetched
+                    if 'live_price' in df.columns:
+                        zero_prices = (df['live_price'] == 0).sum()
+                        total_transactions = len(df)
+                        
+                        if zero_prices > 0:
+                            st.info("🔄 Fetching live prices for sample portfolio...")
+                            try:
+                                update_result = update_user_stock_prices(1)
+                                if update_result.get('updated', 0) > 0:
+                                    st.success(f"✅ Updated {update_result['updated']} stock prices")
+                                    df = self.load_data_from_agents(user_id)
+                            except Exception as e:
+                                st.warning(f"⚠️ Could not update sample prices: {e}")
                 
-                # Show transaction summary in left column
-                st.markdown("### 📈 Transaction Summary")
-                st.info(f"Found **{len(df)} transactions** in your portfolio")
+                # Check if user has transactions
+                has_transactions = not df.empty
                 
-                # Show quick stats in left column
-                if len(df) > 0:
-                    try:
-                        # Check if required columns exist
-                        if 'ticker' in df.columns and 'transaction_type' in df.columns:
-                            unique_stocks = df['ticker'].nunique()
-                            total_buy = len(df[df['transaction_type'] == 'buy'])
-                            total_sell = len(df[df['transaction_type'] == 'sell'])
-                            
-                            st.markdown(f"""
-                            **Quick Stats:**
-                            - 📊 **Unique Stocks**: {unique_stocks}
-                            - 📈 **Buy Transactions**: {total_buy}
-                            - 📉 **Sell Transactions**: {total_sell}
-                            """)
-                        else:
-                            st.warning("⚠️ Data format issue: Missing required columns (ticker, transaction_type)")
-                            st.info(f"Available columns: {list(df.columns)}")
-                    except Exception as e:
-                        st.error(f"❌ Error calculating stats: {e}")
-                        st.info(f"DataFrame shape: {df.shape}, Columns: {list(df.columns)}")
-            
-            with col2:
-                # Right column now contains the main portfolio data and analytics
-                # Render filters at the top
-                filtered_df, selected_channel, selected_sector, selected_stock = self.render_top_filters(df)
-                
-                # Render dashboard
-                self.render_dashboard(filtered_df)
-                
-        else:
-            # User has no transactions - show welcome message
-            st.markdown('<h2 class="section-header">🚀 Welcome to Your Portfolio Analytics!</h2>', unsafe_allow_html=True)
-            
-            # Create a centered layout for new users
-            col1, col2, col3 = st.columns([1, 2, 1])
-            
-            with col2:
-                st.markdown("""
-                ### 📊 Your Portfolio Dashboard
-                
-                Welcome! Your portfolio dashboard is ready.
-                """)
-                
-                # Check if user just registered and has no data yet
-                if user_id and user_id != 1:
-                    st.info("""
-                    **Next Steps:**
-                    - 📤 **Upload Files**: Use the file upload option in the left sidebar to add your transaction files
-                    - 📊 **View Analytics**: Once files are processed, you'll see your portfolio analysis here
-                    - 🔄 **Refresh Data**: Use the refresh button to update live prices and sectors
-                    """)
+                if has_transactions:
+                    # Check P&L calculation status and show warning if needed
+                    if 'live_price' in df.columns and 'abs_gain' in df.columns:
+                        zero_pnl_count = (df['abs_gain'] == 0).sum()
+                        total_transactions = len(df)
+                        
+                        if zero_pnl_count == total_transactions and total_transactions > 0:
+                            st.warning("⚠️ **P&L Alert**: All P&L values are zero. This indicates missing live prices. Please use the 'Refresh Live Prices & Sectors' button below to update prices.")
+                        elif zero_pnl_count > 0:
+                            st.info(f"ℹ️ **P&L Status**: {zero_pnl_count}/{total_transactions} transactions have zero P&L due to missing live prices.")
                     
-                    # Show sample CSV format
-                    with st.expander("📋 Sample CSV Format"):
-                        st.markdown("""
-                        Your CSV file should have these columns:
-                        - **date**: Transaction date (YYYY-MM-DD)
-                        - **ticker**: Stock symbol (e.g., AAPL, MSFT)
-                        - **quantity**: Number of shares
-                        - **price**: Price per share
-                        - **transaction_type**: 'buy' or 'sell'
-                        - **stock_name**: Company name (optional)
-                        - **channel**: Investment channel (optional)
-                        - **sector**: Stock sector (optional)
-                        """)
+                    # User has transactions - show data with file upload option on the left
+                    st.markdown('<h2 class="section-header">📊 Your Portfolio Data</h2>', unsafe_allow_html=True)
+                    
+                    # Create two columns: left for file upload and summary, right for data
+                    col1, col2 = st.columns([1, 3])
+                    
+                    with col1:
+                        st.markdown("### 📤 Upload More Files")
+                        st.info("Add more transaction files to your portfolio")
+                        
+                        # File Upload Section - Always Cloud Mode
+                        st.info("🌐 **Cloud Mode**: Upload your CSV transaction files for automatic processing.")
+                        
+                        uploaded_files = st.file_uploader(
+                            "Choose CSV files",
+                            type=['csv'],
+                            accept_multiple_files=True,
+                            help="Upload additional CSV files with transaction data"
+                        )
+                        
+                        if uploaded_files:
+                            if st.button("📊 Process Files", type="primary"):
+                                # Get folder path or create one
+                                folder_path = self.session_state.get('folder_path', '')
+                                if not folder_path and user_id:
+                                    folder_path = f"/tmp/{username}_investments"
+                                    self.session_state['folder_path'] = folder_path
+                                
+                                if folder_path:
+                                    self._process_uploaded_files(uploaded_files, folder_path)
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Could not determine folder path for file processing")
+                            st.info(f"Selected {len(uploaded_files)} file(s)")
+                        
+                        # Manual refresh button for live prices and sectors
+                        if st.button("🔄 Refresh Live Prices & Sectors", help="Force update live prices and sector information for your stocks"):
+                            try:
+                                if user_id and user_id != 1:
+                                    # Clear cache to force refresh
+                                    cache_key = f'live_prices_user_{user_id}'
+                                    cache_timestamp_key = f'live_prices_timestamp_user_{user_id}'
+                                    self.session_state.pop(cache_key, None)
+                                    self.session_state.pop(cache_timestamp_key, None)
+                                    
+                                    # Update live prices and sectors
+                                    update_result = update_user_stock_prices(user_id)
+                                    if update_result.get('updated', 0) > 0:
+                                        # Clear holdings and quarterly cache since prices changed
+                                        holdings_cache_key = f'holdings_user_{user_id}'
+                                        quarterly_cache_key = f'quarterly_analysis_user_{user_id}'
+                                        self.session_state.pop(holdings_cache_key, None)
+                                        self.session_state.pop(f'{holdings_cache_key}_hash', None)
+                                        self.session_state.pop(quarterly_cache_key, None)
+                                        self.session_state.pop(f'{quarterly_cache_key}_hash', None)
+                                        st.success(f"✅ Updated {update_result['updated']} stock prices and sectors")
+                                    else:
+                                        st.info("ℹ️ No updates needed")
+                                    
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error refreshing prices: {e}")
+                        
+                        # Show transaction summary in left column
+                        st.markdown("### 📈 Transaction Summary")
+                        st.info(f"Found **{len(df)} transactions** in your portfolio")
+                        
+                        # Show P&L status in transaction summary
+                        if 'live_price' in df.columns and 'abs_gain' in df.columns:
+                            total_invested = df['invested_amount'].sum() if 'invested_amount' in df.columns else 0
+                            total_current = df['current_value'].sum() if 'current_value' in df.columns else 0
+                            total_gain = df['abs_gain'].sum()
+                            
+                            if total_invested > 0:
+                                gain_pct = (total_gain / total_invested * 100)
+                                gain_color = "🟢" if total_gain >= 0 else "🔴"
+                                
+                                st.markdown(f"""
+                                **Portfolio P&L:**
+                                {gain_color} **Total Gain**: ₹{total_gain:,.2f} ({gain_pct:+.2f}%)
+                                💰 **Invested**: ₹{total_invested:,.2f}
+                                📊 **Current Value**: ₹{total_current:,.2f}
+                                """)
+                            else:
+                                st.warning("⚠️ **P&L Status**: Unable to calculate P&L - missing price data")
+                        
+                        # Show quick stats in left column
+                        if len(df) > 0:
+                            try:
+                                # Check if required columns exist
+                                if 'ticker' in df.columns and 'transaction_type' in df.columns:
+                                    unique_stocks = df['ticker'].nunique()
+                                    total_buy = len(df[df['transaction_type'] == 'buy'])
+                                    total_sell = len(df[df['transaction_type'] == 'sell'])
+                                    
+                                    st.markdown(f"""
+                                    **Quick Stats:**
+                                    - 📊 **Unique Stocks**: {unique_stocks}
+                                    - 📈 **Buy Transactions**: {total_buy}
+                                    - 📉 **Sell Transactions**: {total_sell}
+                                    """)
+                                else:
+                                    st.warning("⚠️ Data format issue: Missing required columns (ticker, transaction_type)")
+                                    st.info(f"Available columns: {list(df.columns)}")
+                            except Exception as e:
+                                st.error(f"❌ Error calculating stats: {e}")
+                                st.info(f"DataFrame shape: {df.shape}, Columns: {list(df.columns)}")
+                    
+                    with col2:
+                        # Right column now contains the main portfolio data and analytics
+                        # Render filters at the top
+                        filtered_df, selected_channel, selected_sector, selected_stock = self.render_top_filters(df)
+                        
+                        # Render dashboard
+                        self.render_dashboard(filtered_df)
+                        
                 else:
-                    st.info("""
-                    **Getting Started:**
-                    - 📤 **Upload Files**: Use the file upload option in the left sidebar
-                    - 📊 **View Analytics**: Your portfolio analysis will appear here
-                    - 🔄 **Refresh Data**: Keep your data up to date
-                    """)
+                    # User has no transactions - show welcome message
+                    st.markdown('<h2 class="section-header">🚀 Welcome to Your Portfolio Analytics!</h2>', unsafe_allow_html=True)
+                    
+                    # Create a centered layout for new users
+                    col1, col2, col3 = st.columns([1, 2, 1])
+                    
+                    with col2:
+                        st.markdown("""
+                        ### 📊 Your Portfolio Dashboard
+                        
+                        Welcome! Your portfolio dashboard is ready.
+                        """)
+                        
+                        # Check if user just registered and has no data yet
+                        if user_id and user_id != 1:
+                            st.info("""
+                            **Next Steps:**
+                            - 📤 **Upload Files**: Use the file upload option in the left sidebar to add your transaction files
+                            - 📊 **View Analytics**: Once files are processed, you'll see your portfolio analysis here
+                            - 🔄 **Refresh Data**: Use the refresh button to update live prices and sectors
+                            """)
+                            
+                            # Show sample CSV format
+                            with st.expander("📋 Sample CSV Format"):
+                                st.markdown("""
+                                Your CSV file should have these columns:
+                                - **date**: Transaction date (YYYY-MM-DD)
+                                - **ticker**: Stock symbol (e.g., AAPL, MSFT)
+                                - **quantity**: Number of shares
+                                - **price**: Price per share
+                                - **transaction_type**: 'buy' or 'sell'
+                                - **stock_name**: Company name (optional)
+                                - **channel**: Investment channel (optional)
+                                - **sector**: Stock sector (optional)
+                                """)
+                        else:
+                            st.info("""
+                            **Getting Started:**
+                            - 📤 **Upload Files**: Use the file upload option in the left sidebar
+                            - 📊 **View Analytics**: Your portfolio analysis will appear here
+                            - 🔄 **Refresh Data**: Keep your data up to date
+                            """)
+                        
+                        # Show what happens after upload
+                        st.markdown("""
+                        ### 🎯 What You'll See:
+                        - 📊 **Portfolio Overview**: Complete analysis of your investments
+                        - 📈 **Performance Metrics**: Returns, gains, and losses
+                        - 🏆 **Top Performers**: Your best and worst performing stocks
+                        - 📋 **Detailed Analytics**: Sector analysis, channel breakdown, and more
+                        """)
                 
-                # Show what happens after upload
-                st.markdown("""
-                ### 🎯 What You'll See:
-                - 📊 **Portfolio Overview**: Complete analysis of your investments
-                - 📈 **Performance Metrics**: Returns, gains, and losses
-                - 🏆 **Top Performers**: Your best and worst performing stocks
-                - 📋 **Detailed Analytics**: Sector analysis, channel breakdown, and more
-                """)
-        
-        # Store original DataFrame for comparison
-        if not df.empty and all(col in df.columns for col in ['ticker', 'quantity', 'price', 'live_price', 'transaction_type']):
-            data_hash = hash(str(df[['ticker', 'quantity', 'price', 'live_price', 'transaction_type']].values.tobytes()))
-            original_data_hash = self.session_state.get('original_df_hash', None)
-            
-            if original_data_hash != data_hash:
-                self.session_state['original_df'] = df.copy()
-                self.session_state['original_df_hash'] = data_hash
+                # Store original DataFrame for comparison
+                if not df.empty and all(col in df.columns for col in ['ticker', 'quantity', 'price', 'live_price', 'transaction_type']):
+                    data_hash = hash(str(df[['ticker', 'quantity', 'price', 'live_price', 'transaction_type']].values.tobytes()))
+                    original_data_hash = self.session_state.get('original_df_hash', None)
+                    
+                    if original_data_hash != data_hash:
+                        self.session_state['original_df'] = df.copy()
+                        self.session_state['original_df_hash'] = data_hash
+                else:
+                    # If DataFrame is empty or missing columns, clear the original DataFrame
+                    self.session_state.pop('original_df', None)
+                    self.session_state.pop('original_df_hash', None)
+                
+                # Only render filters and dashboard if user has transactions
+                if has_transactions:
+                    # Dashboard is already rendered in the column layout above
+                    pass
+                else:
+                    # Show a message encouraging users to upload files
+                    st.markdown("""
+                    ---
+                    ### 🎯 Ready to Start?
+                    
+                    Once you upload your transaction files, you'll see:
+                    - 📊 **Portfolio Overview**: Complete analysis of your investments
+                    - 📈 **Performance Metrics**: Returns, gains, and losses
+                    - 🏆 **Top Performers**: Your best and worst performing stocks
+                    - 📋 **Detailed Analytics**: Sector analysis, channel breakdown, and more
+                    """)
         else:
-            # If DataFrame is empty or missing columns, clear the original DataFrame
-            self.session_state.pop('original_df', None)
-            self.session_state.pop('original_df_hash', None)
-        
-
-        
-        # Only render filters and dashboard if user has transactions
-        if has_transactions:
-            # Dashboard is already rendered in the column layout above
-            pass
-        else:
-            # Show a message encouraging users to upload files
-            st.markdown("""
-            ---
-            ### 🎯 Ready to Start?
-            
-            Once you upload your transaction files, you'll see:
-            - 📊 **Portfolio Overview**: Complete analysis of your investments
-            - 📈 **Performance Metrics**: Returns, gains, and losses
-            - 🏆 **Top Performers**: Your best and worst performing stocks
-            - 📋 **Detailed Analytics**: Sector analysis, channel breakdown, and more
-            """)
+            if 'user_authenticated' not in st.session_state:
+                st.session_state['user_authenticated'] = True
+                st.session_state['username'] = 'User'
+                st.session_state['user_role'] = 'user'
 
 # Global web agent instance
 web_agent = WebAgent()
