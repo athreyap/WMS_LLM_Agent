@@ -22,6 +22,40 @@ SUPABASE_KEY = os.getenv('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+def convert_to_github_path(username: str, local_path: str = None) -> str:
+    """
+    Convert local folder path to GitHub path for Streamlit Cloud deployment
+    Uses username to create a unique path structure
+    """
+    # Check if we're running on Streamlit Cloud
+    is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
+    
+    if is_streamlit_cloud:
+        # Use GitHub-style path structure for cloud deployment
+        if local_path and local_path.strip():
+            # Extract folder name from local path
+            folder_name = os.path.basename(local_path.strip())
+            if folder_name:
+                return f"/tmp/{username}_{folder_name}"
+            else:
+                return f"/tmp/{username}_investments"
+        else:
+            # Default GitHub path structure
+            return f"/tmp/{username}_investments"
+    else:
+        # Use local path for development
+        if local_path and local_path.strip():
+            return local_path.strip()
+        else:
+            # Default local path
+            return f"./investments/{username}"
+
+def get_user_folder_path(username: str, local_path: str = None) -> str:
+    """
+    Get the appropriate folder path for a user based on deployment environment
+    """
+    return convert_to_github_path(username, local_path)
+
 def build_ipv4_dsn():
     """
     Returns a DSN string that:
@@ -279,12 +313,15 @@ class StockData(Base):
 def create_user_supabase(username: str, password_hash: str, email: str = None, role: str = "user", folder_path: str = None) -> Optional[Dict]:
     """Create a new user using Supabase client"""
     try:
+        # Convert folder path to GitHub path for Streamlit Cloud
+        github_folder_path = get_user_folder_path(username, folder_path)
+        
         data = {
             "username": username,
             "password_hash": password_hash,
             "email": email,
             "role": role,
-            "folder_path": folder_path,
+            "folder_path": github_folder_path,
             "created_at": datetime.utcnow().isoformat()
         }
         

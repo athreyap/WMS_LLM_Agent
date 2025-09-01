@@ -100,27 +100,24 @@ def create_user(username, email, password, role="user", folder_path=None):
         if not is_valid:
             return False, message
         
-        # Validate folder path - now required
-        if not folder_path or not folder_path.strip():
-            return False, "Folder path is required"
+        # For Streamlit Cloud, we don't validate local folder paths
+        # The GitHub path conversion will handle this automatically
+        is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
         
-        folder_path = folder_path.strip()
-        
-        # Check if folder exists
-        if not os.path.exists(folder_path):
-            return False, f"Folder path does not exist: {folder_path}"
-        
-        # Check if folder is a directory
-        if not os.path.isdir(folder_path):
-            return False, f"Path is not a directory: {folder_path}"
-        
-        # Create archive folder if it doesn't exist
-        archive_path = os.path.join(folder_path, "archive")
-        if not os.path.exists(archive_path):
-            try:
-                os.makedirs(archive_path)
-            except Exception as e:
-                return False, f"Could not create archive folder: {str(e)}"
+        if not is_streamlit_cloud:
+            # Only validate folder path for local development
+            if not folder_path or not folder_path.strip():
+                return False, "Folder path is required for local development"
+            
+            folder_path = folder_path.strip()
+            
+            # Check if folder exists (only for local development)
+            if not os.path.exists(folder_path):
+                return False, f"Folder path does not exist: {folder_path}"
+            
+            # Check if it's a directory
+            if not os.path.isdir(folder_path):
+                return False, f"Path is not a directory: {folder_path}"
         
         # Hash password
         hashed_password, salt = hash_password(password)
@@ -403,12 +400,24 @@ def login_page():
             new_email = st.text_input("Email", key="register_email")
             new_password = st.text_input("Password", type="password", key="register_password")
             confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
-            folder_path = st.text_input(
-                            "Transaction Folder Path *",
-                            key="register_folder_path",
-                            placeholder="e.g., C:/MyPortfolio or ./my_transactions",
-                            help="Path to folder containing your transaction CSV files. This folder will be used to automatically process your transaction files."
-                        )
+            # Check if running on Streamlit Cloud
+            is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
+            
+            if is_streamlit_cloud:
+                st.info("🌐 **Streamlit Cloud Mode**: Your files will be stored in a cloud-based folder structure.")
+                folder_path = st.text_input(
+                    "Local Folder Name (Optional)",
+                    key="register_folder_path",
+                    placeholder="e.g., my_portfolio or investments",
+                    help="Optional: Provide a folder name for your files. If left empty, a default folder will be created."
+                )
+            else:
+                folder_path = st.text_input(
+                    "Transaction Folder Path *",
+                    key="register_folder_path",
+                    placeholder="e.g., C:/MyPortfolio or ./my_transactions",
+                    help="Path to folder containing your transaction CSV files. This folder will be used to automatically process your transaction files."
+                )
             
             # Password strength indicator
             if new_password:
@@ -436,6 +445,7 @@ def login_page():
                     st.error("Passwords do not match")
                 else:
                     # Use folder_path if provided, otherwise empty string
+                    # GitHub path conversion will happen in create_user function
                     user_folder_path = folder_path.strip() if folder_path.strip() else ""
                     success, message = create_user(new_username, new_email, new_password, folder_path=user_folder_path)
                     if success:

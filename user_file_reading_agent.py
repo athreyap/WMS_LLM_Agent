@@ -43,7 +43,17 @@ class UserFileReadingAgent:
         try:
             user = get_user_by_id_supabase(user_id)
             if user and user.get('folder_path'):
-                return user['folder_path']
+                folder_path = user['folder_path']
+                
+                # Ensure the folder exists (create if needed)
+                folder = Path(folder_path)
+                folder.mkdir(parents=True, exist_ok=True)
+                
+                # Create archive folder
+                archive_folder = folder / "archive"
+                archive_folder.mkdir(exist_ok=True)
+                
+                return folder_path
             return None
         except Exception as e:
             print(f"❌ Error getting folder path for user {user_id}: {e}")
@@ -581,6 +591,68 @@ class UserFileReadingAgent:
             
         except Exception as e:
             print(f"❌ Error cleaning up old files for user {user_id}: {e}")
+    
+    def _process_uploaded_file(self, file_path: str, user_id: int, df: pd.DataFrame) -> bool:
+        """Process an uploaded file that has already been processed with historical prices"""
+        try:
+            print(f"🔄 Processing uploaded file: {file_path} for user {user_id}")
+            
+            # Create user agent if not exists
+            if user_id not in self.user_agents:
+                folder_path = self._get_user_folder_path(user_id)
+                if not folder_path:
+                    print(f"❌ No folder path found for user {user_id}")
+                    return False
+                self._create_user_agent(user_id, folder_path)
+            
+            user_agent_data = self.user_agents[user_id]
+            file_path_obj = Path(file_path)
+            
+            # Save file to database using Supabase client
+            try:
+                file_record = save_file_record_supabase(
+                    filename=file_path_obj.name,
+                    file_path=str(file_path_obj),
+                    user_id=user_id
+                )
+                
+                if file_record is None:
+                    print(f"❌ Failed to save file record for {file_path_obj.name}")
+                    return False
+                
+                # Save transactions to database using Supabase client
+                success = save_transaction_supabase(
+                    df=df,
+                    file_id=file_record['id'],
+                    user_id=user_id
+                )
+                
+                if success:
+                    # Update file hash and mark as processed
+                    file_hash = self._get_file_hash(file_path_obj)
+                    user_agent_data['file_hashes'][str(file_path_obj)] = file_hash
+                    user_agent_data['processed_files'].add(str(file_path_obj))
+                    
+                    # Trigger stock data updates for new tickers
+                    new_tickers = df['ticker'].unique().tolist()
+                    self._update_stock_data_for_tickers(new_tickers)
+                    
+                    # Save processed files cache
+                    self._save_user_processed_files(user_id, user_agent_data)
+                    
+                    print(f"✅ Successfully processed uploaded file {file_path_obj.name} for user {user_id}")
+                    return True
+                else:
+                    print(f"❌ Failed to save transactions for {file_path_obj.name}")
+                    return False
+                    
+            except Exception as e:
+                print(f"❌ Error saving to database: {e}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error processing uploaded file {file_path} for user {user_id}: {e}")
+            return False
 
 # Global instance
 user_file_agent = UserFileReadingAgent()

@@ -161,13 +161,28 @@ class WebAgent:
         if not folder_path:
             return False, "No folder path configured for user"
         
-        if not os.path.exists(folder_path):
-            return False, f"User folder does not exist: {folder_path}"
+        # For Streamlit Cloud, create folder if it doesn't exist
+        is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
         
-        if not os.path.isdir(folder_path):
-            return False, f"User folder path is not a directory: {folder_path}"
-        
-        return True, "Folder access OK"
+        if is_streamlit_cloud:
+            # Create folder if it doesn't exist (GitHub path structure)
+            try:
+                os.makedirs(folder_path, exist_ok=True)
+                # Create archive folder
+                archive_path = os.path.join(folder_path, "archive")
+                os.makedirs(archive_path, exist_ok=True)
+                return True, "Folder access OK (created if needed)"
+            except Exception as e:
+                return False, f"Error creating folder: {e}"
+        else:
+            # Local development - check if folder exists
+            if not os.path.exists(folder_path):
+                return False, f"User folder does not exist: {folder_path}"
+            
+            if not os.path.isdir(folder_path):
+                return False, f"User folder path is not a directory: {folder_path}"
+            
+            return True, "Folder access OK"
     
     def show_user_settings(self):
         """Show user settings and information"""
@@ -182,6 +197,9 @@ class WebAgent:
         folder_path = self.session_state.get('folder_path', '')
         login_time = self.session_state.get('login_time')
         
+        # Check if running on Streamlit Cloud
+        is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
+        
         col1, col2 = st.columns(2)
         
         with col1:
@@ -194,6 +212,12 @@ class WebAgent:
         with col2:
             st.markdown("### 📁 Folder Information")
             if folder_path:
+                # Check if running on Streamlit Cloud
+                is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
+                
+                if is_streamlit_cloud:
+                    st.info("🌐 **Cloud Storage**: Files are stored in cloud-based folders")
+                
                 st.write(f"**Folder Path:** {folder_path}")
                 
                 # Check folder access
@@ -208,7 +232,8 @@ class WebAgent:
                         if files:
                             st.write("**Recent files:**")
                             for file in files[:5]:  # Show first 5 files
-                                st.write(f"- {file}")
+                                if not file.startswith('.'):  # Skip hidden files
+                                    st.write(f"- {file}")
                     except Exception as e:
                         st.error(f"Error accessing folder: {e}")
                 else:
@@ -216,10 +241,214 @@ class WebAgent:
             else:
                 st.warning("⚠️ No folder path configured")
         
+        # File Upload Section for Streamlit Cloud
+        is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
+        if is_streamlit_cloud and folder_path:
+            st.markdown("### 📤 File Upload")
+            st.info("Upload your CSV transaction files for automatic processing and historical price calculation.")
+            
+            uploaded_files = st.file_uploader(
+                "Choose CSV files",
+                type=['csv'],
+                accept_multiple_files=True,
+                help="Upload CSV files with transaction data. Files will be processed automatically with historical price fetching."
+            )
+            
+            if uploaded_files:
+                if st.button("📊 Process Uploaded Files", type="primary"):
+                    self._process_uploaded_files(uploaded_files, folder_path)
+        
         # Admin-specific settings
         if user_role == 'admin':
             st.markdown("### 👑 Admin Settings")
             st.info("Admin features available in the Admin Panel")
+    
+    def _process_uploaded_files(self, uploaded_files, folder_path):
+        """Process uploaded files with historical price calculations"""
+        import pandas as pd
+        from pathlib import Path
+        import os
+        from datetime import datetime
+        
+        if not uploaded_files:
+            st.warning("No files selected for upload")
+            return
+        
+        # Get current user ID
+        user_id = self.session_state.get('user_id')
+        if not user_id:
+            st.error("User ID not found. Please login again.")
+            return
+        
+        # Create progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        processed_count = 0
+        failed_count = 0
+        
+        try:
+            for i, uploaded_file in enumerate(uploaded_files):
+                status_text.text(f"Processing {uploaded_file.name}...")
+                
+                try:
+                    # Read the uploaded file
+                    df = pd.read_csv(uploaded_file)
+                    
+                    # Standardize column names
+                    column_mapping = {
+                        'Stock Name': 'stock_name',
+                        'Stock_Name': 'stock_name',
+                        'stock_name': 'stock_name',
+                        'Ticker': 'ticker',
+                        'ticker': 'ticker',
+                        'Quantity': 'quantity',
+                        'quantity': 'quantity',
+                        'Price': 'price',
+                        'price': 'price',
+                        'Transaction Type': 'transaction_type',
+                        'Transaction_Type': 'transaction_type',
+                        'transaction_type': 'transaction_type',
+                        'Date': 'date',
+                        'date': 'date',
+                        'Channel': 'channel',
+                        'channel': 'channel'
+                    }
+                    
+                    # Rename columns
+                    df = df.rename(columns=column_mapping)
+                    
+                    # Extract channel from filename if not present
+                    if 'channel' not in df.columns:
+                        channel_name = uploaded_file.name.replace('.csv', '').replace('_', ' ')
+                        df['channel'] = channel_name
+                    
+                    # Ensure required columns exist
+                    required_columns = ['stock_name', 'ticker', 'quantity', 'transaction_type', 'date']
+                    missing_columns = [col for col in required_columns if col not in df.columns]
+                    
+                    if missing_columns:
+                        st.error(f"❌ Missing required columns in {uploaded_file.name}: {missing_columns}")
+                        failed_count += 1
+                        continue
+                    
+                    # Clean and validate data
+                    df = df.dropna(subset=['ticker', 'quantity'])
+                    df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce')
+                    
+                    # Convert date to datetime
+                    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                    df = df.dropna(subset=['date'])
+                    
+                    # Standardize transaction types
+                    df['transaction_type'] = df['transaction_type'].str.lower().str.strip()
+                    df['transaction_type'] = df['transaction_type'].replace({
+                        'buy': 'buy',
+                        'purchase': 'buy',
+                        'bought': 'buy',
+                        'sell': 'sell',
+                        'sold': 'sell',
+                        'sale': 'sell'
+                    })
+                    
+                    # Filter valid transaction types
+                    df = df[df['transaction_type'].isin(['buy', 'sell'])]
+                    
+                    if df.empty:
+                        st.warning(f"⚠️ No valid transactions found in {uploaded_file.name}")
+                        failed_count += 1
+                        continue
+                    
+                    # Fetch historical prices for missing price values
+                    if 'price' not in df.columns or df['price'].isna().any():
+                        status_text.text(f"🔍 Fetching historical prices for {uploaded_file.name}...")
+                        df = self._fetch_historical_prices_for_upload(df)
+                    
+                    # Save file to user's folder
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"{uploaded_file.name.replace('.csv', '')}_{timestamp}.csv"
+                    file_path = os.path.join(folder_path, filename)
+                    
+                    # Save processed DataFrame
+                    df.to_csv(file_path, index=False)
+                    
+                    # Save to database using user file agent
+                    from user_file_reading_agent import user_file_agent
+                    success = user_file_agent._process_uploaded_file(file_path, user_id, df)
+                    
+                    if success:
+                        processed_count += 1
+                        st.success(f"✅ Successfully processed {uploaded_file.name}")
+                    else:
+                        failed_count += 1
+                        st.error(f"❌ Failed to process {uploaded_file.name}")
+                    
+                except Exception as e:
+                    st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
+                    failed_count += 1
+                
+                # Update progress
+                progress = (i + 1) / len(uploaded_files)
+                progress_bar.progress(progress)
+            
+            # Final status
+            status_text.text("Processing complete!")
+            progress_bar.progress(1.0)
+            
+            if processed_count > 0:
+                st.success(f"✅ Successfully processed {processed_count} files")
+            if failed_count > 0:
+                st.error(f"❌ Failed to process {failed_count} files")
+            
+            # Refresh the page to show updated file list
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"❌ Error during file processing: {str(e)}")
+        finally:
+            progress_bar.empty()
+            status_text.empty()
+    
+    def _fetch_historical_prices_for_upload(self, df):
+        """Fetch historical prices for uploaded file data"""
+        try:
+            # Prepare tickers and dates for bulk fetching
+            tickers_with_dates = []
+            price_indices = []
+            
+            for idx, row in df.iterrows():
+                ticker = row['ticker']
+                transaction_date = row['date']
+                
+                tickers_with_dates.append((ticker, transaction_date))
+                price_indices.append(idx)
+            
+            if not tickers_with_dates:
+                return df
+            
+            # Bulk fetch prices
+            from file_manager import fetch_prices_bulk
+            bulk_prices = fetch_prices_bulk(tickers_with_dates)
+            
+            # Add price column if it doesn't exist
+            if 'price' not in df.columns:
+                df['price'] = None
+            
+            # Update prices in DataFrame
+            for i, (ticker, transaction_date) in enumerate(tickers_with_dates):
+                idx = price_indices[i]
+                price = bulk_prices.get(ticker)
+                df.at[idx, 'price'] = price
+            
+            # Show summary
+            prices_found = sum(1 for price in bulk_prices.values() if price is not None)
+            st.info(f"🔍 Price summary: {prices_found}/{len(tickers_with_dates)} transactions got historical prices")
+            
+            return df
+            
+        except Exception as e:
+            st.error(f"❌ Error fetching historical prices: {e}")
+            return df
     
     def initialize_agents(self):
          """Initialize the agentic systems"""
@@ -1404,6 +1633,29 @@ class WebAgent:
             # If DataFrame is empty or missing columns, clear the original DataFrame
             self.session_state.pop('original_df', None)
             self.session_state.pop('original_df_hash', None)
+        
+        # File Upload Section for Streamlit Cloud
+        is_streamlit_cloud = os.getenv('STREAMLIT_SERVER_RUN_ON_IP', '').startswith('0.0.0.0')
+        if is_streamlit_cloud and user_id and user_id != 1:
+            folder_path = self.session_state.get('folder_path', '')
+            if folder_path:
+                st.markdown('<h2 class="section-header">📤 File Upload & Processing</h2>', unsafe_allow_html=True)
+                st.info("🌐 **Cloud Mode**: Upload your CSV transaction files for automatic processing with historical price calculation.")
+                
+                uploaded_files = st.file_uploader(
+                    "Choose CSV files",
+                    type=['csv'],
+                    accept_multiple_files=True,
+                    help="Upload CSV files with transaction data. Files will be processed automatically with historical price fetching."
+                )
+                
+                if uploaded_files:
+                    col1, col2 = st.columns([1, 3])
+                    with col1:
+                        if st.button("📊 Process Files", type="primary"):
+                            self._process_uploaded_files(uploaded_files, folder_path)
+                    with col2:
+                        st.info(f"Selected {len(uploaded_files)} file(s) for processing")
         
         # Render filters at the top
         filtered_df, selected_channel, selected_sector, selected_stock = self.render_top_filters(df)
