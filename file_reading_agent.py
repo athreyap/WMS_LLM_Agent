@@ -199,27 +199,36 @@ class FileReadingAgent:
             if df is None:
                 return False
             
-            # Save file to database
-            session = SessionLocal()
+            # Save file to database using Supabase
             try:
-                file_record = save_file_record_to_db(
-                    session=session,
+                file_record = save_file_record_supabase(
                     filename=file_path.name,
-                    file_path=str(file_path),
-                    user_id=user_id
+                    original_filename=file_path.name,
+                    file_hash=self._get_file_hash(file_path),
+                    customer_name=None
                 )
                 
                 if file_record is None:
                     print(f"❌ Failed to save file record for {file_path.name}")
                     return False
                 
-                # Save transactions to database
-                success = save_transactions_to_db_with_session(
-                    session=session,
-                    df=df,
-                    file_id=file_record.id,
-                    user_id=user_id
-                )
+                # Save transactions to database using Supabase
+                success = True
+                for _, row in df.iterrows():
+                    transaction_success = save_transaction_supabase(
+                        user_id=user_id,
+                        stock_name=row['stock_name'],
+                        ticker=row['ticker'],
+                        quantity=row['quantity'],
+                        price=row['price'],
+                        transaction_type=row['transaction_type'],
+                        date=row['date'],
+                        channel=row.get('channel'),
+                        sector=row.get('sector')
+                    )
+                    if not transaction_success:
+                        success = False
+                        break
                 
                 if success:
                     # Update file hash
@@ -231,18 +240,15 @@ class FileReadingAgent:
                     new_tickers = df['ticker'].unique().tolist()
                     self._update_stock_data_for_tickers(new_tickers)
                     
-                    # Start background historical price fetching for better performance
-                    if user_id:
-                        fetch_historical_prices_background(user_id)
-                    
                     print(f"✅ Successfully processed {file_path.name}")
                     return True
                 else:
                     print(f"❌ Failed to save transactions for {file_path.name}")
                     return False
                     
-            finally:
-                session.close()
+            except Exception as e:
+                print(f"❌ Error saving to database: {e}")
+                return False
                 
         except Exception as e:
             print(f"❌ Error processing {file_path.name}: {e}")
