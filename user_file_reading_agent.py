@@ -17,7 +17,6 @@ from database_config_supabase import (
     get_user_by_id_supabase
 )
 from stock_data_agent import stock_agent, force_update_stock
-from login_system import get_user_by_id_supabase
 
 # Import price fetching functions
 try:
