@@ -43,6 +43,11 @@ def hash_password(password, salt=None):
 
 def verify_password(password, hashed_password, salt):
     """Verify password against stored hash"""
+    # Handle missing or empty salt
+    if not salt or salt.strip() == '':
+        print("⚠️  Warning: Missing password salt, using empty string")
+        salt = ''
+    
     input_hash, _ = hash_password(password, salt)
     return input_hash == hashed_password
 
@@ -126,6 +131,7 @@ def create_user(username, email, password, role="user", folder_path=None):
         user_data = create_user_supabase(
             username=username,
             password_hash=hashed_password,
+            password_salt=salt,
             email=email,
             role=role,
             folder_path=folder_path
@@ -153,7 +159,8 @@ def authenticate_user(username, password):
             return False, "Account is locked. Please contact administrator"
         
         # Verify password
-        if not verify_password(password, user['password_hash'], user.get('password_salt', '')):
+        password_salt = user.get('password_salt', '')
+        if not verify_password(password, user['password_hash'], password_salt):
             # Increment failed attempts
             login_attempts = user.get('login_attempts', 0) + 1
             is_locked = login_attempts >= MAX_LOGIN_ATTEMPTS

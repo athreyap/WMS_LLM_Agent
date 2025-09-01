@@ -276,6 +276,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
+    password_salt = Column(String, nullable=False)  # Added password_salt column
     email = Column(String)
     role = Column(String, default="user")
     folder_path = Column(Text)
@@ -310,7 +311,7 @@ class StockData(Base):
     last_updated = Column(DateTime, default=datetime.utcnow)
 
 # Supabase Client Functions
-def create_user_supabase(username: str, password_hash: str, email: str = None, role: str = "user", folder_path: str = None) -> Optional[Dict]:
+def create_user_supabase(username: str, password_hash: str, password_salt: str, email: str = None, role: str = "user", folder_path: str = None) -> Optional[Dict]:
     """Create a new user using Supabase client"""
     try:
         # Convert folder path to GitHub path for Streamlit Cloud
@@ -319,6 +320,7 @@ def create_user_supabase(username: str, password_hash: str, email: str = None, r
         data = {
             "username": username,
             "password_hash": password_hash,
+            "password_salt": password_salt,
             "email": email,
             "role": role,
             "folder_path": github_folder_path,
@@ -707,9 +709,13 @@ def create_database():
         return False
 
 # Legacy functions for backward compatibility
-def create_user(username: str, password_hash: str, email: str = None, role: str = "user", folder_path: str = None) -> Optional[Dict]:
+def create_user(username: str, password_hash: str, password_salt: str = None, email: str = None, role: str = "user", folder_path: str = None) -> Optional[Dict]:
     """Create a new user (legacy function)"""
-    return create_user_supabase(username, password_hash, email, role, folder_path)
+    if password_salt is None:
+        # Generate a default salt if not provided (for backward compatibility)
+        import secrets
+        password_salt = secrets.token_hex(16)
+    return create_user_supabase(username, password_hash, password_salt, email, role, folder_path)
 
 def get_user_by_username(username: str) -> Optional[Dict]:
     """Get user by username (legacy function)"""
@@ -787,3 +793,96 @@ def fetch_historical_prices_background(user_id: int):
     except Exception as e:
         print(f"❌ Error in background price fetching: {e}")
         return False
+
+def fix_password_salt_issue():
+    """Fix the missing password_salt column issue for existing users"""
+    print("🔧 Fixing password salt issue for existing users...")
+    
+    try:
+        # Get all users
+        result = supabase.table("users").select("*").execute()
+        
+        if not result.data:
+            print("✅ No users found - no fix needed")
+            return True
+        
+        fixed_count = 0
+        for user in result.data:
+            user_id = user['id']
+            username = user['username']
+            
+            # Check if user has password_salt
+            if 'password_salt' not in user or not user.get('password_salt'):
+                print(f"🔧 Fixing user: {username}")
+                
+                # Generate a default salt (this will make existing passwords invalid)
+                import secrets
+                default_salt = secrets.token_hex(16)
+                
+                # Update user with default salt
+                update_data = {
+                    "password_salt": default_salt
+                }
+                
+                try:
+                    supabase.table("users").update(update_data).eq("id", user_id).execute()
+                    print(f"✅ Fixed user: {username}")
+                    fixed_count += 1
+                except Exception as e:
+                    print(f"❌ Failed to fix user {username}: {e}")
+            else:
+                print(f"✅ User {username} already has password_salt")
+        
+        print(f"🎉 Fixed {fixed_count} users with missing password_salt")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error fixing password salt issue: {e}")
+        return False
+
+def get_database_fix_sql():
+    """Get SQL commands to fix database structure issues"""
+    sql_commands = """
+-- =====================================================
+-- Fix Database Structure Issues
+-- =====================================================
+
+-- 1. Add missing password_salt column to users table
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_salt VARCHAR(32);
+
+-- 2. Update existing users with default salt (temporary fix)
+-- Note: This will make existing passwords invalid
+UPDATE users SET password_salt = 'default_salt_placeholder' WHERE password_salt IS NULL;
+
+-- 3. Make password_salt NOT NULL for future users
+ALTER TABLE users ALTER COLUMN password_salt SET NOT NULL;
+
+-- 4. Fix investment_files table structure (if needed)
+DROP TABLE IF EXISTS investment_files CASCADE;
+
+CREATE TABLE investment_files (
+    id SERIAL PRIMARY KEY,
+    filename VARCHAR(255) NOT NULL,
+    file_path TEXT NOT NULL,
+    file_hash VARCHAR(64) UNIQUE NOT NULL,
+    customer_name VARCHAR(100),
+    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) DEFAULT 'processed'
+);
+
+-- 5. Create indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_files_filename ON investment_files(filename);
+CREATE INDEX IF NOT EXISTS idx_files_file_hash ON investment_files(file_hash);
+
+-- 6. Enable Row Level Security
+ALTER TABLE investment_files ENABLE ROW LEVEL SECURITY;
+
+-- 7. Create RLS policy
+CREATE POLICY "Enable all operations for files" ON investment_files
+    FOR ALL USING (true) WITH CHECK (true);
+
+-- =====================================================
+-- Fix Complete!
+-- =====================================================
+"""
+    return sql_commands
