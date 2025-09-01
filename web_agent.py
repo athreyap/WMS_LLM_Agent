@@ -1,13 +1,56 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import numpy as np
 from datetime import datetime, timedelta
-from collections import defaultdict
-import os
 import time
+import os
+import sys
+from pathlib import Path
+
+# Handle matplotlib import issues gracefully
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend
+    print("✅ Matplotlib imported successfully")
+except ImportError as e:
+    print(f"⚠️ Matplotlib not available: {e}")
+    print("💡 This won't affect Plotly charts, but some features may be limited")
+    matplotlib = None
+
+# Import other modules with error handling
+try:
+    from login_system import main_login_system, is_session_valid, clear_session
+    LOGIN_SYSTEM_AVAILABLE = True
+    print("✅ Login system imported successfully")
+except ImportError as e:
+    print(f"⚠️ Login system not available: {e}")
+    LOGIN_SYSTEM_AVAILABLE = False
+
+try:
+    from user_file_reading_agent import user_file_agent, process_user_files_on_login, get_user_transactions_data, start_user_file_monitoring, stop_user_file_monitoring
+    print("✅ User file reading agent imported successfully")
+except ImportError as e:
+    print(f"⚠️ User file reading agent not available: {e}")
+
+try:
+    from stock_data_agent import stock_agent, force_update_stock, update_user_stock_prices
+    print("✅ Stock data agent imported successfully")
+except ImportError as e:
+    print(f"⚠️ Stock data agent not available: {e}")
+
+try:
+    from database_config_supabase import (
+        get_file_records_supabase,
+        update_stock_data_supabase,
+    )
+    print("✅ Database config imported successfully")
+except ImportError as e:
+    print(f"⚠️ Database config not available: {e}")
+
+from collections import defaultdict
 import threading
 from typing import Dict, List, Optional
 from functools import lru_cache, wraps
@@ -626,7 +669,7 @@ class WebAgent:
              except Exception as e:
                  st.error(f"❌ Error initializing agents: {e}")
     
-    def load_data_from_agents(self, user_id: int = None) -> pd.DataFrame:
+    def load_data_from_agent(self, user_id: int = None) -> pd.DataFrame:
         """Load data using the agentic systems with timeout protection"""
         import threading
         import concurrent.futures
@@ -639,7 +682,9 @@ class WebAgent:
                 # Process user's files first
                 try:
                     result = process_user_files_on_login(user_id)
+                    print(f"🔍 File processing result: {result}")
                 except Exception as e:
+                    print(f"⚠️ File processing error: {e}")
                     pass  # Silently handle file processing errors
                 
                 # Get transactions from database
@@ -1527,6 +1572,17 @@ class WebAgent:
             st.warning("⚠️ No data available. Please upload files or check database.")
             return
         
+        # Debug: Show what we're trying to render
+        st.info(f"🎯 **Rendering Dashboard**: DataFrame shape: {df.shape}, Columns: {list(df.columns)}")
+        
+        # Check if we have the required columns for P&L calculations
+        required_cols = ['ticker', 'quantity', 'price', 'transaction_type']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            st.error(f"❌ **Missing Required Columns**: {missing_cols}")
+            st.info("💡 These columns are needed for portfolio analysis and P&L calculations")
+            return
+        
         # Always calculate holdings from fresh data (no cache for live prices)
         user_id = self.session_state.get('user_id', 1)
         
@@ -1949,7 +2005,7 @@ class WebAgent:
                             pass  # Silently handle monitoring errors
                 
                 # Load data and ensure prices are fetched
-                df = self.load_data_from_agents(user_id)
+                df = self.load_data_from_agent(user_id)
                 
                 # Check if force recalculation is needed (after manual refresh)
                 if self.session_state.get('force_recalculate', False):
@@ -1961,7 +2017,7 @@ class WebAgent:
                     if 'data_processing_complete' in self.session_state:
                         del self.session_state['data_processing_complete']
                     # Force reload data
-                    df = self.load_data_from_agents(user_id)
+                    df = self.load_data_from_agent(user_id)
                     st.success("✅ Data refreshed and P&L recalculated!")
                 
                                 # Use processed data from session state if available
@@ -2116,12 +2172,31 @@ class WebAgent:
                         # Mark data processing as complete
                         self.session_state['data_processing_complete'] = True
                 
-                # For default user (user_id == 1), also mark data processing as complete
-                if user_id == 1:
-                    self.session_state['data_processing_complete'] = True
+                # Mark data processing as complete for all users
+                self.session_state['data_processing_complete'] = True
+                self.session_state['current_df'] = df.copy()
                 
                 # Check if user has transactions
                 has_transactions = not df.empty
+                
+                # Debug: Show data status
+                st.info(f"🔍 **Data Status**: DataFrame shape: {df.shape}, Columns: {list(df.columns) if not df.empty else 'None'}")
+                st.info(f"🔍 **Processing Status**: Data processing complete: {self.session_state.get('data_processing_complete', False)}")
+                
+                # Check for common issues
+                if not df.empty:
+                    missing_prices = df['price'].isna().sum() if 'price' in df.columns else 0
+                    total_transactions = len(df)
+                    if missing_prices > 0:
+                        st.warning(f"⚠️ **Data Issue**: {missing_prices}/{total_transactions} transactions are missing prices")
+                        st.info("💡 This will prevent P&L calculations. Historical prices are being fetched automatically.")
+                    
+                    # Check if live prices are available
+                    if 'live_price' in df.columns:
+                        missing_live_prices = df['live_price'].isna().sum()
+                        if missing_live_prices > 0:
+                            st.warning(f"⚠️ **Live Price Issue**: {missing_live_prices}/{total_transactions} transactions are missing live prices")
+                            st.info("💡 This will prevent current P&L calculations. Live prices are being fetched automatically.")
                 
                 # Show portfolio data if user has transactions
                 if has_transactions:
