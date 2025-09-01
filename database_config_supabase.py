@@ -518,8 +518,12 @@ def update_stock_data_supabase(ticker: str, stock_name: str = None, sector: str 
             print(f"❌ Failed to update stock data for {ticker}")
             
     except Exception as e:
+        # Handle RLS policy error gracefully
+        if "row-level security policy" in str(e) or "42501" in str(e):
+            print(f"⚠️ RLS policy blocked update for {ticker}, skipping database update")
+            print(f"🔍 This is normal - stock data updates are restricted by security policies")
         # Handle schema cache error gracefully
-        if "live_price" in str(e) and "schema cache" in str(e):
+        elif "live_price" in str(e) and "schema cache" in str(e):
             print(f"⚠️ Schema cache issue for {ticker}, trying without live_price...")
             try:
                 # Try without live_price column

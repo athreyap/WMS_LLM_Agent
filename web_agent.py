@@ -896,28 +896,15 @@ class WebAgent:
             # Create quarter column
             buy_df['quarter'] = buy_df['date'].dt.to_period('Q').astype(str)
             
-            # Add live prices for P&L calculation
-            live_prices_cache_key = f'live_prices_user_{user_id}' if user_id else 'live_prices_global'
-            live_prices = self.session_state.get(live_prices_cache_key, {})
-            
-            # Debug: Check if live prices are available
-            print(f"🔍 Quarterly Analysis - Live prices debug:")
-            print(f"🔍 Cache key: {live_prices_cache_key}")
-            print(f"🔍 Live prices type: {type(live_prices)}")
-            print(f"🔍 Live prices length: {len(live_prices) if isinstance(live_prices, dict) else 'N/A'}")
-            
-            if not live_prices:
-                print(f"⚠️ No live prices found in cache key: {live_prices_cache_key}")
-                print(f"🔍 Available cache keys: {[k for k in self.session_state.keys() if 'live_prices' in k]}")
-                st.warning(f"⚠️ No live prices found in cache key: {live_prices_cache_key}")
-                st.info(f"Available cache keys: {[k for k in self.session_state.keys() if 'live_prices' in k]}")
+            # Add live prices for P&L calculation - use fresh data from DataFrame
+            if 'live_price' in buy_df.columns:
+                # Use live prices already in the DataFrame
+                print(f"🔍 Quarterly Analysis - Using live prices from DataFrame")
+                print(f"🔍 Live prices available: {len(buy_df[buy_df['live_price'] > 0])}/{len(buy_df)} transactions")
             else:
-                print(f"🔍 Live prices found: {len(live_prices)} prices")
-                sample_prices = list(live_prices.items())[:3]
-                for ticker, price in sample_prices:
-                    print(f"🔍 Sample live price: {ticker} = ₹{price}")
-            
-            buy_df['live_price'] = buy_df['ticker'].map(live_prices).fillna(buy_df['price'])
+                # Fallback to historical prices if no live prices
+                print(f"⚠️ No live prices in DataFrame, using historical prices")
+                buy_df['live_price'] = buy_df['price']
             
             # Debug: Check the mapping results
             zero_prices = (buy_df['live_price'] == 0).sum()
@@ -1023,16 +1010,7 @@ class WebAgent:
         # Add button to update sectors (only show when not loading live prices)
         loading_live_prices = False
         
-        # Check if we're in the middle of a live price update
-        cache_key = f'live_prices_user_{self.session_state.get("user_id", 1)}' if self.session_state.get("user_id") else 'live_prices_global'
-        cache_timestamp_key = f'live_prices_timestamp_user_{self.session_state.get("user_id", 1)}' if self.session_state.get("user_id") else 'live_prices_timestamp_global'
-        
-        # If cache is too old or missing, we might be loading live prices
-        cache_age = time.time() - self.session_state.get(cache_timestamp_key, 0)
-        if cache_age > 300 or cache_key not in self.session_state:  # 5 minutes cache
-            loading_live_prices = True
-        
-        # Also check if there's an ongoing live price update in session state
+        # Check if there's an ongoing live price update in session state
         if self.session_state.get('updating_live_prices', False):
             loading_live_prices = True
         
@@ -1309,45 +1287,16 @@ class WebAgent:
         
         # Display stock performance
         
-        # Get live prices for current price display
+        # Get live prices for current price display - use data from DataFrame
         user_id = self.session_state.get('user_id', 1)
-        cache_key = f'live_prices_user_{user_id}' if user_id else 'live_prices_global'
-        live_prices_raw = self.session_state.get(cache_key, {})
         
-        # Debug: Check live prices in Stock Performance Analysis
-        print(f"🔍 Stock Performance Analysis - Live prices debug:")
-        print(f"🔍 Cache key: {cache_key}")
-        print(f"🔍 Live prices raw type: {type(live_prices_raw)}")
-        print(f"🔍 Live prices raw length: {len(live_prices_raw) if isinstance(live_prices_raw, dict) else 'N/A'}")
-        
-        # Ensure live_prices is a dictionary
-        if isinstance(live_prices_raw, dict):
-            live_prices = live_prices_raw
-            print(f"🔍 Live prices from cache: {len(live_prices)} prices")
-            if live_prices:
-                sample_prices = list(live_prices.items())[:3]
-                for ticker, price in sample_prices:
-                    print(f"🔍 Sample cache price: {ticker} = ₹{price}")
+        # Extract live prices from the buy_df which should have fresh data
+        live_prices = {}
+        if not buy_df.empty and 'live_price' in buy_df.columns:
+            live_prices = buy_df.set_index('ticker')['live_price'].to_dict()
+            print(f"🔍 Stock Performance Analysis - Using live prices from DataFrame: {len(live_prices)} prices")
         else:
-            live_prices = {}
-            print(f"⚠️ Live prices raw is not a dict, using empty dict")
-        
-        # If live prices are empty, try to get them from the buy_df
-        if len(live_prices) == 0:
-            print(f"🔍 Live prices empty, trying to extract from buy_df...")
-            # Extract live prices from the buy_df which should have them
-            if not buy_df.empty and 'live_price' in buy_df.columns:
-                live_prices = buy_df.set_index('ticker')['live_price'].to_dict()
-                print(f"🔍 Extracted {len(live_prices)} prices from buy_df")
-                if live_prices:
-                    sample_prices = list(live_prices.items())[:3]
-                    for ticker, price in sample_prices:
-                        print(f"🔍 Sample buy_df price: {ticker} = ₹{price}")
-            else:
-                live_prices = {}
-                print(f"⚠️ buy_df empty or missing live_price column")
-        else:
-            print(f"✅ Using live prices from cache")
+            print(f"⚠️ No live prices available in DataFrame")
         
         # Create rating table
         rating_data = []
