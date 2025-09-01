@@ -372,6 +372,11 @@ class WebAgent:
             st.error("User ID not found. Please login again.")
             return
         
+        # DEBUG: Show current user information
+        st.info(f"🔍 **DEBUG INFO**: Processing files for User ID: {user_id}")
+        st.info(f"🔍 **DEBUG INFO**: Current username: {self.session_state.get('username', 'Unknown')}")
+        st.info(f"🔍 **DEBUG INFO**: Session keys: {list(self.session_state.keys())}")
+        
         # Create progress bar
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -386,6 +391,9 @@ class WebAgent:
                 try:
                     # Read the uploaded file
                     df = pd.read_csv(uploaded_file)
+                    
+                    # DEBUG: Show DataFrame info
+                    st.info(f"🔍 **DEBUG INFO**: DataFrame shape: {df.shape}, Columns: {list(df.columns)}")
                     
                     # Standardize column names
                     column_mapping = {
@@ -468,14 +476,34 @@ class WebAgent:
                     # Add user_id to DataFrame
                     df['user_id'] = user_id
                     
+                    # DEBUG: Show final DataFrame info
+                    st.info(f"🔍 **DEBUG INFO**: Final DataFrame shape: {df.shape}")
+                    st.info(f"🔍 **DEBUG INFO**: User ID in DataFrame: {df['user_id'].iloc[0] if not df.empty else 'Empty'}")
+                    st.info(f"🔍 **DEBUG INFO**: Sample tickers: {df['ticker'].head().tolist() if not df.empty else 'Empty'}")
+                    
                     # Save directly to database using user file agent
                     from user_file_reading_agent import user_file_agent
                     try:
+                        st.info(f"🔄 **DEBUG INFO**: Calling user_file_agent._process_uploaded_file_direct with user_id: {user_id}")
                         success = user_file_agent._process_uploaded_file_direct(df, user_id, uploaded_file.name)
                         
                         if success:
                             processed_count += 1
                             st.success(f"✅ Successfully processed {uploaded_file.name}")
+                            
+                            # DEBUG: Verify data was saved by checking database
+                            st.info("🔍 **DEBUG INFO**: Verifying data was saved to database...")
+                            try:
+                                from database_config_supabase import get_transactions_supabase
+                                saved_transactions = get_transactions_supabase(user_id)
+                                st.success(f"🔍 **DEBUG INFO**: Database verification: {len(saved_transactions)} transactions found for user {user_id}")
+                                
+                                if saved_transactions:
+                                    sample_transaction = saved_transactions[0]
+                                    st.info(f"🔍 **DEBUG INFO**: Sample transaction user_id: {sample_transaction.get('user_id', 'N/A')}")
+                                    st.info(f"🔍 **DEBUG INFO**: Sample transaction ticker: {sample_transaction.get('ticker', 'N/A')}")
+                            except Exception as verify_error:
+                                st.error(f"❌ **DEBUG ERROR**: Database verification failed: {verify_error}")
                         else:
                             failed_count += 1
                             st.error(f"❌ Failed to process {uploaded_file.name}")
@@ -507,6 +535,15 @@ class WebAgent:
                 st.success(f"✅ Successfully processed {processed_count} files")
                 # Force data reload after successful processing
                 st.info("🔄 **Data Updated!** Click 'Refresh Data & Recalculate' button to see your updated portfolio.")
+                
+                # DEBUG: Final verification
+                st.info("🔍 **DEBUG INFO**: Final verification - checking all transactions for current user...")
+                try:
+                    from database_config_supabase import get_transactions_supabase
+                    final_transactions = get_transactions_supabase(user_id)
+                    st.success(f"🔍 **DEBUG INFO**: Final count: {len(final_transactions)} transactions for user {user_id}")
+                except Exception as final_error:
+                    st.error(f"❌ **DEBUG ERROR**: Final verification failed: {final_error}")
             if failed_count > 0:
                 st.error(f"❌ Failed to process {failed_count} files")
             
@@ -1861,6 +1898,59 @@ class WebAgent:
                         else:
                             st.error("❌ Could not determine folder path for file processing")
                     st.sidebar.info(f"Selected {len(uploaded_files)} file(s)")
+                
+                # Processed Files Section
+                st.sidebar.markdown("---")
+                st.sidebar.markdown("### 📋 Processed Files")
+                
+                if user_id and user_id != 1:
+                    try:
+                        from database_config_supabase import get_file_records_supabase
+                        processed_files = get_file_records_supabase(user_id)
+                        
+                        if processed_files:
+                            st.sidebar.success(f"📁 {len(processed_files)} files processed")
+                            
+                            # Show file details in an expander
+                            with st.sidebar.expander("📋 View Processed Files", expanded=False):
+                                for i, file_record in enumerate(processed_files[:5]):  # Show first 5 files
+                                    file_id = file_record.get('id', 'N/A')
+                                    filename = file_record.get('filename', 'Unknown')
+                                    processed_at = file_record.get('processed_at', 'Unknown')
+                                    status = file_record.get('status', 'Unknown')
+                                    
+                                    st.sidebar.markdown(f"""
+                                    **File {i+1}:**
+                                    - 📄 {filename}
+                                    - 🆔 ID: {file_id}
+                                    - 📅 {processed_at}
+                                    - ✅ {status}
+                                    """)
+                                
+                                if len(processed_files) > 5:
+                                    st.sidebar.info(f"... and {len(processed_files) - 5} more files")
+                                
+                                # Show summary
+                                st.sidebar.markdown("---")
+                                st.sidebar.markdown(f"**Total Files:** {len(processed_files)}")
+                                
+                                # Count by status
+                                status_counts = {}
+                                for file_record in processed_files:
+                                    status = file_record.get('status', 'Unknown')
+                                    status_counts[status] = status_counts.get(status, 0) + 1
+                                
+                                for status, count in status_counts.items():
+                                    st.sidebar.markdown(f"**{status}:** {count}")
+                        else:
+                            st.sidebar.info("📁 No files processed yet")
+                            st.sidebar.info("Upload your first CSV file to get started!")
+                            
+                    except Exception as e:
+                        st.sidebar.error(f"❌ Error loading processed files: {e}")
+                        st.sidebar.info("💡 This might be due to database connection issues")
+                else:
+                    st.sidebar.info("📁 Login to see your processed files")
                 
                 # Manual refresh button for data recalculation
                 st.sidebar.markdown("---")
