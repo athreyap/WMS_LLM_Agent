@@ -396,8 +396,7 @@ class WebAgent:
             if failed_count > 0:
                 st.error(f"❌ Failed to process {failed_count} files")
             
-            # Refresh the page to show updated file list
-            st.rerun()
+            # No automatic refresh - user will manually click refresh button
             
         except Exception as e:
             st.error(f"❌ Error during file processing: {str(e)}")
@@ -635,7 +634,7 @@ class WebAgent:
                 self.session_state['updating_live_prices'] = False
                 
             except Exception as e:
-                st.warning(f"⚠️ Could not fetch live prices: {e}")
+                print(f"⚠️ Could not fetch live prices: {e}")
                 # Fallback to empty prices (will use historical prices)
                 live_prices = {}
                 # Clear the updating flag even on error
@@ -731,7 +730,7 @@ class WebAgent:
                                         pass
                                 return "Mutual Fund"
                         except Exception as e:
-                            st.warning(f"MF tool error for {ticker}: {e}")
+                            print(f"MF tool error for {ticker}: {e}")
                     
                     return 'Unknown'
                 
@@ -743,10 +742,10 @@ class WebAgent:
             return df
             
         except concurrent.futures.TimeoutError:
-            st.error("❌ Data loading timed out. Please try again or use fast loading mode.")
+            print("❌ Data loading timed out. Please try again or use fast loading mode.")
             return pd.DataFrame()
         except Exception as e:
-            st.error(f"❌ Error loading data: {e}")
+            print(f"❌ Error loading data: {e}")
             return pd.DataFrame()
     
     def render_top_filters(self, df: pd.DataFrame):
@@ -1564,10 +1563,23 @@ class WebAgent:
                         
                         if folder_path:
                             self._process_uploaded_files(uploaded_files, folder_path)
-                            st.rerun()
+                            st.sidebar.success("✅ Files processed! Click 'Refresh Data' below to update your portfolio.")
                         else:
                             st.error("❌ Could not determine folder path for file processing")
                     st.sidebar.info(f"Selected {len(uploaded_files)} file(s)")
+                
+                # Manual refresh button for data recalculation
+                st.sidebar.markdown("---")
+                if st.sidebar.button("🔄 Refresh Data & Recalculate", type="secondary"):
+                    # Clear any cached data
+                    if 'current_df' in self.session_state:
+                        del self.session_state['current_df']
+                    if 'data_processing_complete' in self.session_state:
+                        del self.session_state['data_processing_complete']
+                    
+                    # Set flag to force complete recalculation
+                    self.session_state['force_recalculate'] = True
+                    st.sidebar.success("🔄 Refreshing data and recalculating P&L...")
                 
                 # Show file history
                 st.sidebar.markdown("---")
@@ -1835,6 +1847,19 @@ class WebAgent:
                 
                 # Load data and ensure prices are fetched
                 df = self.load_data_from_agents(user_id)
+                
+                # Check if force recalculation is needed (after manual refresh)
+                if self.session_state.get('force_recalculate', False):
+                    # Clear the flag
+                    self.session_state['force_recalculate'] = False
+                    # Clear any cached data
+                    if 'current_df' in self.session_state:
+                        del self.session_state['current_df']
+                    if 'data_processing_complete' in self.session_state:
+                        del self.session_state['data_processing_complete']
+                    # Force reload data
+                    df = self.load_data_from_agents(user_id)
+                    st.success("✅ Data refreshed and P&L recalculated!")
                 
                                 # Use processed data from session state if available
                 if 'current_df' in self.session_state and self.session_state.get('data_processing_complete', False):

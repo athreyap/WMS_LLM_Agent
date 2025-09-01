@@ -702,13 +702,13 @@ def process_uploaded_files_during_registration(uploaded_files, folder_path, user
                 
                 if success:
                     processed_count += 1
-                    st.success(f"✅ Successfully processed {uploaded_file.name}")
+                    print(f"✅ Successfully processed {uploaded_file.name}")
                 else:
                     failed_count += 1
-                    st.error(f"❌ Failed to process {uploaded_file.name}")
+                    print(f"❌ Failed to process {uploaded_file.name}")
                 
             except Exception as e:
-                st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
+                print(f"❌ Error processing {uploaded_file.name}: {str(e)}")
                 failed_count += 1
             
             # Update progress
@@ -720,14 +720,14 @@ def process_uploaded_files_during_registration(uploaded_files, folder_path, user
         progress_bar.progress(1.0)
         
         if processed_count > 0:
-            st.success(f"✅ Successfully processed {processed_count} files")
+            print(f"✅ Successfully processed {processed_count} files")
             return True
         if failed_count > 0:
-            st.error(f"❌ Failed to process {failed_count} files")
+            print(f"❌ Failed to process {failed_count} files")
             return False
         
     except Exception as e:
-        st.error(f"❌ Error during file processing: {str(e)}")
+        print(f"❌ Error during file processing: {str(e)}")
         return False
     finally:
         progress_bar.empty()
@@ -745,7 +745,7 @@ def fetch_historical_prices_for_upload(df):
         required_columns = ['ticker', 'date']
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
-            st.error(f"❌ Missing required columns: {missing_columns}")
+            print(f"❌ Missing required columns: {missing_columns}")
             return df
         
         # Initialize mftool for mutual funds
@@ -767,14 +767,14 @@ def fetch_historical_prices_for_upload(df):
                 tickers_with_dates.append((ticker, transaction_date))
                 price_indices.append(idx)
             except KeyError as e:
-                st.warning(f"⚠️ Missing column in row {idx}: {e}")
+                print(f"⚠️ Missing column in row {idx}: {e}")
                 continue
             except Exception as e:
-                st.warning(f"⚠️ Error processing row {idx}: {e}")
+                print(f"⚠️ Error processing row {idx}: {e}")
                 continue
         
         if not tickers_with_dates:
-            st.info("ℹ️ No valid ticker/date pairs found for price fetching")
+            print("ℹ️ No valid ticker/date pairs found for price fetching")
             return df
         
         # Add price column if it doesn't exist
@@ -804,7 +804,7 @@ def fetch_historical_prices_for_upload(df):
         
         # Batch process mutual funds using mftool
         if mutual_funds:
-            st.info(f"🔍 Batch fetching {len(mutual_funds)} mutual fund prices...")
+            print(f"🔍 Batch fetching {len(mutual_funds)} mutual fund prices...")
             try:
                 from mf_price_fetcher import fetch_mutual_funds_bulk
                 mf_data = [(ticker, date) for ticker, date in mutual_funds]
@@ -818,7 +818,7 @@ def fetch_historical_prices_for_upload(df):
                         prices_found += 1
                         
             except Exception as e:
-                st.warning(f"⚠️ Batch mutual fund fetch failed: {e}")
+                print(f"⚠️ Batch mutual fund fetch failed: {e}")
                 # Fallback to individual fetching
                 for i, (ticker, transaction_date) in enumerate(mutual_funds):
                     idx = mf_indices[i]
@@ -829,11 +829,11 @@ def fetch_historical_prices_for_upload(df):
                             df.at[idx, 'price'] = price
                             prices_found += 1
                     except Exception as e:
-                        st.warning(f"⚠️ Could not fetch price for {ticker}: {e}")
+                        print(f"⚠️ Could not fetch price for {ticker}: {e}")
         
         # Batch process stocks using yfinance
         if stocks:
-            st.info(f"🔍 Batch fetching {len(stocks)} stock prices...")
+            print(f"🔍 Batch fetching {len(stocks)} stock prices...")
             try:
                 # Create ticker objects for bulk fetching
                 ticker_objects = []
@@ -866,10 +866,10 @@ def fetch_historical_prices_for_upload(df):
                                 prices_found += 1
                                 
                     except Exception as e:
-                        st.warning(f"⚠️ Could not fetch price for {ticker}: {e}")
+                        print(f"⚠️ Could not fetch price for {ticker}: {e}")
                         
             except Exception as e:
-                st.warning(f"⚠️ Batch stock fetch failed: {e}")
+                print(f"⚠️ Batch stock fetch failed: {e}")
                 # Fallback to individual fetching
                 for i, (ticker, transaction_date) in enumerate(stocks):
                     idx = stock_indices[i]
@@ -882,15 +882,15 @@ def fetch_historical_prices_for_upload(df):
                             df.at[idx, 'price'] = price
                             prices_found += 1
                     except Exception as e:
-                        st.warning(f"⚠️ Could not fetch price for {ticker}: {e}")
+                        print(f"⚠️ Could not fetch price for {ticker}: {e}")
         
         # Show summary
-        st.success(f"🔍 Price summary: {prices_found}/{len(tickers_with_dates)} transactions got historical prices")
+        print(f"🔍 Price summary: {prices_found}/{len(tickers_with_dates)} transactions got historical prices")
         
         return df
         
     except Exception as e:
-        st.error(f"❌ Error fetching historical prices: {e}")
+        print(f"❌ Error fetching historical prices: {e}")
         return df
 
 def main_login_system():
