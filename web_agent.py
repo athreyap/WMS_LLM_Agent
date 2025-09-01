@@ -924,7 +924,7 @@ class WebAgent:
                              title=f'Holdings for {chart_title}', text='net_quantity')
                 fig1.update_xaxes(tickangle=45)
                 fig1.update_traces(texttemplate='%{text:.0f}', textposition='outside')
-                st.plotly_chart(fig1, use_container_width=True, key="holdings_bar_main")
+                st.plotly_chart(fig1, width='stretch', key="holdings_bar_main")
             
             with row1_col2:
                 st.markdown('<h4 class="subsection-header">Top 10 P/L by Stock</h4>', unsafe_allow_html=True)
@@ -940,7 +940,7 @@ class WebAgent:
                              color_continuous_scale='RdYlGn')
                 fig2.update_xaxes(tickangle=45)
                 fig2.update_traces(texttemplate='₹%{text:,.2f}', textposition='outside')
-                st.plotly_chart(fig2, use_container_width=True, key="pnl_bar_main")
+                st.plotly_chart(fig2, width='stretch', key="pnl_bar_main")
     
     def render_sector_analysis(self, holdings: pd.DataFrame):
         """Render sector analysis charts"""
@@ -992,7 +992,7 @@ class WebAgent:
             st.markdown('<h4 class="subsection-header">Portfolio Allocation by Sector</h4>', unsafe_allow_html=True)
             fig1 = px.pie(sector_performance, values='current_value', names='sector', 
                          title='Portfolio Allocation by Sector')
-            st.plotly_chart(fig1, use_container_width=True)
+            st.plotly_chart(fig1, width='stretch')
         
         with col2:
             st.markdown('<h4 class="subsection-header">Sector Performance</h4>', unsafe_allow_html=True)
@@ -1001,7 +1001,7 @@ class WebAgent:
                          color='pct_gain',
                          color_continuous_scale='RdYlGn')
             fig2.update_xaxes(tickangle=45)
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width='stretch')
         
         # Additional sector charts
         col3, col4 = st.columns(2)
@@ -1015,7 +1015,7 @@ class WebAgent:
                          color_continuous_scale='Blues')
             fig3.update_traces(texttemplate='₹%{text:,.0f}', textposition='outside')
             fig3.update_layout(xaxis_title="Sector", yaxis_title="Current Value (₹)")
-            st.plotly_chart(fig3, use_container_width=True)
+            st.plotly_chart(fig3, width='stretch')
         
         with col4:
             st.markdown('<h4 class="subsection-header">Number of Stocks per Sector</h4>', unsafe_allow_html=True)
@@ -1026,7 +1026,7 @@ class WebAgent:
                          color_continuous_scale='Greens')
             fig4.update_traces(texttemplate='%{text}', textposition='outside')
             fig4.update_layout(xaxis_title="Sector", yaxis_title="Number of Stocks")
-            st.plotly_chart(fig4, use_container_width=True)
+            st.plotly_chart(fig4, width='stretch')
     
     def render_detailed_table(self, df: pd.DataFrame):
         """Render detailed transaction table"""
@@ -1097,7 +1097,7 @@ class WebAgent:
         
         display_df = display_df.rename(columns=column_mapping)
         
-        st.dataframe(display_df, use_container_width=True)
+        st.dataframe(display_df, width='stretch')
     
     def get_rating(self, pnl_percent):
         """Get rating based on P&L percentage"""
@@ -1306,7 +1306,7 @@ class WebAgent:
         
         if rating_data:
             rating_df = pd.DataFrame(rating_data)
-            st.dataframe(rating_df, use_container_width=True)
+            st.dataframe(rating_df, width='stretch')
     
     def render_channel_allocation(self, holdings: pd.DataFrame):
         """Render channel allocation charts"""
@@ -1338,7 +1338,7 @@ class WebAgent:
                           hover_data=['Allocation_Percent', 'P&L_Percent'])
             fig1.update_layout(height=400)
             fig1.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig1, use_container_width=True)
+            st.plotly_chart(fig1, width='stretch')
         
         with col2:
             st.markdown('<h4 class="subsection-header">Channel Performance</h4>', unsafe_allow_html=True)
@@ -1348,7 +1348,7 @@ class WebAgent:
                          color_continuous_scale='RdYlGn')
             fig2.update_xaxes(tickangle=45)
             fig2.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width='stretch')
         
         # Display channel allocation table
         st.markdown('<h4 class="subsection-header">Channel Allocation Details</h4>', unsafe_allow_html=True)
@@ -1366,7 +1366,7 @@ class WebAgent:
         display_table['P&L (₹)'] = display_table['P&L (₹)'].apply(lambda x: f"₹{x:,.2f}")
         display_table['Allocation (%)'] = display_table['Allocation (%)'].apply(lambda x: f"{x:.2f}%")
         display_table['P&L (%)'] = display_table['P&L (%)'].apply(lambda x: f"{x:.2f}%")
-        st.dataframe(display_table, use_container_width=True)
+        st.dataframe(display_table, width='stretch')
     
     def render_portfolio_value_over_time(self, df: pd.DataFrame):
         """Render portfolio value over time chart"""
@@ -1423,7 +1423,7 @@ class WebAgent:
                 height=500
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
                         
         except Exception as e:
             st.error(f"Error rendering portfolio value over time: {e}")
@@ -1603,7 +1603,7 @@ class WebAgent:
             # User has transactions - show data with file upload option on the left
             st.markdown('<h2 class="section-header">📊 Your Portfolio Data</h2>', unsafe_allow_html=True)
             
-            # Create two columns: left for file upload, right for data
+            # Create two columns: left for file upload and summary, right for data
             col1, col2 = st.columns([1, 3])
             
             with col1:
@@ -1662,13 +1662,12 @@ class WebAgent:
                             st.rerun()
                     except Exception as e:
                         st.error(f"❌ Error refreshing prices: {e}")
-            
-            with col2:
-                # Show transaction summary
+                
+                # Show transaction summary in left column
                 st.markdown("### 📈 Transaction Summary")
                 st.info(f"Found **{len(df)} transactions** in your portfolio")
                 
-                # Show quick stats
+                # Show quick stats in left column
                 if len(df) > 0:
                     try:
                         # Check if required columns exist
@@ -1689,6 +1688,14 @@ class WebAgent:
                     except Exception as e:
                         st.error(f"❌ Error calculating stats: {e}")
                         st.info(f"DataFrame shape: {df.shape}, Columns: {list(df.columns)}")
+            
+            with col2:
+                # Right column now contains the main portfolio data and analytics
+                # Render filters at the top
+                filtered_df, selected_channel, selected_sector, selected_stock = self.render_top_filters(df)
+                
+                # Render dashboard
+                self.render_dashboard(filtered_df)
                 
         else:
             # User has no transactions - show welcome message
@@ -1760,11 +1767,8 @@ class WebAgent:
         
         # Only render filters and dashboard if user has transactions
         if has_transactions:
-            # Render filters at the top
-            filtered_df, selected_channel, selected_sector, selected_stock = self.render_top_filters(df)
-            
-            # Render dashboard
-            self.render_dashboard(filtered_df)
+            # Dashboard is already rendered in the column layout above
+            pass
         else:
             # Show a message encouraging users to upload files
             st.markdown("""

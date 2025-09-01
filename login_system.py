@@ -457,7 +457,7 @@ def login_page():
             st.rerun()
         
         # Registration button
-        if st.button("Create Account & Process Files", type="primary", use_container_width=True):
+        if st.button("Create Account & Process Files", type="primary", width='stretch'):
             if not all([new_username, new_email, new_password, confirm_password]):
                 st.error("Please fill in all required fields")
             elif not validate_email(new_email):
@@ -536,7 +536,7 @@ def admin_panel():
     df['created_at'] = pd.to_datetime(df['created_at']).dt.strftime('%Y-%m-%d %H:%M')
     df['last_login'] = pd.to_datetime(df['last_login']).dt.strftime('%Y-%m-%d %H:%M')
     
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width='stretch')
     
     # User management actions
     st.markdown("### User Management")
@@ -760,11 +760,12 @@ def process_uploaded_files_during_registration(uploaded_files, folder_path, user
         status_text.empty()
 
 def fetch_historical_prices_for_upload(df):
-    """Fetch historical prices for uploaded file data"""
+    """Fetch historical prices for uploaded file data using batch processing"""
     try:
         import yfinance as yf
         from mftool import Mftool
         import streamlit as st
+        import pandas as pd
         
         # Initialize mftool for mutual funds
         mf = Mftool()
@@ -787,38 +788,111 @@ def fetch_historical_prices_for_upload(df):
         if 'price' not in df.columns:
             df['price'] = None
         
-        # Fetch prices for each ticker
-        prices_found = 0
+        # Separate mutual funds and stocks for batch processing
+        mutual_funds = []
+        stocks = []
+        mf_indices = []
+        stock_indices = []
+        
         for i, (ticker, transaction_date) in enumerate(tickers_with_dates):
             idx = price_indices[i]
-            price = None
+            # Check if it's a numerical ticker (mutual fund)
+            clean_ticker = str(ticker).strip().upper()
+            clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
             
+            if clean_ticker.isdigit():
+                mutual_funds.append((ticker, transaction_date))
+                mf_indices.append(idx)
+            else:
+                stocks.append((ticker, transaction_date))
+                stock_indices.append(idx)
+        
+        prices_found = 0
+        
+        # Batch process mutual funds using mftool
+        if mutual_funds:
+            st.info(f"🔍 Batch fetching {len(mutual_funds)} mutual fund prices...")
             try:
-                # Try yfinance first (for stocks)
-                stock = yf.Ticker(ticker)
-                hist = stock.history(start=transaction_date, end=transaction_date + pd.Timedelta(days=1))
+                from mf_price_fetcher import fetch_mutual_funds_bulk
+                mf_data = [(ticker, date) for ticker, date in mutual_funds]
+                bulk_prices = fetch_mutual_funds_bulk(mf_data)
                 
-                if not hist.empty:
-                    price = hist['Close'].iloc[0]
-                else:
-                    # Try mftool for mutual funds
+                for i, (ticker, _) in enumerate(mutual_funds):
+                    idx = mf_indices[i]
+                    price = bulk_prices.get(ticker)
+                    if price is not None:
+                        df.at[idx, 'price'] = price
+                        prices_found += 1
+                        
+            except Exception as e:
+                st.warning(f"⚠️ Batch mutual fund fetch failed: {e}")
+                # Fallback to individual fetching
+                for i, (ticker, transaction_date) in enumerate(mutual_funds):
+                    idx = mf_indices[i]
                     try:
                         mf_info = mf.get_scheme_details(ticker)
                         if mf_info and 'nav' in mf_info:
                             price = float(mf_info['nav'])
-                    except:
-                        pass
+                            df.at[idx, 'price'] = price
+                            prices_found += 1
+                    except Exception as e:
+                        st.warning(f"⚠️ Could not fetch price for {ticker}: {e}")
+        
+        # Batch process stocks using yfinance
+        if stocks:
+            st.info(f"🔍 Batch fetching {len(stocks)} stock prices...")
+            try:
+                # Create ticker objects for bulk fetching
+                ticker_objects = []
+                for ticker, _ in stocks:
+                    # Add .NS suffix for Indian stocks if not present
+                    if not ticker.endswith(('.NS', '.BO')):
+                        ticker_with_suffix = f"{ticker}.NS"
+                    else:
+                        ticker_with_suffix = ticker
+                    ticker_objects.append((ticker, yf.Ticker(ticker_with_suffix)))
                 
-                if price:
-                    df.at[idx, 'price'] = price
-                    prices_found += 1
+                # Fetch prices in batch
+                for i, (ticker, ticker_obj) in enumerate(ticker_objects):
+                    idx = stock_indices[i]
+                    _, transaction_date = stocks[i]
                     
+                    try:
+                        # Try to get historical price for the specific date
+                        hist = ticker_obj.history(start=transaction_date, end=transaction_date + pd.Timedelta(days=1))
+                        
+                        if not hist.empty:
+                            price = hist['Close'].iloc[0]
+                            df.at[idx, 'price'] = price
+                            prices_found += 1
+                        else:
+                            # Try current price as fallback
+                            current_price = ticker_obj.info.get('regularMarketPrice')
+                            if current_price and current_price > 0:
+                                df.at[idx, 'price'] = current_price
+                                prices_found += 1
+                                
+                    except Exception as e:
+                        st.warning(f"⚠️ Could not fetch price for {ticker}: {e}")
+                        
             except Exception as e:
-                st.warning(f"⚠️ Could not fetch price for {ticker}: {e}")
-                continue
+                st.warning(f"⚠️ Batch stock fetch failed: {e}")
+                # Fallback to individual fetching
+                for i, (ticker, transaction_date) in enumerate(stocks):
+                    idx = stock_indices[i]
+                    try:
+                        stock = yf.Ticker(ticker)
+                        hist = stock.history(start=transaction_date, end=transaction_date + pd.Timedelta(days=1))
+                        
+                        if not hist.empty:
+                            price = hist['Close'].iloc[0]
+                            df.at[idx, 'price'] = price
+                            prices_found += 1
+                    except Exception as e:
+                        st.warning(f"⚠️ Could not fetch price for {ticker}: {e}")
         
         # Show summary
-        st.info(f"🔍 Price summary: {prices_found}/{len(tickers_with_dates)} transactions got historical prices")
+        st.success(f"🔍 Price summary: {prices_found}/{len(tickers_with_dates)} transactions got historical prices")
         
         return df
         
