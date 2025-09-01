@@ -1,0 +1,577 @@
+#!/usr/bin/env python3
+"""
+Login System for WMS-LLM Portfolio Analyzer
+Handles user authentication, registration, and session management
+"""
+
+import streamlit as st
+import hashlib
+import secrets
+import string
+import re
+from datetime import datetime, timedelta
+import pandas as pd
+from database_config_supabase import SessionLocal, UserLogin, create_database
+from sqlalchemy.exc import IntegrityError
+import os
+
+# --- Configuration ---
+SESSION_DURATION_HOURS = 24  # Session expires after 24 hours
+MAX_LOGIN_ATTEMPTS = 5  # Maximum failed login attempts
+LOCKOUT_DURATION_MINUTES = 30  # Account lockout duration
+
+def hash_password(password, salt=None):
+    """Hash password with salt using SHA-256"""
+    if salt is None:
+        salt = secrets.token_hex(16)
+    
+    # Combine password and salt
+    salted_password = password + salt
+    # Hash the salted password
+    hashed = hashlib.sha256(salted_password.encode()).hexdigest()
+    
+    return hashed, salt
+
+def verify_password(password, hashed_password, salt):
+    """Verify password against stored hash"""
+    input_hash, _ = hash_password(password, salt)
+    return input_hash == hashed_password
+
+def generate_strong_password(length=12):
+    """Generate a strong password with mixed characters"""
+    characters = string.ascii_letters + string.digits + string.punctuation
+    # Ensure at least one of each type
+    password = [
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.digits),
+        secrets.choice(string.punctuation)
+    ]
+    # Fill the rest randomly
+    password.extend(secrets.choice(characters) for _ in range(length - 4))
+    # Shuffle the password
+    password_list = list(password)
+    secrets.SystemRandom().shuffle(password_list)
+    return ''.join(password_list)
+
+def validate_password_strength(password):
+    """Validate password strength requirements"""
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long"
+    
+    if not re.search(r"[a-z]", password):
+        return False, "Password must contain at least one lowercase letter"
+    
+    if not re.search(r"[A-Z]", password):
+        return False, "Password must contain at least one uppercase letter"
+    
+    if not re.search(r"\d", password):
+        return False, "Password must contain at least one digit"
+    
+    if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
+        return False, "Password must contain at least one special character"
+    
+    return True, "Password meets strength requirements"
+
+def validate_email(email):
+    """Validate email format"""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+def create_user(username, email, password, role="user", folder_path=None):
+    """Create a new user account"""
+    session = SessionLocal()
+    try:
+        # Check if username already exists
+        existing_user = session.query(UserLogin).filter_by(username=username).first()
+        if existing_user:
+            return False, "Username already exists"
+        
+        # Check if email already exists
+        existing_email = session.query(UserLogin).filter_by(email=email).first()
+        if existing_email:
+            return False, "Email already registered"
+        
+        # Validate password strength
+        is_valid, message = validate_password_strength(password)
+        if not is_valid:
+            return False, message
+        
+        # Validate folder path - now required
+        if not folder_path or not folder_path.strip():
+            return False, "Folder path is required"
+        
+        folder_path = folder_path.strip()
+        
+        # Check if folder exists
+        if not os.path.exists(folder_path):
+            return False, f"Folder path does not exist: {folder_path}"
+        
+        # Check if folder is a directory
+        if not os.path.isdir(folder_path):
+            return False, f"Path is not a directory: {folder_path}"
+        
+        # Create archive folder if it doesn't exist
+        archive_path = os.path.join(folder_path, "archive")
+        if not os.path.exists(archive_path):
+            try:
+                os.makedirs(archive_path)
+            except Exception as e:
+                return False, f"Could not create archive folder: {str(e)}"
+        
+        # Hash password
+        hashed_password, salt = hash_password(password)
+        
+        # Create new user
+        new_user = UserLogin(
+            username=username,
+            email=email,
+            password_hash=hashed_password,
+            password_salt=salt,
+            role=role,
+            folder_path=folder_path,  # Required folder path
+            created_at=datetime.now(),
+            last_login=None,
+            is_active=True,
+            failed_attempts=0,
+            locked_until=None
+        )
+        
+        session.add(new_user)
+        session.commit()
+        
+        return True, "User account created successfully"
+        
+    except IntegrityError:
+        session.rollback()
+        return False, "Database error occurred"
+    except Exception as e:
+        session.rollback()
+        return False, f"Error creating user: {str(e)}"
+    finally:
+        session.close()
+
+def authenticate_user(username, password):
+    """Authenticate user login"""
+    session = SessionLocal()
+    try:
+        # Find user by username
+        user = session.query(UserLogin).filter_by(username=username).first()
+        
+        if not user:
+            return False, "Invalid username or password"
+        
+        # Check if account is locked
+        if user.locked_until and user.locked_until > datetime.now():
+            remaining_time = user.locked_until - datetime.now()
+            minutes = int(remaining_time.total_seconds() / 60)
+            return False, f"Account is locked. Try again in {minutes} minutes"
+        
+        # Verify password
+        if not verify_password(password, user.password_hash, user.password_salt):
+            # Increment failed attempts
+            user.failed_attempts += 1
+            
+            # Lock account if max attempts exceeded
+            if user.failed_attempts >= MAX_LOGIN_ATTEMPTS:
+                user.locked_until = datetime.now() + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+                session.commit()
+                return False, f"Account locked due to too many failed attempts. Try again in {LOCKOUT_DURATION_MINUTES} minutes"
+            
+            session.commit()
+            remaining_attempts = MAX_LOGIN_ATTEMPTS - user.failed_attempts
+            return False, f"Invalid password. {remaining_attempts} attempts remaining"
+        
+        # Reset failed attempts on successful login
+        user.failed_attempts = 0
+        user.locked_until = None
+        user.last_login = datetime.now()
+        session.commit()
+        
+        return True, "Login successful"
+        
+    except Exception as e:
+        session.rollback()
+        return False, f"Authentication error: {str(e)}"
+    finally:
+        session.close()
+
+def get_user_by_username(username):
+    """Get user details by username"""
+    session = SessionLocal()
+    try:
+        user = session.query(UserLogin).filter_by(username=username).first()
+        if user:
+            return {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role,
+                'folder_path': user.folder_path,
+                'created_at': user.created_at,
+                'last_login': user.last_login,
+                'is_active': user.is_active
+            }
+        return None
+    finally:
+        session.close()
+
+def get_user_by_id(user_id):
+    """Get user details by user ID"""
+    session = SessionLocal()
+    try:
+        user = session.query(UserLogin).filter_by(id=user_id).first()
+        if user:
+            return {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role,
+                'folder_path': user.folder_path,
+                'created_at': user.created_at,
+                'last_login': user.last_login,
+                'is_active': user.is_active
+            }
+        return None
+    finally:
+        session.close()
+
+def update_user_password(username, new_password):
+    """Update user password"""
+    session = SessionLocal()
+    try:
+        user = session.query(UserLogin).filter_by(username=username).first()
+        if not user:
+            return False, "User not found"
+        
+        # Validate password strength
+        is_valid, message = validate_password_strength(new_password)
+        if not is_valid:
+            return False, message
+        
+        # Hash new password
+        hashed_password, salt = hash_password(new_password)
+        
+        # Update password
+        user.password_hash = hashed_password
+        user.password_salt = salt
+        session.commit()
+        
+        return True, "Password updated successfully"
+        
+    except Exception as e:
+        session.rollback()
+        return False, f"Error updating password: {str(e)}"
+    finally:
+        session.close()
+
+def reset_user_password(username):
+    """Reset user password to a new strong password"""
+    new_password = generate_strong_password()
+    success, message = update_user_password(username, new_password)
+    
+    if success:
+        return True, f"Password reset successfully. New password: {new_password}"
+    else:
+        return False, message
+
+def delete_user_account(username):
+    """Delete user account"""
+    session = SessionLocal()
+    try:
+        user = session.query(UserLogin).filter_by(username=username).first()
+        if not user:
+            return False, "User not found"
+        
+        session.delete(user)
+        session.commit()
+        
+        return True, "User account deleted successfully"
+        
+    except Exception as e:
+        session.rollback()
+        return False, f"Error deleting user: {str(e)}"
+    finally:
+        session.close()
+
+def get_all_users():
+    """Get all users (admin function)"""
+    session = SessionLocal()
+    try:
+        users = session.query(UserLogin).all()
+        return [
+            {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role,
+                'created_at': user.created_at,
+                'last_login': user.last_login,
+                'is_active': user.is_active,
+                'failed_attempts': user.failed_attempts
+            }
+            for user in users
+        ]
+    finally:
+        session.close()
+
+def is_session_valid():
+    """Check if current session is valid"""
+    if 'user_authenticated' not in st.session_state:
+        return False
+    
+    if not st.session_state['user_authenticated']:
+        return False
+    
+    if 'login_time' not in st.session_state:
+        return False
+    
+    # Check if session has expired
+    login_time = st.session_state['login_time']
+    if datetime.now() - login_time > timedelta(hours=SESSION_DURATION_HOURS):
+        # Clear session
+        clear_session()
+        return False
+    
+    return True
+
+def clear_session():
+    """Clear user session"""
+    if 'user_authenticated' in st.session_state:
+        del st.session_state['user_authenticated']
+    if 'username' in st.session_state:
+        del st.session_state['username']
+    if 'user_role' in st.session_state:
+        del st.session_state['user_role']
+    if 'login_time' in st.session_state:
+        del st.session_state['login_time']
+
+def login_page():
+    """Display login page"""
+    st.markdown("""
+    <style>
+    .login-container {
+        max-width: 400px;
+        margin: 0 auto;
+        padding: 2rem;
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        background-color: #f9f9f9;
+    }
+    .login-header {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="login-container">', unsafe_allow_html=True)
+    st.markdown('<h2 class="login-header">🔐 Portfolio Analyzer Login</h2>', unsafe_allow_html=True)
+    
+    # Create tabs for login and registration
+    tab1, tab2 = st.tabs(["Login", "Register"])
+    
+    with tab1:
+        st.markdown("### Sign In")
+        
+        with st.form("login_form"):
+            username = st.text_input("Username", key="login_username")
+            password = st.text_input("Password", type="password", key="login_password")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                login_button = st.form_submit_button("Login", type="primary")
+            with col2:
+                forgot_password = st.form_submit_button("Forgot Password")
+            
+            if login_button:
+                if username and password:
+                    success, message = authenticate_user(username, password)
+                    if success:
+                        # Set session variables
+                        st.session_state['user_authenticated'] = True
+                        st.session_state['username'] = username
+                        st.session_state['login_time'] = datetime.now()
+                        
+                        # Get user info and set user_id
+                        user_info = get_user_by_username(username)
+                        if user_info:
+                            st.session_state['user_id'] = user_info['id']
+                            st.session_state['user_role'] = user_info['role']
+                        
+                        st.success("Login successful! Redirecting...")
+                        st.rerun()
+                    else:
+                        st.error(message)
+                else:
+                    st.error("Please enter both username and password")
+            
+            if forgot_password:
+                st.info("Please contact your administrator to reset your password.")
+    
+    with tab2:
+        st.markdown("### Create Account")
+        
+        with st.form("register_form"):
+            new_username = st.text_input("Username", key="register_username")
+            new_email = st.text_input("Email", key="register_email")
+            new_password = st.text_input("Password", type="password", key="register_password")
+            confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
+            folder_path = st.text_input(
+                            "Transaction Folder Path *",
+                            key="register_folder_path",
+                            placeholder="e.g., C:/MyPortfolio or ./my_transactions",
+                            help="Path to folder containing your transaction CSV files. This folder will be used to automatically process your transaction files."
+                        )
+            
+            # Password strength indicator
+            if new_password:
+                is_valid, message = validate_password_strength(new_password)
+                if is_valid:
+                    st.success("✅ " + message)
+                else:
+                    st.error("❌ " + message)
+            
+            # Generate strong password button
+            if st.form_submit_button("Generate Strong Password"):
+                strong_password = generate_strong_password()
+                st.session_state['register_password'] = strong_password
+                st.session_state['confirm_password'] = strong_password
+                st.rerun()
+            
+            register_button = st.form_submit_button("Register", type="primary")
+            
+            if register_button:
+                if not all([new_username, new_email, new_password, confirm_password]):
+                    st.error("Please fill in all required fields")
+                elif not validate_email(new_email):
+                    st.error("Please enter a valid email address")
+                elif new_password != confirm_password:
+                    st.error("Passwords do not match")
+                else:
+                    # Use folder_path if provided, otherwise empty string
+                    user_folder_path = folder_path.strip() if folder_path.strip() else ""
+                    success, message = create_user(new_username, new_email, new_password, folder_path=user_folder_path)
+                    if success:
+                        st.success("Account created successfully! You can now login.")
+                    else:
+                        st.error(message)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+def admin_panel():
+    """Display admin panel for user management"""
+    if not is_session_valid():
+        st.error("Please login to access admin panel")
+        return
+    
+    if st.session_state.get('user_role') != 'admin':
+        st.error("Access denied. Admin privileges required.")
+        return
+    
+    st.markdown("## 👨‍💼 Admin Panel")
+    
+    # Get all users
+    users = get_all_users()
+    
+    if not users:
+        st.info("No users found")
+        return
+    
+    # Display users in a table
+    df = pd.DataFrame(users)
+    df['created_at'] = pd.to_datetime(df['created_at']).dt.strftime('%Y-%m-%d %H:%M')
+    df['last_login'] = pd.to_datetime(df['last_login']).dt.strftime('%Y-%m-%d %H:%M')
+    
+    st.dataframe(df, use_container_width=True)
+    
+    # User management actions
+    st.markdown("### User Management")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("#### Reset Password")
+        reset_username = st.text_input("Username to reset password", key="reset_username")
+        if st.button("Reset Password"):
+            if reset_username:
+                success, message = reset_user_password(reset_username)
+                if success:
+                    st.success("Password reset successfully!")
+                    st.info(f"New password: {message.split('New password: ')[1]}")
+                else:
+                    st.error(message)
+            else:
+                st.error("Please enter a username")
+    
+    with col2:
+        st.markdown("#### Delete Account")
+        delete_username = st.text_input("Username to delete", key="delete_username")
+        if st.button("Delete Account", type="secondary"):
+            if delete_username:
+                if st.checkbox("I understand this action cannot be undone"):
+                    success, message = delete_user_account(delete_username)
+                    if success:
+                        st.success("Account deleted successfully!")
+                        st.rerun()
+                    else:
+                        st.error(message)
+                else:
+                    st.warning("Please confirm the deletion")
+            else:
+                st.error("Please enter a username")
+    
+    with col3:
+        st.markdown("#### Session Info")
+        st.write(f"**Current User:** {st.session_state.get('username', 'Unknown')}")
+        st.write(f"**Role:** {st.session_state.get('user_role', 'Unknown')}")
+        if 'login_time' in st.session_state:
+            login_time = st.session_state['login_time']
+            st.write(f"**Login Time:** {login_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        if st.button("Logout"):
+            clear_session()
+            st.success("Logged out successfully!")
+            st.rerun()
+
+def require_login():
+    """Decorator to require login for specific pages/functions"""
+    if not is_session_valid():
+        st.error("Please login to access this feature")
+        st.stop()
+
+def require_admin():
+    """Decorator to require admin privileges"""
+    require_login()
+    if st.session_state.get('user_role') != 'admin':
+        st.error("Admin privileges required")
+        st.stop()
+
+def main_login_system():
+    """Main function to run the login system"""
+    st.set_page_config(page_title="Login - Portfolio Analyzer", layout="centered")
+    
+    # Initialize database
+    try:
+        create_database()
+    except Exception as e:
+        st.error(f"Database initialization failed: {e}")
+        return
+    
+    # Check if user is already logged in
+    if is_session_valid():
+        st.success(f"Welcome back, {st.session_state['username']}!")
+        
+        # Show logout option
+        if st.button("Logout"):
+            clear_session()
+            st.rerun()
+        
+        # Show admin panel if user is admin
+        if st.session_state.get('user_role') == 'admin':
+            admin_panel()
+    else:
+        login_page()
+
+if __name__ == "__main__":
+    main_login_system()
