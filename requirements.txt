@@ -13,8 +13,8 @@ sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0
 
 # Stock Price APIs
-yfinance>=0.2.0
-mftool>=0.3.0
+yfinance
+mftool
 requests>=2.31.0
 
 # Web Scraping (for indstocks API)
@@ -30,3 +30,4 @@ python-dotenv>=1.0.0
 
 # Supabase (if using Supabase client)
 supabase>=2.0.0
+
