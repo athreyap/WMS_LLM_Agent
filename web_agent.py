@@ -10,6 +10,39 @@ import os
 import sys
 from pathlib import Path
 
+# Test basic imports first
+try:
+    print("✅ Basic imports successful")
+except Exception as e:
+    print(f"❌ Basic import error: {e}")
+
+# Test financial data imports
+try:
+    import yfinance as yf
+    print("✅ yfinance import successful")
+except ImportError as e:
+    print(f"❌ yfinance import failed: {e}")
+
+# Test database imports
+try:
+    import psycopg2
+    print("✅ psycopg2 import successful")
+except ImportError as e:
+    print(f"❌ psycopg2 import failed: {e}")
+
+try:
+    import sqlalchemy
+    print("✅ sqlalchemy import successful")
+except ImportError as e:
+    print(f"❌ sqlalchemy import failed: {e}")
+
+# Test supabase imports
+try:
+    from supabase import create_client
+    print("✅ supabase import successful")
+except ImportError as e:
+    print(f"❌ supabase import failed: {e}")
+
 # Handle matplotlib import issues gracefully - matplotlib not needed for this app
 matplotlib = None
 print("💡 Matplotlib not imported - using Plotly for all charts")
@@ -51,22 +84,22 @@ from functools import lru_cache, wraps
 import warnings
 warnings.filterwarnings('ignore')
 
-# Import the agentic systems
-from stock_data_agent import stock_agent, get_live_price, get_sector, get_stock_name, get_all_live_prices, get_user_live_prices, get_stock_data_stats, update_user_stock_prices
-from user_file_reading_agent import user_file_agent, process_user_files_on_login, get_user_transactions_data, start_user_file_monitoring, stop_user_file_monitoring
-from database_config_supabase import (
-    get_transactions_supabase,
-    get_transactions_with_historical_prices,
-    get_user_by_id_supabase,
-    create_user_supabase,
-    get_user_by_username_supabase,
-    update_user_login_supabase,
-    save_transaction_supabase,
-    save_file_record_supabase,
-    get_file_records_supabase,
-    update_stock_data_supabase,
-    get_stock_data_supabase
-)
+# Import the agentic systems - moved to function level to avoid import errors
+# from stock_data_agent import stock_agent, get_live_price, get_sector, get_stock_name, get_all_live_prices, get_user_live_prices, get_stock_data_stats, update_user_stock_prices
+# from user_file_reading_agent import user_file_agent, process_user_files_on_login, get_user_transactions_data, start_user_file_monitoring, stop_user_file_monitoring
+# from database_config_supabase import (
+#     get_transactions_supabase,
+#     get_transactions_with_historical_prices,
+#     get_user_by_id_supabase,
+#     create_user_supabase,
+#     get_user_by_username_supabase,
+#     update_user_login_supabase,
+#     save_transaction_supabase,
+#     save_file_record_supabase,
+#     get_file_records_supabase,
+#     update_stock_data_supabase,
+#     get_stock_data_supabase
+# )
 
 # Import login system
 try:
@@ -852,7 +885,14 @@ class WebAgent:
                 # Get transactions from database
                 print(f"🔍 Fetching transactions for user {user_id}...")
                 print(f"🔍 DEBUG: user_id type: {type(user_id)}, value: {user_id}")
-                transactions = get_transactions_with_historical_prices(user_id=user_id)
+                
+                # Import function locally to avoid module-level import issues
+                try:
+                    from database_config_supabase import get_transactions_with_historical_prices
+                    transactions = get_transactions_with_historical_prices(user_id=user_id)
+                except ImportError as e:
+                    print(f"❌ Import error: {e}")
+                    transactions = []
                 print(f"🔍 Transactions fetched: {len(transactions) if transactions else 0} records")
                 
                 # NEW: Check and update missing historical prices in database
@@ -886,7 +926,12 @@ class WebAgent:
                 else:
                     print(f"⚠️ No transactions found for user {user_id}")
                     # Try to get all transactions to see if there's a user_id issue
-                    all_transactions = get_transactions_with_historical_prices()
+                    try:
+                        from database_config_supabase import get_transactions_with_historical_prices
+                        all_transactions = get_transactions_with_historical_prices()
+                    except ImportError as e:
+                        print(f"❌ Import error: {e}")
+                        all_transactions = []
                     print(f"🔍 All transactions in system: {len(all_transactions) if all_transactions else 0}")
                     if all_transactions:
                         print(f"🔍 Sample transaction user_id: {all_transactions[0].get('user_id') if all_transactions else 'None'}")
@@ -896,7 +941,12 @@ class WebAgent:
                     print(f"🔄 Retrying transaction fetch after delay...")
                     import time
                     time.sleep(2)  # Wait 2 seconds
-                    transactions = get_transactions_with_historical_prices(user_id=user_id)
+                    try:
+                        from database_config_supabase import get_transactions_with_historical_prices
+                        transactions = get_transactions_with_historical_prices(user_id=user_id)
+                    except ImportError as e:
+                        print(f"❌ Import error: {e}")
+                        transactions = []
                     print(f"🔍 Retry result: {len(transactions) if transactions else 0} transactions")
                     
                     # If still no transactions, check if there's a file path issue
@@ -932,7 +982,12 @@ class WebAgent:
                     print(f"🔄 Attempting to force reload data...")
                     return self._force_reload_user_data(user_id)
             else:
-                transactions = get_transactions_with_historical_prices()
+                try:
+                    from database_config_supabase import get_transactions_with_historical_prices
+                    transactions = get_transactions_with_historical_prices()
+                except ImportError as e:
+                    print(f"❌ Import error: {e}")
+                    transactions = []
             
             if not transactions:
                 st.warning("⚠️ No transactions found in database")
