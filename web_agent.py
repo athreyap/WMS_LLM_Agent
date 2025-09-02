@@ -2051,6 +2051,10 @@ class PortfolioAnalytics:
                         # Sector summary metrics
                         if sector_table_data:
                             st.subheader("🏭 Sector Summary")
+                            
+                            # Calculate sector metrics based on current value (not P&L percentage)
+                            sector_by_value = sector_performance.sort_values('current_value', ascending=False)
+                            
                             col1, col2, col3 = st.columns(3)
                             with col1:
                                 st.metric(
@@ -2059,22 +2063,28 @@ class PortfolioAnalytics:
                                     f"{len(sector_performance)} sectors covered"
                                 )
                             with col2:
+                                largest_sector = sector_by_value.iloc[0]
                                 st.metric(
                                     "Largest Sector",
-                                    sector_performance.iloc[0]['sector'],
-                                    f"₹{sector_performance.iloc[0]['current_value']:,.2f}"
+                                    largest_sector['sector'],
+                                    f"₹{largest_sector['current_value']:,.2f}"
                                 )
                             with col3:
+                                smallest_sector = sector_by_value.iloc[-1]
                                 st.metric(
                                     "Smallest Sector",
-                                    sector_performance.iloc[-1]['sector'],
-                                    f"₹{sector_performance.iloc[-1]['current_value']:,.2f}"
+                                    smallest_sector['sector'],
+                                    f"₹{smallest_sector['current_value']:,.2f}"
                                 )
                     
                     with metrics_col2:
                         # Channel summary metrics
                         if channel_table_data:
                             st.subheader("📡 Channel Summary")
+                            
+                            # Calculate channel metrics based on current value (not P&L percentage)
+                            channel_by_value = channel_performance.sort_values('current_value', ascending=False)
+                            
                             col1, col2, col3 = st.columns(3)
                             with col1:
                                 st.metric(
@@ -2083,23 +2093,26 @@ class PortfolioAnalytics:
                                     f"{len(channel_performance)} channels used"
                                 )
                             with col2:
+                                best_channel = channel_by_value.iloc[0]
                                 st.metric(
                                     "Best Channel",
-                                    channel_performance.iloc[0]['channel'],
-                                    f"₹{channel_performance.iloc[0]['current_value']:,.2f}"
+                                    best_channel['channel'],
+                                    f"₹{best_channel['current_value']:,.2f}"
                                 )
                             with col3:
+                                worst_channel = channel_by_value.iloc[-1]
                                 st.metric(
                                     "Worst Channel",
-                                    channel_performance.iloc[-1]['channel'],
-                                    f"₹{channel_performance.iloc[-1]['current_value']:,.2f}"
+                                    worst_channel['channel'],
+                                    f"₹{worst_channel['current_value']:,.2f}"
                                 )
                     
                     # Best Stock in Each Sector
                     st.subheader("⭐ Best Stock in Each Sector (1-Year Buy Transactions)")
                     
-                    # Find best performing stock in each sector
+                    # Find best performing stock in each sector and calculate sector ratings
                     best_stocks_by_sector = []
+                    sector_ratings = []
                     
                     for sector in stock_buys['sector'].unique():
                         if pd.isna(sector) or sector == 'Unknown':
@@ -2118,6 +2131,37 @@ class PortfolioAnalytics:
                         # Calculate P&L percentage
                         sector_ticker_perf['pnl_percentage'] = (sector_ticker_perf['unrealized_pnl'] / sector_ticker_perf['invested_amount']) * 100
                         
+                        # Calculate sector overall performance
+                        sector_total_invested = sector_ticker_perf['invested_amount'].sum()
+                        sector_total_current = sector_ticker_perf['current_value'].sum()
+                        sector_total_pnl = sector_ticker_perf['unrealized_pnl'].sum()
+                        sector_overall_return = (sector_total_pnl / sector_total_invested) * 100 if sector_total_invested > 0 else 0
+                        
+                        # Determine sector rating
+                        if sector_overall_return >= 20:
+                            sector_rating = "🟢 Excellent"
+                            rating_color = "background-color: #d4edda; color: #155724;"
+                        elif sector_overall_return >= 10:
+                            sector_rating = "🟡 Good"
+                            rating_color = "background-color: #fff3cd; color: #856404;"
+                        elif sector_overall_return >= 0:
+                            sector_rating = "🟠 Fair"
+                            rating_color = "background-color: #f8d7da; color: #721c24;"
+                        else:
+                            sector_rating = "🔴 Poor"
+                            rating_color = "background-color: #f8d7da; color: #721c24;"
+                        
+                        # Store sector rating
+                        sector_ratings.append({
+                            'Sector': sector,
+                            'Overall Return %': f"{sector_overall_return:.2f}%",
+                            'Total Invested': f"₹{sector_total_invested:,.2f}",
+                            'Total Current Value': f"₹{sector_total_current:,.2f}",
+                            'Total P&L': f"₹{sector_total_pnl:,.2f}",
+                            'Rating': sector_rating,
+                            'Rating Color': rating_color
+                        })
+                        
                         # Get best performing ticker in this sector
                         if not sector_ticker_perf.empty:
                             best_ticker = sector_ticker_perf.loc[sector_ticker_perf['pnl_percentage'].idxmax()]
@@ -2133,8 +2177,26 @@ class PortfolioAnalytics:
                                 'Return %': f"{best_ticker['pnl_percentage']:.2f}%",
                                 'Invested Amount': f"₹{best_ticker['invested_amount']:,.2f}",
                                 'Current Value': f"₹{best_ticker['current_value']:,.2f}",
-                                'P&L': f"₹{best_ticker['unrealized_pnl']:,.2f}"
+                                'P&L': f"₹{best_ticker['unrealized_pnl']:,.2f}",
+                                'Sector Rating': sector_rating
                             })
+                    
+                    # Display sector ratings table
+                    if sector_ratings:
+                        st.subheader("🏭 Sector Performance Ratings")
+                        sector_ratings_df = pd.DataFrame(sector_ratings)
+                        
+                        # Apply color coding based on rating
+                        def color_sector_rating(row):
+                            return [row['Rating Color']] * len(row)
+                        
+                        styled_sector_ratings = sector_ratings_df.style.apply(color_sector_rating, axis=1)
+                        
+                        st.dataframe(
+                            styled_sector_ratings,
+                            use_container_width=True,
+                            hide_index=True
+                        )
                     
                     # Display best stocks by sector table
                     if best_stocks_by_sector:
@@ -2194,8 +2256,9 @@ class PortfolioAnalytics:
                     # Best Stock in Each Channel
                     st.subheader("📡 Best Stock in Each Channel (1-Year Buy Transactions)")
                     
-                    # Find best performing stock in each channel
+                    # Find best performing stock in each channel and calculate channel ratings
                     best_stocks_by_channel = []
+                    channel_ratings = []
                     
                     for channel in stock_buys['channel'].unique():
                         if pd.isna(channel) or channel == 'Unknown':
@@ -2214,6 +2277,37 @@ class PortfolioAnalytics:
                         # Calculate P&L percentage
                         channel_ticker_perf['pnl_percentage'] = (channel_ticker_perf['unrealized_pnl'] / channel_ticker_perf['invested_amount']) * 100
                         
+                        # Calculate channel overall performance
+                        channel_total_invested = channel_ticker_perf['invested_amount'].sum()
+                        channel_total_current = channel_ticker_perf['current_value'].sum()
+                        channel_total_pnl = channel_ticker_perf['unrealized_pnl'].sum()
+                        channel_overall_return = (channel_total_pnl / channel_total_invested) * 100 if channel_total_invested > 0 else 0
+                        
+                        # Determine channel rating
+                        if channel_overall_return >= 20:
+                            channel_rating = "🟢 Excellent"
+                            rating_color = "background-color: #d4edda; color: #155724;"
+                        elif channel_overall_return >= 10:
+                            channel_rating = "🟡 Good"
+                            rating_color = "background-color: #fff3cd; color: #856404;"
+                        elif channel_overall_return >= 0:
+                            channel_rating = "🟠 Fair"
+                            rating_color = "background-color: #f8d7da; color: #721c24;"
+                        else:
+                            channel_rating = "🔴 Poor"
+                            rating_color = "background-color: #f8d7da; color: #721c24;"
+                        
+                        # Store channel rating
+                        channel_ratings.append({
+                            'Channel': channel,
+                            'Overall Return %': f"{channel_overall_return:.2f}%",
+                            'Total Invested': f"₹{channel_total_invested:,.2f}",
+                            'Total Current Value': f"₹{channel_total_current:,.2f}",
+                            'Total P&L': f"₹{channel_total_pnl:,.2f}",
+                            'Rating': channel_rating,
+                            'Rating Color': rating_color
+                        })
+                        
                         # Get best performing ticker in this channel
                         if not channel_ticker_perf.empty:
                             best_ticker = channel_ticker_perf.loc[channel_ticker_perf['pnl_percentage'].idxmax()]
@@ -2229,8 +2323,26 @@ class PortfolioAnalytics:
                                 'Return %': f"{best_ticker['pnl_percentage']:.2f}%",
                                 'Invested Amount': f"₹{best_ticker['invested_amount']:,.2f}",
                                 'Current Value': f"₹{best_ticker['current_value']:,.2f}",
-                                'P&L': f"₹{best_ticker['unrealized_pnl']:,.2f}"
+                                'P&L': f"₹{best_ticker['unrealized_pnl']:,.2f}",
+                                'Channel Rating': channel_rating
                             })
+                    
+                    # Display channel ratings table
+                    if channel_ratings:
+                        st.subheader("📡 Channel Performance Ratings")
+                        channel_ratings_df = pd.DataFrame(channel_ratings)
+                        
+                        # Apply color coding based on rating
+                        def color_channel_rating(row):
+                            return [row['Rating Color']] * len(row)
+                        
+                        styled_channel_ratings = channel_ratings_df.style.apply(color_channel_rating, axis=1)
+                        
+                        st.dataframe(
+                            styled_channel_ratings,
+                            use_container_width=True,
+                            hide_index=True
+                        )
                     
                     # Display best stocks by channel table
                     if best_stocks_by_channel:
