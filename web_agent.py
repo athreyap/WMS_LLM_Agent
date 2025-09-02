@@ -1717,6 +1717,12 @@ class PortfolioAnalytics:
                         # Combine all quarterly data
                         all_quarterly = pd.concat(quarterly_data, ignore_index=True)
                         
+                        # Debug: Show what we have after combining
+                        st.info(f"Debug: Combined quarterly data shape: {all_quarterly.shape}")
+                        st.info(f"Debug: Combined columns: {list(all_quarterly.columns)}")
+                        st.info(f"Debug: Unique quarters: {sorted(all_quarterly['quarter_label'].unique())}")
+                        st.info(f"Debug: Sample combined data:\n{all_quarterly.head()}")
+                        
                         # Sort quarters chronologically for proper x-axis ordering
                         # Create a sortable quarter key for chronological ordering
                         def create_sort_key(quarter_label):
@@ -1770,25 +1776,41 @@ class PortfolioAnalytics:
                         st.subheader("📊 Quarterly Summary Table")
                         
                         # Create summary by quarter (also sorted chronologically)
+                        # Use nunique() for ticker count to get actual number of unique stocks per quarter
                         quarterly_summary = all_quarterly.groupby('quarter_label').agg({
                             'unrealized_pnl': 'sum',
                             'invested_amount': 'sum',
                             'current_value': 'sum',
-                            'ticker': 'count'
+                            'ticker': 'nunique'  # Count unique tickers instead of all rows
                         }).reset_index()
                         
-                        # Sort summary chronologically
-                        quarterly_summary['sort_key'] = quarterly_summary['quarter_label'].apply(create_sort_key)
-                        quarterly_summary = quarterly_summary.sort_values('sort_key')
+                        # Debug: Show what we have before sorting
+                        st.info(f"Debug: Quarterly summary shape: {quarterly_summary.shape}")
+                        st.info(f"Debug: Columns before sorting: {list(quarterly_summary.columns)}")
+                        st.info(f"Debug: Sample data:\n{quarterly_summary.head()}")
                         
-                        # Ensure we have the expected columns before renaming
+                        # Ensure we have the expected columns before proceeding
                         expected_columns = ['quarter_label', 'unrealized_pnl', 'invested_amount', 'current_value', 'ticker']
                         if list(quarterly_summary.columns) == expected_columns:
+                            # Now add sort key and sort
+                            quarterly_summary['sort_key'] = quarterly_summary['quarter_label'].apply(create_sort_key)
+                            quarterly_summary = quarterly_summary.sort_values('sort_key')
+                            
+                            # Remove the sort_key column before renaming
+                            quarterly_summary = quarterly_summary.drop('sort_key', axis=1)
+                            
+                            # Rename columns
                             quarterly_summary.columns = ['Quarter', 'Total Gain (₹)', 'Total Invested (₹)', 'Total Current Value (₹)', 'Number of Stocks']
                             quarterly_summary['Return %'] = (quarterly_summary['Total Gain (₹)'] / quarterly_summary['Total Invested (₹)'] * 100).round(2)
+                            
+                            # Debug: Show final data
+                            st.success(f"✅ Quarterly summary created successfully with {len(quarterly_summary)} quarters")
+                            st.info(f"Debug: Final columns: {list(quarterly_summary.columns)}")
+                            st.info(f"Debug: Final data:\n{quarterly_summary.head()}")
                         else:
                             st.warning(f"Unexpected quarterly summary columns: {list(quarterly_summary.columns)}")
                             st.info("Expected: quarter_label, unrealized_pnl, invested_amount, current_value, ticker")
+                            st.info(f"Actual columns: {list(quarterly_summary.columns)}")
                             # Skip this quarter's processing
                             st.info("Skipping quarterly analysis due to column mismatch")
                             quarterly_summary = None
