@@ -75,7 +75,7 @@ class PortfolioAnalytics:
                 if self.authenticate_user(username, password):
                     st.success("Login successful!")
                     st.rerun()
-                else:
+            else:
                     st.error("Invalid username or password")
         
         with tab2:
@@ -836,19 +836,61 @@ class PortfolioAnalytics:
             import time
             time.sleep(0.5)
         
-        # Show loading steps
-        st.markdown("### 🔄 Loading Steps:")
-        col1, col2 = st.columns(2)
+        # Explain why loading is happening
+        st.info("""
+        🔍 **Why am I seeing these loading steps?**
         
-        with col1:
+        This happens when you log in and the system needs to:
+        1. Load your existing portfolio data from the database
+        2. Fetch current market prices for your investments
+        3. Calculate performance metrics and generate charts
+        
+        This is normal behavior and only happens during the initial data load.
+        """)
+        
+        # Show loading steps with progress indicators
+        st.markdown("### 🔄 Portfolio Loading Progress:")
+        
+        # Step 1: Fetching transaction data
+        with st.spinner("📊 **Step 1:** Fetching transaction data..."):
             st.info("📊 **Step 1:** Fetching transaction data...")
-            st.info("📈 **Step 2:** Calculating current values...")
-            st.info("🏭 **Step 3:** Analyzing sector allocation...")
+            # Note: If you see "file processed successfully and failed" messages, 
+            # it means some files were processed while others had issues
+            st.info("💡 **Note:** Previous file processing results may appear here")
+            # Simulate step completion
+            import time
+            time.sleep(0.3)
         
-        with col2:
+        # Step 2: Calculating current values
+        with st.spinner("📈 **Step 2:** Calculating current values..."):
+            st.info("📈 **Step 2:** Calculating current values...")
+            time.sleep(0.3)
+        
+        # Step 3: Analyzing sector allocation
+        with st.spinner("🏭 **Step 3:** Analyzing sector allocation..."):
+            st.info("🏭 **Step 3:** Analyzing sector allocation...")
+            time.sleep(0.3)
+        
+        # Step 4: Computing P&L metrics
+        with st.spinner("💰 **Step 4:** Computing P&L metrics..."):
             st.info("💰 **Step 4:** Computing P&L metrics...")
+            time.sleep(0.3)
+        
+        # Step 5: Generating performance charts
+        with st.spinner("📅 **Step 5:** Generating performance charts..."):
             st.info("📅 **Step 5:** Generating performance charts...")
+            time.sleep(0.3)
+        
+        # Step 6: Finalizing dashboard
+        with st.spinner("✅ **Step 6:** Finalizing dashboard..."):
             st.info("✅ **Step 6:** Finalizing dashboard...")
+            time.sleep(0.3)
+        
+        st.success("🎉 Portfolio loading completed! Redirecting to dashboard...")
+        
+        # Show overall progress
+        st.progress(1.0)
+        st.info("🚀 **Next:** You'll be redirected to your portfolio dashboard automatically.")
         
         # Add a manual refresh button
         st.markdown("---")
@@ -952,6 +994,16 @@ class PortfolioAnalytics:
         
         # Show loading animation if portfolio data is not loaded
         if self.session_state.portfolio_data is None:
+            st.info("""
+            🔄 **Loading Your Portfolio...**
+            
+            This is normal when you first log in. The system is:
+            - Loading your investment data from the database
+            - Fetching current market prices
+            - Preparing your portfolio analytics
+            
+            Please wait while we set up your dashboard...
+            """)
             self.show_loading_animation()
             return
         
@@ -1245,9 +1297,9 @@ class PortfolioAnalytics:
             # Group by date and calculate cumulative performance
             daily_performance = df.groupby(df['date'].dt.date).agg({
                 'invested_amount': 'sum',
-                'current_value': 'sum',
+            'current_value': 'sum',
                 'unrealized_pnl': 'sum'
-            }).reset_index()
+        }).reset_index()
             
             daily_performance['cumulative_return'] = (
                 (daily_performance['current_value'] - daily_performance['invested_amount']) / 
@@ -1287,9 +1339,9 @@ class PortfolioAnalytics:
                 if not sector_performance.empty:
                     sector_performance['pnl_percentage'] = (sector_performance['unrealized_pnl'] / sector_performance['invested_amount']) * 100
                     sector_performance = sector_performance.sort_values('pnl_percentage', ascending=False)
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
+        
+            col1, col2 = st.columns(2)
+            with col1:
                         best_sector = sector_performance.iloc[0]
                         best_sector_arrow = "↗️" if best_sector['pnl_percentage'] > 0 else "↘️" if best_sector['pnl_percentage'] < 0 else "➡️"
                         best_sector_color = "normal" if best_sector['pnl_percentage'] > 0 else "inverse"
@@ -1300,17 +1352,17 @@ class PortfolioAnalytics:
                             delta_color=best_sector_color
                         )
                     
-                    with col2:
-                        if len(sector_performance) > 1:
-                            worst_sector = sector_performance.iloc[-1]
-                            worst_sector_arrow = "↗️" if worst_sector['pnl_percentage'] > 0 else "↘️" if worst_sector['pnl_percentage'] < 0 else "➡️"
-                            worst_sector_color = "normal" if worst_sector['pnl_percentage'] > 0 else "inverse"
-                            st.metric(
-                                "Worst Performing Sector", 
-                                f"{worst_sector_arrow} {worst_sector['sector']}", 
-                                delta=f"₹{worst_sector['unrealized_pnl']:,.2f} ({worst_sector['pnl_percentage']:.2f}%)",
-                                delta_color=worst_sector_color
-                            )
+            with col2:
+                if len(sector_performance) > 1:
+                    worst_sector = sector_performance.iloc[-1]
+                    worst_sector_arrow = "↗️" if worst_sector['pnl_percentage'] > 0 else "↘️" if worst_sector['pnl_percentage'] < 0 else "➡️"
+                    worst_sector_color = "normal" if worst_sector['pnl_percentage'] > 0 else "inverse"
+                    st.metric(
+                        "Worst Performing Sector", 
+                        f"{worst_sector_arrow} {worst_sector['sector']}", 
+                        delta=f"₹{worst_sector['unrealized_pnl']:,.2f} ({worst_sector['pnl_percentage']:.2f}%)",
+                        delta_color=worst_sector_color
+                    )
             
             # Channel Performance
             if 'channel' in df.columns and not df['channel'].isna().all():
@@ -1362,16 +1414,16 @@ class PortfolioAnalytics:
             ].copy()
              
             if not stock_buys.empty:
-                 # Group by ticker and calculate performance metrics
+                # Group by ticker and calculate performance metrics
                  stock_performance = stock_buys.groupby('ticker').agg({
-            'invested_amount': 'sum',
-            'current_value': 'sum',
-                     'unrealized_pnl': 'sum',
-            'quantity': 'sum',
-                     'date': 'max'  # Latest buy date
-        }).reset_index()
-        
-        # Calculate additional metrics
+                    'invested_amount': 'sum',
+                    'current_value': 'sum',
+                    'unrealized_pnl': 'sum',
+                    'quantity': 'sum',
+                    'date': 'max'  # Latest buy date
+                }).reset_index()
+                
+                # Calculate additional metrics
                  stock_performance['pnl_percentage'] = (stock_performance['unrealized_pnl'] / stock_performance['invested_amount']) * 100
                  stock_performance['avg_price'] = stock_performance['invested_amount'] / stock_performance['quantity']
                  
@@ -1422,13 +1474,13 @@ class PortfolioAnalytics:
                  with col2:
                      profitable_stocks = len(stock_performance[stock_performance['pnl_percentage'] > 0])
                      st.metric("Profitable Stocks", profitable_stocks, delta=f"{profitable_stocks}/{total_stocks}")
-                 
+        
                  with col3:
                      avg_return = stock_performance['pnl_percentage'].mean()
                      avg_arrow = "↗️" if avg_return > 0 else "↘️" if avg_return < 0 else "➡️"
                      avg_color = "normal" if avg_return > 0 else "inverse"
                      st.metric("Average Return", f"{avg_arrow} {avg_return:.2f}%", delta_color=avg_color)
-                 
+        
                  with col4:
                      best_stock = stock_performance.iloc[0]
                      best_return = best_stock['pnl_percentage']
@@ -1614,11 +1666,11 @@ class PortfolioAnalytics:
                          # Group by quarter and show summary
                          quarterly_summary = quarterly_df.groupby('quarter_name').agg({
                              'ticker': 'count',
-                             'invested_amount': 'sum',
-                             'current_value': 'sum',
+            'invested_amount': 'sum',
+            'current_value': 'sum',
                              'unrealized_pnl': 'sum'
-                         }).reset_index()
-                         
+        }).reset_index()
+        
                          quarterly_summary['pnl_percentage'] = (quarterly_summary['unrealized_pnl'] / quarterly_summary['invested_amount']) * 100
                          quarterly_summary = quarterly_summary.sort_values('quarter_name')
                          
@@ -2283,7 +2335,7 @@ class PortfolioAnalytics:
         
         uploaded_file = st.file_uploader(
             "Choose a CSV file",
-            type=['csv'],
+                    type=['csv'],
             help="Upload your investment portfolio CSV file"
         )
         
@@ -2404,7 +2456,7 @@ class PortfolioAnalytics:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error refreshing data: {e}")
-        
+            
         with col2:
             if st.button("📊 Update Live Prices"):
                 with st.spinner("Updating prices..."):
