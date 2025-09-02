@@ -83,22 +83,22 @@ class StockDataAgent:
                     print(f"⚠️ MFTool failed for {ticker}: {e}")
                 
                 # Fallback to INDstocks for mutual funds
-            try:
-                from indstocks_api import get_indstocks_client
-                api_client = get_indstocks_client()
+                try:
+                    from indstocks_api import get_indstocks_client
+                    api_client = get_indstocks_client()
                     if api_client and api_client.available:
-                    price_data = api_client.get_stock_price(ticker)
-                    if price_data and price_data.get('price'):
-                        return {
+                        price_data = api_client.get_stock_price(ticker)
+                        if price_data and price_data.get('price'):
+                            return {
                             'live_price': float(price_data['price']),
                                 'sector': 'Mutual Funds',
                                 'price_source': 'indstocks_mf',
                                 'stock_name': f"MF-{ticker}"
                         }
-            except Exception as e:
+                except Exception as e:
                     print(f"⚠️ INDstocks failed for mutual fund {ticker}: {e}")
                 
-                return None
+                    return None
             else:
                 # Stock - try yfinance first, then INDstocks
                 print(f"🔍 Fetching stock data for {ticker} using yfinance...")
@@ -144,7 +144,7 @@ class StockDataAgent:
                         }
                         
             except Exception as e:
-                    print(f"⚠️ YFinance failed for {ticker}: {e}")
+                print(f"⚠️ YFinance failed for {ticker}: {e}")
                 
                 # Fallback to INDstocks for stocks
                 try:
