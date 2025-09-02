@@ -150,10 +150,10 @@ class PortfolioAnalytics:
         try:
             if not uploaded_files:
                 return
-            
+        
             processed_count = 0
             failed_count = 0
-            
+        
             for uploaded_file in uploaded_files:
                 try:
                     # Process the uploaded file
@@ -365,6 +365,15 @@ class PortfolioAnalytics:
             
             if success:
                 st.success(f"✅ Saved {len(df)} transactions to database")
+                
+                # After saving transactions, fetch live prices and sectors for new tickers
+                st.info("🔄 Fetching live prices and sectors for new tickers...")
+                try:
+                    self.fetch_live_prices_and_sectors(user_id)
+                    st.success("✅ Live prices and sectors updated successfully!")
+                except Exception as e:
+                    st.warning(f"⚠️ Live price update had warnings: {e}")
+                
                 return True
             else:
                 st.error("Failed to save transactions to database")
@@ -485,87 +494,87 @@ class PortfolioAnalytics:
                     
                 except Exception as e:
                     st.error(f"Error updating historical prices: {e}")
-        
+                            
         except Exception as e:
             st.error(f"Error in update_missing_historical_prices: {e}")
     
-        def fetch_live_prices_and_sectors(self, user_id):
-         """Fetch live prices and sectors for all user tickers"""
-         try:
-             st.info("🔄 Fetching live prices and sectors...")
-             
-             # Get unique tickers from user transactions
-             transactions = get_transactions_supabase(user_id=user_id)
-             if not transactions:
-                 return
-             
-             df = pd.DataFrame(transactions)
-             unique_tickers = df['ticker'].unique()
-             
-             live_prices = {}
-             sectors = {}
-             
-             # Fetch live prices and sectors for each ticker
-             for ticker in unique_tickers:
-                 try:
-                     if ticker.startswith('MF_'):
-                         live_price = get_mutual_fund_price(ticker, ticker, user_id, None)
-                         sector = "Mutual Fund"  # Default sector for MFs
-                     else:
-                         live_price = get_stock_price(ticker, ticker, None)
-                         
-                         # Try to get sector from stock data table first
-                         stock_data = get_stock_data_supabase(ticker)
-                         sector = stock_data.get('sector', None) if stock_data else None
-                         
-                         # If no sector in database, try to fetch it from live price data
-                         if not sector or sector == 'Unknown':
-                             try:
-                                 # Import stock data agent to get sector information
-                                 from stock_data_agent import get_sector
-                                 sector = get_sector(ticker)
-                                 if sector and sector != 'Unknown':
-                                     # Update the stock_data table with the sector
-                                     try:
-                                         if stock_data:
-                                             update_stock_data_supabase(ticker, sector=sector)
-                                         else:
-                                             # Create new stock data entry
-                                             from stock_data_agent import get_stock_name
-                                             stock_name = get_stock_name(ticker) or ticker
-                                             # This would require a create function - for now just store in session
-                                             pass
-                                     except Exception as e:
-                                         st.debug(f"Could not update sector for {ticker}: {e}")
-                             except Exception as e:
-                                 st.debug(f"Could not fetch sector for {ticker}: {e}")
-                                 sector = 'Unknown'
-                         
-                         # If still no sector, categorize based on ticker pattern
-                         if not sector or sector == 'Unknown':
-                             if '.NS' in ticker:
-                                 sector = 'NSE Stocks'
-                             elif '.BO' in ticker:
-                                 sector = 'BSE Stocks'
-                             else:
-                                 sector = 'Other Stocks'
-                     
-                     if live_price and live_price > 0:
-                         live_prices[ticker] = live_price
-                         sectors[ticker] = sector
-                         
-                 except Exception as e:
-                     st.warning(f"⚠️ Could not fetch data for {ticker}: {e}")
-                     continue
-             
-             # Store in session state
-             self.session_state.live_prices = live_prices
-             self.session_state.sectors = sectors
-             
-             st.success(f"✅ Fetched live prices for {len(live_prices)} tickers and sectors for {len(sectors)} tickers")
-             
-         except Exception as e:
-             st.error(f"Error fetching live prices: {e}")
+    def fetch_live_prices_and_sectors(self, user_id):
+        """Fetch live prices and sectors for all user tickers"""
+        try:
+            st.info("🔄 Fetching live prices and sectors...")
+            
+            # Get unique tickers from user transactions
+            transactions = get_transactions_supabase(user_id=user_id)
+            if not transactions:
+                return
+            
+            df = pd.DataFrame(transactions)
+            unique_tickers = df['ticker'].unique()
+            
+            live_prices = {}
+            sectors = {}
+            
+            # Fetch live prices and sectors for each ticker
+            for ticker in unique_tickers:
+                try:
+                    if ticker.startswith('MF_'):
+                        live_price = get_mutual_fund_price(ticker, ticker, user_id, None)
+                        sector = "Mutual Fund"  # Default sector for MFs
+                    else:
+                        live_price = get_stock_price(ticker, ticker, None)
+                        
+                        # Try to get sector from stock data table first
+                        stock_data = get_stock_data_supabase(ticker)
+                        sector = stock_data.get('sector', None) if stock_data else None
+                        
+                        # If no sector in database, try to fetch it from live price data
+                        if not sector or sector == 'Unknown':
+                            try:
+                                # Import stock data agent to get sector information
+                                from stock_data_agent import get_sector
+                                sector = get_sector(ticker)
+                                if sector and sector != 'Unknown':
+                                    # Update the stock_data table with the sector
+                                    try:
+                                        if stock_data:
+                                            update_stock_data_supabase(ticker, sector=sector)
+                                        else:
+                                            # Create new stock data entry
+                                            from stock_data_agent import get_stock_name
+                                            stock_name = get_stock_name(ticker) or ticker
+                                            # This would require a create function - for now just store in session
+                                            pass
+                                    except Exception as e:
+                                        st.debug(f"Could not update sector for {ticker}: {e}")
+                            except Exception as e:
+                                st.debug(f"Could not fetch sector for {ticker}: {e}")
+                                sector = 'Unknown'
+                        
+                        # If still no sector, categorize based on ticker pattern
+                        if not sector or sector == 'Unknown':
+                            if '.NS' in ticker:
+                                sector = 'NSE Stocks'
+                            elif '.BO' in ticker:
+                                sector = 'BSE Stocks'
+                            else:
+                                sector = 'Other Stocks'
+                    
+                    if live_price and live_price > 0:
+                        live_prices[ticker] = live_price
+                        sectors[ticker] = sector
+                        
+                except Exception as e:
+                    st.warning(f"⚠️ Could not fetch data for {ticker}: {e}")
+                    continue
+            
+            # Store in session state
+            self.session_state.live_prices = live_prices
+            self.session_state.sectors = sectors
+            
+            st.success(f"✅ Fetched live prices for {len(live_prices)} tickers and sectors for {len(sectors)} tickers")
+            
+        except Exception as e:
+            st.error(f"Error fetching live prices: {e}")
     
     def load_portfolio_data(self, user_id):
         """Load and process portfolio data"""
@@ -620,22 +629,24 @@ class PortfolioAnalytics:
         )
         
         if uploaded_file is not None:
-             if st.sidebar.button("Process File", key="sidebar_process"):
-                 try:
-                     # Show processing message
-                     st.sidebar.info("🔄 Processing file...")
-                     
-                     # Process the uploaded file
-                     result = process_user_files_on_login(self.session_state.user_id)
-                     if result:
-                         st.sidebar.success("✅ File processed successfully!")
-                         # Refresh portfolio data
-                         self.load_portfolio_data(self.session_state.user_id)
-                         st.rerun()
-                     else:
-                         st.sidebar.error("❌ Error processing file")
-                 except Exception as e:
-                     st.sidebar.error(f"❌ Error: {e}")
+            if st.sidebar.button("Process File", key="sidebar_process"):
+                try:
+                    # Show processing message
+                    st.sidebar.info("🔄 Processing file...")
+                    
+                    # Process the uploaded file with spinner
+                    with st.spinner("Processing file..."):
+                        # Process the uploaded file directly
+                        success = self.process_uploaded_files_during_registration([uploaded_file], self.session_state.user_id)
+                        if success:
+                            st.sidebar.success("✅ File processed successfully!")
+                            # Refresh portfolio data
+                            self.load_portfolio_data(self.session_state.user_id)
+                            st.rerun()
+                        else:
+                            st.sidebar.error("❌ Error processing file")
+                except Exception as e:
+                    st.sidebar.error(f"❌ Error: {e}")
         
         # Logout button
         st.sidebar.markdown("---")
@@ -914,7 +925,7 @@ class PortfolioAnalytics:
             # Filter for stocks (not mutual funds) with buy transactions in the last 1 year
             one_year_ago = datetime.now() - timedelta(days=365)
             
-                        # Filter stocks (exclude mutual funds) with buy transactions in last 1 year
+            # Filter stocks (exclude mutual funds) with buy transactions in last 1 year
             stock_buys = df[
                 (~df['ticker'].astype(str).str.startswith('MF_')) & 
                 (df['transaction_type'] == 'buy') & 
@@ -924,14 +935,14 @@ class PortfolioAnalytics:
             if not stock_buys.empty:
                  # Group by ticker and calculate performance metrics
                  stock_performance = stock_buys.groupby('ticker').agg({
-                     'invested_amount': 'sum',
-                     'current_value': 'sum',
+            'invested_amount': 'sum',
+            'current_value': 'sum',
                      'unrealized_pnl': 'sum',
-                     'quantity': 'sum',
+            'quantity': 'sum',
                      'date': 'max'  # Latest buy date
-                 }).reset_index()
-                 
-                 # Calculate additional metrics
+        }).reset_index()
+        
+        # Calculate additional metrics
                  stock_performance['pnl_percentage'] = (stock_performance['unrealized_pnl'] / stock_performance['invested_amount']) * 100
                  stock_performance['avg_price'] = stock_performance['invested_amount'] / stock_performance['quantity']
                  
@@ -1035,9 +1046,9 @@ class PortfolioAnalytics:
                  
                  # Performance insights
                  st.subheader("💡 Performance Insights")
-                 
+        
                  col1, col2 = st.columns(2)
-                 
+        
                  with col1:
                      st.markdown("**📈 Positive Insights:**")
                      if len(stock_performance[stock_performance['pnl_percentage'] > 0]) > 0:
@@ -1046,7 +1057,7 @@ class PortfolioAnalytics:
                          st.markdown(f"• Average return: {stock_performance['pnl_percentage'].mean():.2f}%")
                      else:
                          st.markdown("• No stocks are currently profitable")
-                 
+        
                  with col2:
                      st.markdown("**📉 Areas of Concern:**")
                      if len(stock_performance[stock_performance['pnl_percentage'] < 0]) > 0:
@@ -1071,7 +1082,7 @@ class PortfolioAnalytics:
         if self.session_state.portfolio_data is None:
             st.warning("No portfolio data available")
             return
-        
+            
         df = self.session_state.portfolio_data
         
         # Asset allocation by type
@@ -1355,7 +1366,7 @@ class PortfolioAnalytics:
         
         uploaded_file = st.file_uploader(
             "Choose a CSV file",
-                    type=['csv'],
+            type=['csv'],
             help="Upload your investment portfolio CSV file"
         )
         
@@ -1436,10 +1447,10 @@ class PortfolioAnalytics:
             st.write(f"**Username:** {self.session_state.username}")
             st.write(f"**User ID:** {user_id}")
             st.write(f"**Role:** {self.session_state.user_role}")
-        
-        with col2:
-            st.write(f"**Login Time:** {self.session_state.login_time.strftime('%Y-%m-%d %H:%M:%S')}")
-            st.write(f"**Session Duration:** {(datetime.now() - self.session_state.login_time).total_seconds() / 3600:.1f} hours")
+            
+            with col2:
+                st.write(f"**Login Time:** {self.session_state.login_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                st.write(f"**Session Duration:** {(datetime.now() - self.session_state.login_time).total_seconds() / 3600:.1f} hours")
         
         st.markdown("---")
         
