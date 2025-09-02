@@ -409,7 +409,7 @@ def save_transaction_supabase(user_id: int, stock_name: str, ticker: str, quanti
             print(f"❌ Failed to save transaction for {ticker}")
             return None
             
-        except Exception as e:
+    except Exception as e:
         print(f"❌ Error saving transaction: {e}")
         return None
 
@@ -428,10 +428,10 @@ def get_transactions_supabase(user_id: int = None, file_id: int = None) -> List[
         
         if result.data:
             return result.data
-            else:
+        else:
             return []
             
-        except Exception as e:
+    except Exception as e:
         print(f"❌ Error getting transactions: {e}")
         return []
 
@@ -583,7 +583,7 @@ def get_file_records_supabase(user_id: int = None) -> List[Dict]:
             else:
                 return []
             
-                    except Exception as e:
+    except Exception as e:
         print(f"❌ Error getting file records: {e}")
         # Run diagnostics to help identify the issue
         print("🔍 Running database diagnostics...")
@@ -712,7 +712,7 @@ def get_transactions_by_ticker_supabase(ticker: str) -> List[Dict]:
         if result.data:
             return result.data
         else:
-        return []
+            return []
 
     except Exception as e:
         print(f"❌ Error getting transactions by ticker: {e}")
@@ -833,10 +833,10 @@ def save_transactions_bulk_supabase(df: pd.DataFrame, file_id: int, user_id: int
                 verify_result = supabase.table("investment_transactions").select("*").eq("file_id", file_id).execute()
                 if verify_result.data:
                     print(f"✅ Data verification successful: {len(verify_result.data)} transactions found in database")
-            return True
+                    return True
                 else:
                     print(f"❌ Data verification failed: No transactions found after insert")
-        return False
+                    return False
             except Exception as verify_error:
                 print(f"⚠️ Data verification error: {verify_error}")
                 # Still return True if insert was successful
