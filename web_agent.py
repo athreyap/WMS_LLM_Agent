@@ -457,7 +457,7 @@ class PortfolioAnalytics:
                         transaction_date = pd.to_datetime(row['date'])
                         
                         # Fetch historical price
-                        if ticker.startswith('MF_'):
+                        if str(ticker).isdigit() or ticker.startswith('MF_'):
                             historical_price = get_mutual_fund_price(
                                 ticker, 
                                 ticker, 
@@ -517,10 +517,12 @@ class PortfolioAnalytics:
             # Fetch live prices and sectors for each ticker
             for ticker in unique_tickers:
                 try:
-                    if ticker.startswith('MF_'):
+                    if str(ticker).isdigit() or ticker.startswith('MF_'):
+                        # Mutual fund - use numerical scheme code
                         live_price = get_mutual_fund_price(ticker, ticker, user_id, None)
                         sector = "Mutual Fund"  # Default sector for MFs
                     else:
+                        # Stock
                         live_price = get_stock_price(ticker, ticker, None)
                         
                         # Try to get sector from stock data table first
@@ -587,6 +589,31 @@ class PortfolioAnalytics:
             
             # Add live prices to transactions
             df['live_price'] = df['ticker'].map(self.session_state.live_prices)
+            
+            # Fetch sector information from stock_data table for all tickers
+            from database_config_supabase import get_stock_data_supabase
+            
+            # Get unique tickers
+            unique_tickers = df['ticker'].unique()
+            ticker_sectors = {}
+            
+            for ticker in unique_tickers:
+                try:
+                    stock_data = get_stock_data_supabase(ticker)
+                    if stock_data and stock_data.get('sector'):
+                        ticker_sectors[ticker] = stock_data['sector']
+                    else:
+                        # Use sector from session state if available
+                        ticker_sectors[ticker] = self.session_state.sectors.get(ticker, 'Unknown')
+                except Exception as e:
+                    # Use sector from session state if available
+                    ticker_sectors[ticker] = self.session_state.sectors.get(ticker, 'Unknown')
+            
+            # Add sector information to the dataframe
+            df['sector'] = df['ticker'].map(ticker_sectors)
+            
+            # For mutual funds, set sector to "Mutual Fund"
+            df.loc[df['ticker'].astype(str).str.isdigit() | df['ticker'].str.startswith('MF_'), 'sector'] = 'Mutual Fund'
             
             # Calculate portfolio metrics
             df['invested_amount'] = df['quantity'] * df['price']
