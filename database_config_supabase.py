@@ -1068,7 +1068,7 @@ def fix_password_salt_issue():
                     supabase.table("users").update(update_data).eq("id", user_id).execute()
                     print(f"✅ Fixed user: {username}")
                     fixed_count += 1
-    except Exception as e:
+                except Exception as e:
                     print(f"❌ Failed to fix user {username}: {e}")
             else:
                 print(f"✅ User {username} already has password_salt")
@@ -1152,7 +1152,7 @@ def check_table_structure(table_name: str) -> Dict:
                 "sample_record": None
             }
                 
-            except Exception as e:
+    except Exception as e:
         print(f"❌ Error accessing table '{table_name}': {e}")
         return {
             "accessible": False,
