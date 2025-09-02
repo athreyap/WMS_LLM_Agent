@@ -131,9 +131,14 @@ class WebAgent:
         
         # Initialize other components
         try:
-            from login_system import LoginSystem
-            self.login_system = LoginSystem()
-            print("✅ Login system imported successfully")
+            # Import functions from login_system instead of class
+            from login_system import authenticate_user, create_user, main_login_system
+            self.login_system = {
+                'authenticate_user': authenticate_user,
+                'create_user': create_user,
+                'main_login_system': main_login_system
+            }
+            print("✅ Login system functions imported successfully")
         except Exception as e:
             print(f"❌ Error importing login system: {e}")
             self.login_system = None
@@ -196,7 +201,11 @@ class WebAgent:
                 
         except ImportError as e:
             print(f"❌ Mftool not available: {e}")
-            print(f"❌ Please ensure mftool is installed: pip install mftool")
+            if "matplotlib" in str(e):
+                print("❌ Matplotlib dependency missing - please install: pip install matplotlib")
+                print("💡 Mftool requires matplotlib for some functionality")
+            else:
+                print(f"❌ Please ensure mftool is installed: pip install mftool")
             self.mftool_available = False
         except Exception as e:
             print(f"❌ Error initializing mftool: {e}")
@@ -247,35 +256,57 @@ class WebAgent:
         if not LOGIN_SYSTEM_AVAILABLE:
             return False, "Login system not available"
         
-        success, message = authenticate_user(username, password)
-        if success:
-            # Set session variables
-            self.session_state['user_authenticated'] = True
-            self.session_state['username'] = username
-            self.session_state['login_time'] = datetime.now()
+        try:
+            # Use imported function from login_system
+            if self.login_system and 'authenticate_user' in self.login_system:
+                success, message = self.login_system['authenticate_user'](username, password)
+            else:
+                # Fallback to direct import
+                from login_system import authenticate_user
+                success, message = authenticate_user(username, password)
             
-            # Get user info and set user_id
-            user_info = get_user_by_username(username)
-            if user_info:
-                self.session_state['user_id'] = user_info['id']
-                self.session_state['user_role'] = user_info['role']
-                self.session_state['folder_path'] = user_info.get('folder_path', '')
+            if success:
+                # Set session variables
+                self.session_state['user_authenticated'] = True
+                self.session_state['username'] = username
+                self.session_state['login_time'] = datetime.now()
                 
-                # Initialize mftool after successful login
-                print("🔄 User authenticated, initializing mftool...")
-                self.initialize_after_login()
-            
-            return True, "Login successful"
-        else:
-            return False, message
+                # Get user info and set user_id
+                user_info = get_user_by_username(username)
+                if user_info:
+                    self.session_state['user_id'] = user_info['id']
+                    self.session_state['user_role'] = user_info['role']
+                    self.session_state['folder_path'] = user_info.get('folder_path', '')
+                    
+                    # Initialize mftool after successful login
+                    print("🔄 User authenticated, initializing mftool...")
+                    self.initialize_after_login()
+                
+                return True, "Login successful"
+            else:
+                return False, message
+        except Exception as e:
+            print(f"❌ Authentication error: {e}")
+            return False, f"Authentication failed: {str(e)}"
     
     def handle_user_registration(self, username, email, password, folder_path=None):
         """Handle user registration"""
         if not LOGIN_SYSTEM_AVAILABLE:
             return False, "Login system not available"
         
-        success, message = create_user(username, email, password, folder_path=folder_path)
-        return success, message
+        try:
+            # Use imported function from login_system
+            if self.login_system and 'create_user' in self.login_system:
+                success, message = self.login_system['create_user'](username, email, password, folder_path=folder_path)
+            else:
+                # Fallback to direct import
+                from login_system import create_user
+                success, message = create_user(username, email, password, folder_path=folder_path)
+            
+            return success, message
+        except Exception as e:
+            print(f"❌ Registration error: {e}")
+            return False, f"Registration failed: {str(e)}"
     
     def check_user_folder_access(self):
         """Check if current user has proper folder access"""
