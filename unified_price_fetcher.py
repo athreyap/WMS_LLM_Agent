@@ -9,6 +9,222 @@ import pandas as pd
 from typing import Optional, Tuple
 import re
 
+def get_mutual_fund_price_and_category(ticker: str, clean_ticker: str, user_id: int, target_date: str = None) -> Tuple[Optional[float], Optional[str]]:
+    """Get price and fund category for mutual fund using mftool
+    
+    Args:
+        ticker: The ticker symbol
+        clean_ticker: Cleaned ticker symbol
+        user_id: User ID for database lookups
+        target_date: Target date for historical prices (None for current/live prices)
+    
+    Returns:
+        Tuple of (price, category) where either can be None
+    """
+    price = None
+    category = None
+    
+    # Method 1: Try to get transaction price from database (most reliable)
+    try:
+        from database_config_supabase import get_transactions_supabase
+        all_user_transactions = get_transactions_supabase(user_id)
+        if all_user_transactions:
+            mf_transactions = [t for t in all_user_transactions if t.get('ticker') == ticker]
+            if mf_transactions:
+                if target_date:
+                    # For historical prices, find NEAREST date match (not exact)
+                    target_dt = pd.to_datetime(target_date)
+                    
+                    # Calculate days difference for each transaction
+                    date_diffs = []
+                    for t in mf_transactions:
+                        if t.get('price') and t.get('price') > 0:
+                            trans_date = pd.to_datetime(t.get('date'))
+                            days_diff = abs((target_dt - trans_date).days)
+                            date_diffs.append((days_diff, t.get('price')))
+                    
+                    if date_diffs:
+                        # Sort by days difference and get the closest match
+                        date_diffs.sort(key=lambda x: x[0])
+                        closest_price = date_diffs[0][1]
+                        closest_days = date_diffs[0][0]
+                        
+                        if closest_days <= 30:  # Accept prices within 30 days
+                            price = closest_price
+                            print(f"✅ MF {ticker}: Historical price ₹{price} for {target_date} (closest: {closest_days} days) from transaction data")
+                            print(f"   📊 Found in database: Target: {target_date} → Closest: {closest_days} days → Price: ₹{price}")
+                            return price, category
+                        else:
+                            print(f"⚠️ MF {ticker}: No transaction price within 30 days of {target_date}")
+                            print(f"   📊 Closest available: {closest_days} days away (too far for accurate pricing)")
+                else:
+                    # For live prices, use average of all transaction prices
+                    prices = [t.get('price', 0) for t in mf_transactions if t.get('price') and t.get('price') > 0]
+                    if prices:
+                        price = sum(prices) / len(prices)
+                        print(f"✅ MF {ticker}: Live price ₹{price} from transaction data")
+                        return price, category
+    except Exception as e:
+        print(f"⚠️ Could not get transaction price for MF {ticker}: {e}")
+    
+    # Method 2: For numerical tickers, go straight to mftool (most reliable)
+    if not price and (clean_ticker.isdigit() or clean_ticker.startswith('MF_')):
+        try:
+            from mftool import Mftool
+            
+            # Create a fresh mftool instance for this request
+            mf = Mftool()
+            
+            # Extract scheme code from ticker
+            if clean_ticker.startswith('MF_'):
+                scheme_code = clean_ticker.replace('MF_', '')
+            elif clean_ticker.isdigit():
+                scheme_code = clean_ticker
+            else:
+                # Try to extract numbers from ticker
+                match = re.search(r'(\d{5,6})', clean_ticker)
+                scheme_code = match.group(1) if match else None
+            
+            if scheme_code:
+                if target_date:
+                    # For historical prices, try mftool history method
+                    try:
+                        target_dt = pd.to_datetime(target_date)
+                        # Get data for a range around the target date (5 days as requested)
+                        start_date = target_dt - pd.Timedelta(days=5)
+                        end_date = target_dt + pd.Timedelta(days=5)
+                        
+                        # Get historical NAV data using the working method
+                        hist_data = mf.get_scheme_historical_nav(scheme_code, as_Dataframe=True)
+                        
+                        if hist_data is not None and not hist_data.empty:
+                            # Convert date column to datetime with proper format handling
+                            hist_data['date'] = pd.to_datetime(hist_data.index, format='%d-%m-%Y', dayfirst=True)
+                            
+                            # Filter data within 5 days range (as requested)
+                            start_date = target_dt - pd.Timedelta(days=5)
+                            end_date = target_dt + pd.Timedelta(days=5)
+                            
+                            # Filter data for the date range
+                            range_data = hist_data[(hist_data['date'] >= start_date) & (hist_data['date'] <= end_date)].copy()
+                            
+                            if not range_data.empty:
+                                # Find the closest date to target_date
+                                range_data['days_diff'] = abs((range_data['date'] - target_dt).dt.days)
+                                closest_idx = range_data['days_diff'].idxmin()
+                                closest_nav = range_data.loc[closest_idx, 'nav']
+                                closest_days = range_data.loc[closest_idx, 'days_diff']
+                            
+                            if closest_days <= 5:  # Accept NAV within 5 days
+                                price = float(closest_nav)
+                                print(f"✅ MF {ticker}: Historical NAV ₹{price} for {target_date} (closest: {closest_days} days) from mftool")
+                                print(f"   📊 Mftool Historical: Target: {target_date} → Closest: {closest_days} days → NAV: ₹{price}")
+                                
+                                # Try to get fund category from mftool for historical data
+                                try:
+                                    scheme_quote = mf.get_scheme_quote(scheme_code)
+                                    if scheme_quote and 'category' in scheme_quote:
+                                        category = scheme_quote['category']
+                                        print(f"✅ MF {ticker}: Fund category '{category}' from mftool")
+                                except Exception as cat_error:
+                                    print(f"⚠️ Could not fetch fund category for {ticker}: {cat_error}")
+                                
+                                return price, category
+                            else:
+                                print(f"⚠️ MF {ticker}: No NAV data within 5 days of {target_date}")
+                                print(f"   📊 Closest available: {closest_days} days away (too far for accurate NAV)")
+                        else:
+                            print(f"⚠️ MF {ticker}: No historical NAV data available for date range")
+                    except Exception as hist_error:
+                        print(f"⚠️ Mftool history failed for {ticker}: {hist_error}")
+                        
+                        # Fallback: Try to get current NAV if historical fails
+                        try:
+                            scheme_quote = mf.get_scheme_quote(scheme_code)
+                            if scheme_quote and 'nav' in scheme_quote:
+                                price = float(scheme_quote['nav'])
+                                if 'category' in scheme_quote:
+                                    category = scheme_quote['category']
+                                    print(f"✅ MF {ticker}: Fund category '{category}' from mftool")
+                                print(f"✅ MF {ticker}: Using current NAV ₹{price} as fallback for {target_date}")
+                                return price, category
+                        except Exception as fallback_error:
+                            print(f"⚠️ Mftool fallback also failed for {ticker}: {fallback_error}")
+                else:
+                    # For live prices, use mftool get_scheme_quote
+                    try:
+                        scheme_quote = mf.get_scheme_quote(scheme_code)
+                        if scheme_quote and 'nav' in scheme_quote:
+                            price = float(scheme_quote['nav'])
+                            print(f"✅ MF {ticker}: Live NAV ₹{price} from mftool")
+                            print(f"   📊 Mftool Quote: Current NAV: ₹{price}")
+                            
+                            # Get fund category from mftool
+                            if 'category' in scheme_quote:
+                                category = scheme_quote['category']
+                                print(f"✅ MF {ticker}: Fund category '{category}' from mftool")
+                            elif 'scheme_type' in scheme_quote:
+                                category = scheme_quote['scheme_type']
+                                print(f"✅ MF {ticker}: Scheme type '{category}' from mftool")
+                            
+                            return price, category
+                    except Exception as quote_error:
+                        print(f"⚠️ Mftool quote failed for {ticker}: {quote_error}")
+            else:
+                print(f"⚠️ Could not extract scheme code from ticker {clean_ticker}")
+                
+        except Exception as e:
+            print(f"⚠️ Mftool failed for {ticker}: {e}")
+    
+    # Method 3: Try direct AMFI API only for non-numerical tickers (fallback)
+    if not price and not (clean_ticker.isdigit() or clean_ticker.startswith('MF_')):
+        try:
+            import requests
+            
+            # Extract scheme code from ticker
+            if clean_ticker.startswith('MF_'):
+                scheme_code = clean_ticker.replace('MF_', '')
+            elif clean_ticker.isdigit():
+                scheme_code = clean_ticker
+            else:
+                # Try to extract numbers from ticker
+                match = re.search(r'(\d{5,6})', clean_ticker)
+                scheme_code = match.group(1) if match else None
+            
+            if scheme_code:
+                # Fetch current NAV from AMFI with Streamlit Cloud compatibility
+                response = requests.get('https://www.amfiindia.com/spages/NAVAll.txt', timeout=15)
+                if response.status_code == 200:
+                    lines = response.text.split('\n')
+                    for line in lines:
+                        if line.strip() and ';' in line:
+                            parts = line.split(';')
+                            if len(parts) >= 5 and parts[0].strip() == scheme_code:
+                                try:
+                                    nav = float(parts[4].strip())
+                                    price = nav
+                                    print(f"✅ MF {ticker}: Live NAV ₹{price} from AMFI API")
+                                    print(f"   📊 AMFI API: Current NAV: ₹{price}")
+                                    return price, category
+                                except ValueError:
+                                    continue
+                else:
+                    print(f"⚠️ AMFI API returned status {response.status_code}")
+        except Exception as e:
+            print(f"⚠️ AMFI API failed for {ticker}: {e}")
+    
+    # Method 4: Use intelligent default based on fund type
+    if not price:
+        price = get_mutual_fund_default_price(clean_ticker)
+        if target_date:
+            print(f"✅ MF {ticker}: Historical price ₹{price} for {target_date} (intelligent default)")
+            print(f"   📊 Fallback: Target: {target_date} → Default Price: ₹{price} (no historical data available)")
+        else:
+            print(f"✅ MF {ticker}: Live price ₹{price} (intelligent default)")
+            print(f"   📊 Fallback: Default Price: ₹{price} (no live data available)")
+    
+    return price, category
+
 def get_mutual_fund_price(ticker: str, clean_ticker: str, user_id: int, target_date: str = None) -> float:
     """Get price for mutual fund using multiple fallback methods
     
@@ -63,45 +279,8 @@ def get_mutual_fund_price(ticker: str, clean_ticker: str, user_id: int, target_d
     except Exception as e:
         print(f"⚠️ Could not get transaction price for MF {ticker}: {e}")
     
-    # Method 2: Try direct AMFI API for current NAV (most reliable for live prices)
-    if not price and not target_date:
-        try:
-            import requests
-            
-            # Extract scheme code from ticker
-            if clean_ticker.startswith('MF_'):
-                scheme_code = clean_ticker.replace('MF_', '')
-            elif clean_ticker.isdigit():
-                scheme_code = clean_ticker
-            else:
-                # Try to extract numbers from ticker
-                match = re.search(r'(\d{5,6})', clean_ticker)
-                scheme_code = match.group(1) if match else None
-            
-            if scheme_code:
-                # Fetch current NAV from AMFI with Streamlit Cloud compatibility
-                response = requests.get('https://www.amfiindia.com/spages/NAVAll.txt', timeout=15)
-                if response.status_code == 200:
-                    lines = response.text.split('\n')
-                    for line in lines:
-                        if line.strip() and ';' in line:
-                            parts = line.split(';')
-                            if len(parts) >= 5 and parts[0].strip() == scheme_code:
-                                try:
-                                    nav = float(parts[4].strip())
-                                    price = nav
-                                    print(f"✅ MF {ticker}: Live NAV ₹{price} from AMFI API")
-                                    print(f"   📊 AMFI API: Current NAV: ₹{price}")
-                                    return price
-                                except ValueError:
-                                    continue
-                else:
-                    print(f"⚠️ AMFI API returned status {response.status_code}")
-        except Exception as e:
-            print(f"⚠️ AMFI API failed for {ticker}: {e}")
-    
-    # Method 3: Try mftool for current NAV (if no target_date) or historical NAV
-    if not price:
+    # Method 2: For numerical tickers, go straight to mftool (most reliable)
+    if not price and (clean_ticker.isdigit() or clean_ticker.startswith('MF_')):
         try:
             from mftool import Mftool
             
@@ -187,6 +366,43 @@ def get_mutual_fund_price(ticker: str, clean_ticker: str, user_id: int, target_d
         except Exception as e:
             print(f"⚠️ Mftool failed for {ticker}: {e}")
     
+    # Method 3: Try direct AMFI API only for non-numerical tickers (fallback)
+    if not price and not (clean_ticker.isdigit() or clean_ticker.startswith('MF_')):
+        try:
+            import requests
+            
+            # Extract scheme code from ticker
+            if clean_ticker.startswith('MF_'):
+                scheme_code = clean_ticker.replace('MF_', '')
+            elif clean_ticker.isdigit():
+                scheme_code = clean_ticker
+            else:
+                # Try to extract numbers from ticker
+                match = re.search(r'(\d{5,6})', clean_ticker)
+                scheme_code = match.group(1) if match else None
+            
+            if scheme_code:
+                # Fetch current NAV from AMFI with Streamlit Cloud compatibility
+                response = requests.get('https://www.amfiindia.com/spages/NAVAll.txt', timeout=15)
+                if response.status_code == 200:
+                    lines = response.text.split('\n')
+                    for line in lines:
+                        if line.strip() and ';' in line:
+                            parts = line.split(';')
+                            if len(parts) >= 5 and parts[0].strip() == scheme_code:
+                                try:
+                                    nav = float(parts[4].strip())
+                                    price = nav
+                                    print(f"✅ MF {ticker}: Live NAV ₹{price} from AMFI API")
+                                    print(f"   📊 AMFI API: Current NAV: ₹{price}")
+                                    return price
+                                except ValueError:
+                                    continue
+                else:
+                    print(f"⚠️ AMFI API returned status {response.status_code}")
+        except Exception as e:
+            print(f"⚠️ AMFI API failed for {ticker}: {e}")
+    
     # Method 4: Use intelligent default based on fund type
     if not price:
         price = get_mutual_fund_default_price(clean_ticker)
@@ -198,6 +414,113 @@ def get_mutual_fund_price(ticker: str, clean_ticker: str, user_id: int, target_d
             print(f"   📊 Fallback: Default Price: ₹{price} (no live data available)")
     
     return price
+
+def get_stock_price_and_sector(ticker: str, clean_ticker: str, target_date: str = None) -> Tuple[Optional[float], Optional[str]]:
+    """Get price and sector for stock using yfinance
+    
+    Args:
+        ticker: The ticker symbol
+        clean_ticker: Cleaned ticker symbol
+        target_date: Target date for historical prices (None for current/live prices)
+    
+    Returns:
+        Tuple of (price, sector) where either can be None
+    """
+    price = None
+    sector = None
+    
+    try:
+        import yfinance as yf
+        
+        # Try .NS first (National Stock Exchange)
+        yf_ticker_ns = clean_ticker
+        if not yf_ticker_ns.endswith(('.NS', '.BO', '.NSE', '.BSE')):
+            yf_ticker_ns = f"{clean_ticker}.NS"
+        
+        stock_ns = yf.Ticker(yf_ticker_ns)
+        
+        # Try to get sector information from yfinance
+        try:
+            info = stock_ns.info
+            if info and 'sector' in info and info['sector']:
+                sector = info['sector']
+                print(f"✅ {ticker}: Sector '{sector}' fetched from yfinance")
+            elif info and 'industry' in info and info['industry']:
+                sector = info['industry']
+                print(f"✅ {ticker}: Industry '{sector}' fetched from yfinance (using as sector)")
+        except Exception as sector_error:
+            print(f"⚠️ Could not fetch sector for {ticker}: {sector_error}")
+        
+        if target_date:
+            # For historical prices, get data for a range around the target date
+            target_dt = pd.to_datetime(target_date)
+            if target_dt.tz is not None:
+                target_dt = target_dt.tz_localize(None)
+            
+            start_date = target_dt - pd.Timedelta(days=30)
+            end_date = target_dt + pd.Timedelta(days=30)
+            
+            hist_ns = stock_ns.history(start=start_date, end=end_date)
+            if not hist_ns.empty:
+                hist_ns.index = hist_ns.index.tz_localize(None)
+                hist_ns['days_diff'] = abs((hist_ns.index - target_dt).days)
+                closest_idx = hist_ns['days_diff'].idxmin()
+                closest_price = hist_ns.loc[closest_idx, 'Close']
+                closest_days = hist_ns.loc[closest_idx, 'days_diff']
+                
+                if closest_days <= 30 and closest_price > 0:
+                    price = closest_price
+                    print(f"✅ {ticker}: Historical price ₹{price} for {target_date} (closest: {closest_days} days) from yfinance (.NS)")
+        else:
+            # For live prices, get current day data
+            hist_ns = stock_ns.history(period="1d")
+            if not hist_ns.empty and hist_ns['Close'].iloc[-1] > 0:
+                price = hist_ns['Close'].iloc[-1]
+                print(f"✅ {ticker}: Live price ₹{price} from yfinance (.NS)")
+        
+        # If .NS didn't work, try .BO (Bombay Stock Exchange)
+        if not price and not yf_ticker_ns.endswith('.BO'):
+            yf_ticker_bo = f"{clean_ticker}.BO"
+            stock_bo = yf.Ticker(yf_ticker_bo)
+            
+            # Try to get sector from .BO if not already got from .NS
+            if not sector:
+                try:
+                    info = stock_bo.info
+                    if info and 'sector' in info and info['sector']:
+                        sector = info['sector']
+                        print(f"✅ {ticker}: Sector '{sector}' fetched from yfinance (.BO)")
+                    elif info and 'industry' in info and info['industry']:
+                        sector = info['industry']
+                        print(f"✅ {ticker}: Industry '{sector}' fetched from yfinance (.BO) (using as sector)")
+                except Exception as sector_error:
+                    print(f"⚠️ Could not fetch sector for {ticker} from .BO: {sector_error}")
+            
+            if target_date and not price:
+                hist_bo = stock_bo.history(start=start_date, end=end_date)
+                if not hist_bo.empty:
+                    hist_bo.index = hist_bo.index.tz_localize(None)
+                    hist_bo['days_diff'] = abs((hist_bo.index - target_dt).days)
+                    closest_idx = hist_bo['days_diff'].idxmin()
+                    closest_price = hist_bo.loc[closest_idx, 'Close']
+                    closest_days = hist_bo.loc[closest_idx, 'days_diff']
+                    
+                    if closest_days <= 30 and closest_price > 0:
+                        price = closest_price
+                        print(f"✅ {ticker}: Historical price ₹{price} for {target_date} (closest: {closest_days} days) from yfinance (.BO)")
+            elif not price:
+                hist_bo = stock_bo.history(period="1d")
+                if not hist_bo.empty and hist_bo['Close'].iloc[-1] > 0:
+                    price = hist_bo.loc[closest_idx, 'Close']
+                    print(f"✅ {ticker}: Live price ₹{price} from yfinance (.BO)")
+        
+        if not price:
+            print(f"⚠️ {ticker}: No price data from yfinance (.NS or .BO)")
+            
+    except Exception as e:
+        print(f"⚠️ yfinance failed for {ticker}: {e}")
+    
+    return price, sector
 
 def get_stock_price(ticker: str, clean_ticker: str, target_date: str = None) -> float:
     """Get price for stock using multiple sources

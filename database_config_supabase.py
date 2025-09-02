@@ -456,6 +456,18 @@ def save_file_record_supabase(filename: str, file_path: str, user_id: int) -> Op
         import hashlib
         file_hash = hashlib.md5(file_path.encode()).hexdigest()
         
+        # First, check if a file with the same name already exists for this user
+        try:
+            existing_files = supabase.table("investment_files").select("id, filename").eq("user_id", user_id).execute()
+            if existing_files.data:
+                for existing_file in existing_files.data:
+                    if existing_file.get('filename') == filename:
+                        print(f"⚠️ File {filename} already exists for user {user_id}, skipping duplicate")
+                        # Return the existing file record instead of creating a new one
+                        return existing_file
+        except Exception as check_error:
+            print(f"⚠️ Could not check for existing files: {check_error}")
+        
         # First, check if the table structure supports user_id
         try:
             # Try to get table info to check columns
@@ -500,6 +512,17 @@ def save_file_record_supabase(filename: str, file_path: str, user_id: int) -> Op
         if "column" in str(e).lower() and "user_id" in str(e).lower():
             print(f"💡 The 'user_id' column might not exist in the 'investment_files' table")
             print(f"💡 Please run the database schema update in your Supabase dashboard")
+        elif "duplicate" in str(e).lower() or "409" in str(e):
+            print(f"💡 File {filename} already exists for user {user_id}")
+            print(f"💡 This is likely a duplicate upload - the file will be processed using existing record")
+            # Try to get the existing file record
+            try:
+                existing_files = supabase.table("investment_files").select("*").eq("user_id", user_id).eq("filename", filename).execute()
+                if existing_files.data:
+                    print(f"✅ Found existing file record for {filename}")
+                    return existing_files.data[0]
+            except Exception as get_error:
+                print(f"⚠️ Could not retrieve existing file record: {get_error}")
         return None
 
 def get_file_records_supabase(user_id: int = None) -> List[Dict]:

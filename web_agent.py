@@ -263,10 +263,10 @@ class PortfolioAnalytics:
             success = self.save_transactions_to_database(df, user_id, uploaded_file.name)
             
             if success:
-                st.success(f"✅ Successfully saved {len(df)} transactions from {uploaded_file.name}")
+                st.success(f"✅ Successfully processed {uploaded_file.name}")
                 return True
             else:
-                st.error(f"❌ Failed to save transactions from {uploaded_file.name}")
+                st.error(f"❌ Failed to process {uploaded_file.name}")
                 return False
                 
         except Exception as e:
@@ -352,13 +352,22 @@ class PortfolioAnalytics:
         try:
             from database_config_supabase import save_transactions_bulk_supabase, save_file_record_supabase
             
-            # First save file record
+            # First save file record (or get existing one)
             file_record = save_file_record_supabase(filename, f"/uploads/{filename}", user_id)
             if not file_record:
                 st.error("Failed to save file record")
                 return False
             
             file_id = file_record['id']
+            
+            # Check if this file was already processed (has existing transactions)
+            from database_config_supabase import get_transactions_supabase
+            existing_transactions = get_transactions_supabase(user_id=user_id, file_id=file_id)
+            
+            if existing_transactions and len(existing_transactions) > 0:
+                st.warning(f"⚠️ File {filename} was already processed with {len(existing_transactions)} transactions")
+                st.info("Skipping duplicate processing to avoid data duplication")
+                return True  # Return success since the file is already processed
             
             # Save transactions in bulk
             success = save_transactions_bulk_supabase(df, file_id, user_id)
@@ -518,46 +527,71 @@ class PortfolioAnalytics:
             for ticker in unique_tickers:
                 try:
                     if str(ticker).isdigit() or ticker.startswith('MF_'):
-                        # Mutual fund - use numerical scheme code
-                        live_price = get_mutual_fund_price(ticker, ticker, user_id, None)
-                        sector = "Mutual Fund"  # Default sector for MFs
+                        # Mutual fund - use numerical scheme code and get fund category from mftool
+                        from unified_price_fetcher import get_mutual_fund_price_and_category
+                        live_price, fund_category = get_mutual_fund_price_and_category(ticker, ticker, user_id, None)
+                        
+                        # Use fund category from mftool if available, otherwise default to "Mutual Fund"
+                        if fund_category and fund_category != 'Unknown':
+                            sector = fund_category
+                            print(f"✅ MF {ticker}: Using fund category '{sector}' from mftool")
+                        else:
+                            sector = "Mutual Fund"  # Fallback if no category available
+                            print(f"⚠️ MF {ticker}: No fund category available, using default 'Mutual Fund'")
                     else:
-                        # Stock
-                        live_price = get_stock_price(ticker, ticker, None)
+                        # Stock - fetch both price and sector from yfinance
+                        from unified_price_fetcher import get_stock_price_and_sector
+                        live_price, sector = get_stock_price_and_sector(ticker, ticker, None)
                         
-                        # Try to get sector from stock data table first
-                        stock_data = get_stock_data_supabase(ticker)
-                        sector = stock_data.get('sector', None) if stock_data else None
-                        
-                        # If no sector in database, try to fetch it from live price data
+                        # If no sector from yfinance, try to get it from stock data table
                         if not sector or sector == 'Unknown':
-                            try:
-                                # Import stock data agent to get sector information
-                                from stock_data_agent import get_sector
-                                sector = get_sector(ticker)
-                                if sector and sector != 'Unknown':
-                                    # Update the stock_data table with the sector
-                                    try:
-                                        if stock_data:
-                                            update_stock_data_supabase(ticker, sector=sector)
-                                        else:
-                                            # Create new stock data entry
-                                            from stock_data_agent import get_stock_name
-                                            stock_name = get_stock_name(ticker) or ticker
-                                            # This would require a create function - for now just store in session
-                                            pass
-                                    except Exception as e:
-                                        st.debug(f"Could not update sector for {ticker}: {e}")
-                            except Exception as e:
-                                st.debug(f"Could not fetch sector for {ticker}: {e}")
-                                sector = 'Unknown'
+                            stock_data = get_stock_data_supabase(ticker)
+                            sector = stock_data.get('sector', None) if stock_data else None
+                            
+                            # If still no sector, try to fetch it from stock_data_agent
+                            if not sector or sector == 'Unknown':
+                                try:
+                                    from stock_data_agent import get_sector
+                                    sector = get_sector(ticker)
+                                    if sector and sector != 'Unknown':
+                                        # Update the stock_data table with the sector
+                                        try:
+                                            if stock_data:
+                                                update_stock_data_supabase(ticker, sector=sector)
+                                            else:
+                                                # Create new stock data entry
+                                                from stock_data_agent import get_stock_name
+                                                stock_name = get_stock_name(ticker) or ticker
+                                                # This would require a create function - for now just store in session
+                                                pass
+                                        except Exception as e:
+                                            st.debug(f"Could not update sector for {ticker}: {e}")
+                                except Exception as e:
+                                    st.debug(f"Could not fetch sector for {ticker}: {e}")
+                                    sector = 'Unknown'
                         
-                        # If still no sector, categorize based on ticker pattern
+                        # If still no sector, use a more intelligent categorization
                         if not sector or sector == 'Unknown':
-                            if '.NS' in ticker:
-                                sector = 'NSE Stocks'
-                            elif '.BO' in ticker:
-                                sector = 'BSE Stocks'
+                            # Try to categorize based on ticker name patterns
+                            ticker_upper = ticker.upper()
+                            if any(word in ticker_upper for word in ['BANK', 'HDFC', 'ICICI', 'SBI', 'AXIS', 'KOTAK']):
+                                sector = 'Banking'
+                            elif any(word in ticker_upper for word in ['TECH', 'INFY', 'TCS', 'WIPRO', 'HCL']):
+                                sector = 'Technology'
+                            elif any(word in ticker_upper for word in ['PHARMA', 'CIPLA', 'DRREDDY', 'SUNPHARMA']):
+                                sector = 'Pharmaceuticals'
+                            elif any(word in ticker_upper for word in ['AUTO', 'MARUTI', 'TATAMOTORS', 'BAJAJ']):
+                                sector = 'Automobile'
+                            elif any(word in ticker_upper for word in ['STEEL', 'TATASTEEL', 'JSWSTEEL']):
+                                sector = 'Metals & Mining'
+                            elif any(word in ticker_upper for word in ['OIL', 'ONGC', 'COAL']):
+                                sector = 'Oil & Gas'
+                            elif any(word in ticker_upper for word in ['CONSUMER', 'HINDUNILVR', 'ITC', 'NESTLE']):
+                                sector = 'Consumer Goods'
+                            elif any(word in ticker_upper for word in ['REALTY', 'DLF', 'GODREJ']):
+                                sector = 'Real Estate'
+                            elif any(word in ticker_upper for word in ['POWER', 'POWERGRID', 'NTPC']):
+                                sector = 'Power & Energy'
                             else:
                                 sector = 'Other Stocks'
                     
