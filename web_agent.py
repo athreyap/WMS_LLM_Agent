@@ -1675,6 +1675,122 @@ class PortfolioAnalytics:
                 else:
                     st.info("No detailed data available for table display")
                 
+                # Add quarterly performance analysis
+                st.subheader("📅 Quarterly Performance Analysis (1-Year Buy Transactions)")
+                
+                try:
+                    # Create quarterly data for each stock
+                    quarterly_data = []
+                    
+                    for _, row in stock_performance.iterrows():
+                        ticker = row['ticker']
+                        ticker_transactions = stock_buys[stock_buys['ticker'] == ticker].copy()
+                        
+                        # Convert date to datetime if it's not already
+                        if not pd.api.types.is_datetime64_any_dtype(ticker_transactions['date']):
+                            ticker_transactions['date'] = pd.to_datetime(ticker_transactions['date'])
+                        
+                        # Add quarter information
+                        ticker_transactions['quarter'] = ticker_transactions['date'].dt.quarter
+                        ticker_transactions['year'] = ticker_transactions['date'].dt.year
+                        ticker_transactions['quarter_label'] = ticker_transactions['year'].astype(str) + ' Q' + ticker_transactions['quarter'].astype(str)
+                        
+                        # Group by quarter and calculate gains
+                        quarterly_gains = ticker_transactions.groupby('quarter_label').agg({
+                            'invested_amount': 'sum',
+                            'current_value': 'sum',
+                            'unrealized_pnl': 'sum'
+                        }).reset_index()
+                        
+                        # Add ticker information
+                        quarterly_gains['ticker'] = ticker
+                        quarterly_gains['stock_name'] = ticker_transactions.iloc[0].get('stock_name', ticker)
+                        
+                        quarterly_data.append(quarterly_gains)
+                    
+                    if quarterly_data:
+                        # Combine all quarterly data
+                        all_quarterly = pd.concat(quarterly_data, ignore_index=True)
+                        
+                        # Create quarterly chart
+                        fig_quarterly = px.bar(
+                            all_quarterly,
+                            x='quarter_label',
+                            y='unrealized_pnl',
+                            color='ticker',
+                            title="Quarterly Absolute Gains by Stock (1-Year Buy Transactions)",
+                            labels={
+                                'quarter_label': 'Quarter',
+                                'unrealized_pnl': 'Absolute Gain (₹)',
+                                'ticker': 'Stock Ticker'
+                            },
+                            hover_data=['stock_name', 'invested_amount', 'current_value'],
+                            barmode='group'
+                        )
+                        
+                        fig_quarterly.update_layout(
+                            xaxis_title="Quarter",
+                            yaxis_title="Absolute Gain (₹)",
+                            legend_title="Stock Ticker",
+                            height=500
+                        )
+                        
+                        fig_quarterly.update_xaxes(tickangle=45)
+                        st.plotly_chart(fig_quarterly, width='stretch')
+                        
+                        # Add quarterly summary table
+                        st.subheader("📊 Quarterly Summary Table")
+                        
+                        # Create summary by quarter
+                        quarterly_summary = all_quarterly.groupby('quarter_label').agg({
+                            'unrealized_pnl': 'sum',
+                            'invested_amount': 'sum',
+                            'current_value': 'sum',
+                            'ticker': 'count'
+                        }).reset_index()
+                        
+                        quarterly_summary.columns = ['Quarter', 'Total Gain (₹)', 'Total Invested (₹)', 'Total Current Value (₹)', 'Number of Stocks']
+                        quarterly_summary['Return %'] = (quarterly_summary['Total Gain (₹)'] / quarterly_summary['Total Invested (₹)'] * 100).round(2)
+                        
+                        # Display quarterly summary
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.dataframe(
+                                quarterly_summary,
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                        
+                        with col2:
+                            # Best performing quarter
+                            best_quarter = quarterly_summary.loc[quarterly_summary['Total Gain (₹)'].idxmax()]
+                            worst_quarter = quarterly_summary.loc[quarterly_summary['Total Gain (₹)'].idxmin()]
+                            
+                            st.metric(
+                                "Best Performing Quarter",
+                                best_quarter['Quarter'],
+                                f"₹{best_quarter['Total Gain (₹)']:,.2f} gain"
+                            )
+                            
+                            st.metric(
+                                "Worst Performing Quarter",
+                                worst_quarter['Quarter'],
+                                f"₹{worst_quarter['Total Gain (₹)']:,.2f} gain"
+                            )
+                            
+                            st.metric(
+                                "Average Quarterly Return",
+                                f"{quarterly_summary['Return %'].mean():.2f}%",
+                                f"Across {len(quarterly_summary)} quarters"
+                            )
+                    else:
+                        st.info("No quarterly data available for analysis")
+                        
+                except Exception as e:
+                    st.warning(f"Could not generate quarterly analysis: {str(e)}")
+                    st.info("This might be due to date format issues or insufficient data")
+                
                 # Add comprehensive charts for sector and channel analysis
                 if not stock_buys.empty:
                     st.subheader("📊 Sector & Channel Analysis (1-Year Buy Transactions)")
@@ -2640,10 +2756,35 @@ class PortfolioAnalytics:
             - If price is missing, the system will fetch historical prices automatically
             """)
             
-            # Close button
-            if st.button("✖️ Close Sample Format", type="secondary", key="close_files_sample"):
-                st.session_state.show_sample_csv_files = False
-                st.rerun()
+            # Action buttons
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col1:
+                if st.button("✖️ Close Sample Format", type="secondary", key="close_files_sample"):
+                    st.session_state.show_sample_csv_files = False
+                    st.rerun()
+            
+            with col2:
+                # Create and download sample CSV
+                sample_data = {
+                    'date': ['2024-01-15', '2024-01-20', '2024-02-01'],
+                    'ticker': ['RELIANCE', '120828', 'TCS'],
+                    'quantity': [100, 500, 50],
+                    'transaction_type': ['buy', 'buy', 'sell'],
+                    'price': [2500.50, 45.25, 3800.00],
+                    'stock_name': ['Reliance Industries', 'ICICI Prudential Technology Fund', 'Tata Consultancy Services'],
+                    'sector': ['Oil & Gas', 'Technology', 'Technology'],
+                    'channel': ['Direct', 'Online', 'Broker']
+                }
+                sample_df = pd.DataFrame(sample_data)
+                csv = sample_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Sample CSV",
+                    data=csv,
+                    file_name="sample_investment_portfolio.csv",
+                    mime="text/csv",
+                    type="primary",
+                    key="download_files_sample"
+                )
             
             st.markdown("---")
         
