@@ -1030,36 +1030,135 @@ class PortfolioAnalytics:
         
         st.plotly_chart(fig_pnl, use_container_width=True)
         
-        # P&L distribution
-        st.subheader("📈 P&L Distribution")
+
         
-        fig_distribution = px.histogram(
-            pnl_summary,
-            x='unrealized_pnl',
-            nbins=20,
-            title="Distribution of P&L",
-            labels={'unrealized_pnl': 'Unrealized P&L (₹)', 'y': 'Count'}
-        )
+        # P&L by Sector and Channel
+        st.subheader("🏦 P&L by Sector & Channel")
         
-        st.plotly_chart(fig_distribution, use_container_width=True)
+        # Ensure sector and channel information is available
+        if 'sector' not in df.columns or df['sector'].isna().all():
+            # Get sectors from live prices data
+            sectors = self.session_state.sectors if hasattr(self.session_state, 'sectors') else {}
+            df['sector'] = df['ticker'].map(sectors).fillna('Unknown')
         
-        # P&L by asset type
-        st.subheader("🏦 P&L by Asset Type")
+        if 'channel' not in df.columns or df['channel'].isna().all():
+            # Try to get channel from file records if available
+            try:
+                user_id = self.session_state.user_id
+                file_records = get_file_records_supabase(user_id)
+                
+                if file_records:
+                    # Create a mapping of ticker to channel based on file records
+                    ticker_to_channel = {}
+                    for record in file_records:
+                        if 'filename' in record and 'channel' in record:
+                            channel_name = record['channel'] if record['channel'] else record['filename'].replace('.csv', '').replace('_', ' ')
+                            # Get transactions for this file and map tickers to channel
+                            file_transactions = get_transactions_supabase(user_id=user_id, file_id=record.get('id'))
+                            if file_transactions:
+                                for trans in file_transactions:
+                                    ticker_to_channel[trans['ticker']] = channel_name
+                    
+                    # Add channel information to dataframe
+                    df['channel'] = df['ticker'].map(ticker_to_channel).fillna('Unknown')
+            except Exception as e:
+                st.warning(f"Could not fetch channel information: {e}")
+                df['channel'] = 'Unknown'
         
-        df['asset_type'] = df['ticker'].apply(
-            lambda x: 'Mutual Fund' if x.startswith('MF_') else 'Stock'
-        )
+        # P&L by Sector
+        st.subheader("🏭 P&L by Sector")
+        pnl_by_sector = df.groupby('sector')['unrealized_pnl'].sum().reset_index()
+        pnl_by_sector = pnl_by_sector.sort_values('unrealized_pnl', ascending=False)
         
-        pnl_by_type = df.groupby('asset_type')['unrealized_pnl'].sum()
+        if not pnl_by_sector.empty:
+            fig_sector_pnl = px.bar(
+                pnl_by_sector,
+                x='sector',
+                y='unrealized_pnl',
+                title="P&L by Sector",
+                labels={'sector': 'Sector', 'unrealized_pnl': 'Total P&L (₹)'},
+                color='unrealized_pnl',
+                color_continuous_scale='RdYlGn'
+            )
+            fig_sector_pnl.update_xaxes(tickangle=45)
+            st.plotly_chart(fig_sector_pnl, use_container_width=True)
+            
+            # Sector P&L summary
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                best_sector = pnl_by_sector.loc[pnl_by_sector['unrealized_pnl'].idxmax()]
+                st.metric("Best Sector", best_sector['sector'], delta=f"₹{best_sector['unrealized_pnl']:,.2f}")
+            with col2:
+                worst_sector = pnl_by_sector.loc[pnl_by_sector['unrealized_pnl'].idxmin()]
+                st.metric("Worst Sector", worst_sector['sector'], delta=f"₹{worst_sector['unrealized_pnl']:,.2f}")
+            with col3:
+                total_sectors = len(pnl_by_sector)
+                st.metric("Total Sectors", total_sectors)
+        else:
+            st.info("No sector data available for P&L analysis")
         
-        fig_type_pnl = px.bar(
-            x=pnl_by_type.index,
-            y=pnl_by_type.values,
-            title="P&L by Asset Type",
-            labels={'x': 'Asset Type', 'y': 'Total P&L (₹)'}
-        )
+        # P&L by Channel
+        st.subheader("📊 P&L by Channel")
+        pnl_by_channel = df.groupby('channel')['unrealized_pnl'].sum().reset_index()
+        pnl_by_channel = pnl_by_channel.sort_values('unrealized_pnl', ascending=False)
         
-        st.plotly_chart(fig_type_pnl, use_container_width=True)
+        if not pnl_by_channel.empty:
+            fig_channel_pnl = px.bar(
+                pnl_by_channel,
+                x='channel',
+                y='unrealized_pnl',
+                title="P&L by Investment Channel",
+                labels={'channel': 'Channel', 'unrealized_pnl': 'Total P&L (₹)'},
+                color='unrealized_pnl',
+                color_continuous_scale='RdYlGn'
+            )
+            fig_channel_pnl.update_xaxes(tickangle=45)
+            st.plotly_chart(fig_channel_pnl, use_container_width=True)
+            
+            # Channel P&L summary
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                best_channel = pnl_by_channel.loc[pnl_by_channel['unrealized_pnl'].idxmax()]
+                st.metric("Best Channel", best_channel['channel'], delta=f"₹{best_channel['unrealized_pnl']:,.2f}")
+            with col2:
+                worst_channel = pnl_by_channel.loc[pnl_by_channel['unrealized_pnl'].idxmin()]
+                st.metric("Worst Channel", worst_channel['channel'], delta=f"₹{worst_channel['unrealized_pnl']:,.2f}")
+            with col3:
+                total_channels = len(pnl_by_channel)
+                st.metric("Total Channels", total_channels)
+        else:
+            st.info("No channel data available for P&L analysis")
+        
+        # Combined Sector-Channel P&L Analysis
+        st.subheader("🔗 Combined Sector-Channel P&L Analysis")
+        combined_pnl = df.groupby(['sector', 'channel'])['unrealized_pnl'].sum().reset_index()
+        combined_pnl = combined_pnl.sort_values('unrealized_pnl', ascending=False)
+        
+        if not combined_pnl.empty:
+            # Create a heatmap-like visualization
+            fig_combined = px.bar(
+                combined_pnl,
+                x='sector',
+                y='unrealized_pnl',
+                color='channel',
+                title="P&L by Sector and Channel Combination",
+                labels={'sector': 'Sector', 'unrealized_pnl': 'Total P&L (₹)', 'channel': 'Channel'},
+                barmode='group'
+            )
+            fig_combined.update_xaxes(tickangle=45)
+            st.plotly_chart(fig_combined, use_container_width=True)
+            
+            # Combined summary table
+            combined_pnl['pnl_formatted'] = combined_pnl['unrealized_pnl'].apply(lambda x: f"₹{x:,.2f}")
+            combined_pnl['percentage'] = (combined_pnl['unrealized_pnl'] / combined_pnl['unrealized_pnl'].abs().sum() * 100).apply(lambda x: f"{x:.2f}%")
+            
+            st.dataframe(
+                combined_pnl[['sector', 'channel', 'pnl_formatted', 'percentage']],
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No combined sector-channel data available for P&L analysis")
         
         # Detailed P&L table
         st.subheader("📋 Detailed P&L Table")
@@ -1109,43 +1208,36 @@ class PortfolioAnalytics:
             if files:
                 files_df = pd.DataFrame(files)
                 
-                # Check what columns are actually available
-                st.write(f"Available columns: {list(files_df.columns)}")
+                # Show available columns for debugging
+                st.info(f"Available columns: {list(files_df.columns)}")
                 
-                # Handle different possible date column names
-                date_column = None
-                for col in ['upload_date', 'created_at', 'date', 'timestamp']:
-                    if col in files_df.columns:
-                        date_column = col
-                        break
+                # Select display columns based on available data
+                display_columns = ['filename']
+                if 'customer_name' in files_df.columns:
+                    display_columns.append('customer_name')
+                if 'processed_at' in files_df.columns:
+                    display_columns.append('processed_at')
+                if 'status' in files_df.columns:
+                    display_columns.append('status')
+                if 'file_path' in files_df.columns:
+                    display_columns.append('file_path')
                 
-                if date_column:
-                    try:
-                        files_df[date_column] = pd.to_datetime(files_df[date_column])
-                        files_df = files_df.sort_values(date_column, ascending=False)
-                        
-                        # Show available columns in the dataframe
-                        display_columns = ['filename']
-                        if date_column in files_df.columns:
-                            display_columns.append(date_column)
-                        if 'status' in files_df.columns:
-                            display_columns.append('status')
-                        if 'records_processed' in files_df.columns:
-                            display_columns.append('records_processed')
-                        if 'file_path' in files_df.columns:
-                            display_columns.append('file_path')
-                        
-                        st.dataframe(
-                            files_df[display_columns],
-                            use_container_width=True
-                        )
-                    except Exception as date_error:
-                        st.warning(f"Could not process date column '{date_column}': {date_error}")
-                        # Show without date sorting
-                        st.dataframe(files_df, use_container_width=True)
-                else:
-                    st.warning("No date column found in file records")
-                    st.dataframe(files_df, use_container_width=True)
+                # Display file records with available columns
+                st.dataframe(files_df[display_columns], use_container_width=True)
+                
+                # Show file summary
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Files", len(files_df))
+                with col2:
+                    if 'status' in files_df.columns:
+                        processed_count = len(files_df[files_df['status'] == 'processed'])
+                        st.metric("Processed Files", processed_count)
+                with col3:
+                    if 'processed_at' in files_df.columns:
+                        recent_files = len(files_df[files_df['processed_at'].notna()])
+                        st.metric("Recent Files", recent_files)
+                
             else:
                 st.info("No files uploaded yet")
                 
