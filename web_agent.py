@@ -1714,8 +1714,19 @@ class PortfolioAnalytics:
                         
                         # Sort quarters chronologically for proper x-axis ordering
                         # Create a sortable quarter key for chronological ordering
-                        all_quarterly['sort_key'] = all_quarterly['quarter_label'].str.extract(r'(\d{4}) Q(\d)')
-                        all_quarterly['sort_key'] = all_quarterly['sort_key'].apply(lambda x: int(x[0]) * 10 + int(x[1]) if len(x) == 2 else 0)
+                        def create_sort_key(quarter_label):
+                            try:
+                                # Extract year and quarter from "2024 Q1" format
+                                parts = quarter_label.split(' Q')
+                                if len(parts) == 2:
+                                    year = int(parts[0])
+                                    quarter = int(parts[1])
+                                    return year * 10 + quarter
+                                return 0
+                            except:
+                                return 0
+                        
+                        all_quarterly['sort_key'] = all_quarterly['quarter_label'].apply(create_sort_key)
                         all_quarterly = all_quarterly.sort_values('sort_key')
                         
                         # Create quarterly chart with chronologically ordered x-axis
@@ -1762,8 +1773,7 @@ class PortfolioAnalytics:
                         }).reset_index()
                         
                         # Sort summary chronologically
-                        quarterly_summary['sort_key'] = quarterly_summary['quarter_label'].str.extract(r'(\d{4}) Q(\d)')
-                        quarterly_summary['sort_key'] = quarterly_summary['sort_key'].apply(lambda x: int(x[0]) * 10 + int(x[1]) if len(x) == 2 else 0)
+                        quarterly_summary['sort_key'] = quarterly_summary['quarter_label'].apply(create_sort_key)
                         quarterly_summary = quarterly_summary.sort_values('sort_key')
                         
                         quarterly_summary.columns = ['Quarter', 'Total Gain (₹)', 'Total Invested (₹)', 'Total Current Value (₹)', 'Number of Stocks']
