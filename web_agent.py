@@ -1478,7 +1478,7 @@ class PortfolioAnalytics:
             col1, col2 = st.columns(2)
             with col1:
                         best_sector = sector_performance.iloc[0]
-                        best_sector_arrow = "↗️" if best_sector['pnl_percentage'] > 0 else "↘️" if best_sector['pnl_percentage'] < 0 else "➡️"
+                        best_sector_arrow = "🔼" if best_sector['pnl_percentage'] > 0 else "🔽" if best_sector['pnl_percentage'] < 0 else "➖"
                         best_sector_color = "normal" if best_sector['pnl_percentage'] > 0 else "inverse"
                         st.metric(
                             "Best Performing Sector", 
@@ -1490,7 +1490,7 @@ class PortfolioAnalytics:
             with col2:
                 if len(sector_performance) > 1:
                     worst_sector = sector_performance.iloc[-1]
-                    worst_sector_arrow = "↗️" if worst_sector['pnl_percentage'] > 0 else "↘️" if worst_sector['pnl_percentage'] < 0 else "➡️"
+                    worst_sector_arrow = "🔼" if worst_sector['pnl_percentage'] > 0 else "🔽" if worst_sector['pnl_percentage'] < 0 else "➖"
                     worst_sector_color = "normal" if worst_sector['pnl_percentage'] > 0 else "inverse"
                     st.metric(
                         "Worst Performing Sector", 
@@ -1514,7 +1514,7 @@ class PortfolioAnalytics:
                     col1, col2 = st.columns(2)
                     with col1:
                         best_channel = channel_performance.iloc[0]
-                        best_channel_arrow = "↗️" if best_channel['pnl_percentage'] > 0 else "↘️" if best_channel['pnl_percentage'] < 0 else "➡️"
+                        best_channel_arrow = "🔼" if best_channel['pnl_percentage'] > 0 else "🔽" if best_channel['pnl_percentage'] < 0 else "➖"
                         best_channel_color = "normal" if best_channel['pnl_percentage'] > 0 else "inverse"
                         st.metric(
                             "Best Performing Channel", 
@@ -1526,7 +1526,7 @@ class PortfolioAnalytics:
                     with col2:
                         if len(channel_performance) > 1:
                             worst_channel = channel_performance.iloc[-1]
-                            worst_channel_arrow = "↗️" if worst_channel['pnl_percentage'] > 0 else "↘️" if worst_channel['pnl_percentage'] < 0 else "➡️"
+                            worst_channel_arrow = "🔼" if worst_channel['pnl_percentage'] > 0 else "🔽" if worst_channel['pnl_percentage'] < 0 else "➖"
                             worst_channel_color = "normal" if worst_channel['pnl_percentage'] > 0 else "inverse"
                             st.metric(
                                 "Worst Performing Channel", 
@@ -2680,7 +2680,7 @@ class PortfolioAnalytics:
             with col1:
                 best_sector = pnl_by_sector.loc[pnl_by_sector['unrealized_pnl'].idxmax()]
                 best_pnl = best_sector['unrealized_pnl']
-                best_arrow = "🔼" if best_pnl > 0 else "🔽" if best_pnl < 0 else "➡️"
+                best_arrow = "🔼" if best_pnl > 0 else "🔽" if best_pnl < 0 else "➖"
                 best_color = "normal" if best_pnl > 0 else "inverse"
                 st.metric(
                     "Best Sector", 
@@ -2691,8 +2691,8 @@ class PortfolioAnalytics:
             with col2:
                 worst_sector = pnl_by_sector.loc[pnl_by_sector['unrealized_pnl'].idxmin()]
                 worst_pnl = worst_sector['unrealized_pnl']
-                worst_arrow = "🔼" if worst_pnl > 0 else "🔽" if worst_pnl < 0 else "➡️"
-                worst_color = "normal" if worst_pnl > 0 else "➡️"
+                worst_arrow = "🔼" if worst_pnl > 0 else "🔽" if worst_pnl < 0 else "➖"
+                worst_color = "normal" if worst_pnl > 0 else "inverse"
                 st.metric(
                     "Worst Sector", 
                     f"{worst_arrow} {worst_sector['sector']}", 
@@ -2728,7 +2728,7 @@ class PortfolioAnalytics:
             with col1:
                 best_channel = pnl_by_channel.loc[pnl_by_channel['unrealized_pnl'].idxmax()]
                 best_pnl = best_channel['unrealized_pnl']
-                best_arrow = "🔼" if best_pnl > 0 else "🔽" if best_pnl < 0 else "➡️"
+                best_arrow = "🔼" if best_pnl > 0 else "🔽" if best_pnl < 0 else "➖"
                 best_color = "normal" if best_pnl > 0 else "inverse"
                 st.metric(
                     "Best Channel", 
@@ -2739,7 +2739,7 @@ class PortfolioAnalytics:
             with col2:
                 worst_channel = pnl_by_channel.loc[pnl_by_channel['unrealized_pnl'].idxmin()]
                 worst_pnl = worst_channel['unrealized_pnl']
-                worst_arrow = "🔼" if worst_pnl > 0 else "🔽" if worst_pnl < 0 else "➡️"
+                worst_arrow = "🔼" if worst_pnl > 0 else "🔽" if worst_pnl < 0 else "➖"
                 worst_color = "normal" if worst_pnl > 0 else "inverse"
                 st.metric(
                     "Worst Channel", 
