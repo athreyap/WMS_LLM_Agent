@@ -1415,7 +1415,7 @@ class PortfolioAnalytics:
              
             if not stock_buys.empty:
                 # Group by ticker and calculate performance metrics
-                 stock_performance = stock_buys.groupby('ticker').agg({
+                stock_performance = stock_buys.groupby('ticker').agg({
                     'invested_amount': 'sum',
                     'current_value': 'sum',
                     'unrealized_pnl': 'sum',
@@ -1424,11 +1424,11 @@ class PortfolioAnalytics:
                 }).reset_index()
                 
                 # Calculate additional metrics
-                 stock_performance['pnl_percentage'] = (stock_performance['unrealized_pnl'] / stock_performance['invested_amount']) * 100
-                 stock_performance['avg_price'] = stock_performance['invested_amount'] / stock_performance['quantity']
+                stock_performance['pnl_percentage'] = (stock_performance['unrealized_pnl'] / stock_performance['invested_amount']) * 100
+                stock_performance['avg_price'] = stock_performance['invested_amount'] / stock_performance['quantity']
                  
                  # Add stock ratings based on performance
-                 def get_stock_rating(pnl_pct):
+                def get_stock_rating(pnl_pct):
                      if pnl_pct >= 20:
                          return '⭐⭐⭐ Excellent'
                      elif pnl_pct >= 10:
@@ -1440,19 +1440,19 @@ class PortfolioAnalytics:
                      else:
                          return '❌ Very Poor'
                  
-                 stock_performance['rating'] = stock_performance['pnl_percentage'].apply(get_stock_rating)
-                 stock_performance['rating_color'] = stock_performance['pnl_percentage'].apply(
+                stock_performance['rating'] = stock_performance['pnl_percentage'].apply(get_stock_rating)
+                stock_performance['rating_color'] = stock_performance['pnl_percentage'].apply(
                      lambda x: 'green' if x >= 10 else 'orange' if x >= 0 else 'red'
                  )
                  
                  # Sort by P&L percentage
-                 stock_performance = stock_performance.sort_values('pnl_percentage', ascending=False)
+                stock_performance = stock_performance.sort_values('pnl_percentage', ascending=False)
                  
                  # Display top performers
-                 st.subheader("🏆 Top Performers (1-Year Buy Transactions)")
+                st.subheader("🏆 Top Performers (1-Year Buy Transactions)")
                  
                  # Create performance chart
-                 fig_stock_performance = px.bar(
+                fig_stock_performance = px.bar(
                      stock_performance.head(10),
                      x='ticker',
                      y='pnl_percentage',
@@ -1462,37 +1462,37 @@ class PortfolioAnalytics:
                      labels={'pnl_percentage': 'Return %', 'ticker': 'Stock Ticker'},
                      hover_data=['invested_amount', 'unrealized_pnl', 'rating']
                  )
-                 fig_stock_performance.update_xaxes(tickangle=45)
-                 st.plotly_chart(fig_stock_performance, width='stretch')
+                fig_stock_performance.update_xaxes(tickangle=45)
+                st.plotly_chart(fig_stock_performance, width='stretch')
                  
-                 # Performance summary metrics
-                 col1, col2, col3, col4 = st.columns(4)
-                 with col1:
-                     total_stocks = len(stock_performance)
-                     st.metric("Total Stocks Analyzed", total_stocks)
-                 
-                 with col2:
-                     profitable_stocks = len(stock_performance[stock_performance['pnl_percentage'] > 0])
-                     st.metric("Profitable Stocks", profitable_stocks, delta=f"{profitable_stocks}/{total_stocks}")
-        
-                 with col3:
-                     avg_return = stock_performance['pnl_percentage'].mean()
-                     avg_arrow = "↗️" if avg_return > 0 else "↘️" if avg_return < 0 else "➡️"
-                     avg_color = "normal" if avg_return > 0 else "inverse"
-                     st.metric("Average Return", f"{avg_arrow} {avg_return:.2f}%", delta_color=avg_color)
-        
-                 with col4:
-                     best_stock = stock_performance.iloc[0]
-                     best_return = best_stock['pnl_percentage']
-                     best_arrow = "↗️" if best_return > 0 else "↘️" if best_return < 0 else "➡️"
-                     best_color = "normal" if best_return > 0 else "inverse"
-                     st.metric("Best Performer", f"{best_arrow} {best_stock['ticker']}", delta=f"{best_return:.2f}%", delta_color=best_color)
+                # Performance summary metrics
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    total_stocks = len(stock_performance)
+                    st.metric("Total Stocks Analyzed", total_stocks)
+                
+                with col2:
+                    profitable_stocks = len(stock_performance[stock_performance['pnl_percentage'] > 0])
+                    st.metric("Profitable Stocks", profitable_stocks, delta=f"{profitable_stocks}/{total_stocks}")
+                
+                with col3:
+                    avg_return = stock_performance['pnl_percentage'].mean()
+                    avg_arrow = "↗️" if avg_return > 0 else "↘️" if avg_return < 0 else "➡️"
+                    avg_color = "normal" if avg_return > 0 else "inverse"
+                    st.metric("Average Return", f"{avg_arrow} {avg_return:.2f}%", delta_color=avg_color)
+                
+                with col4:
+                    best_stock = stock_performance.iloc[0]
+                    best_return = best_stock['pnl_percentage']
+                    best_arrow = "↗️" if best_return > 0 else "↘️" if best_return < 0 else "➡️"
+                    best_color = "normal" if best_return > 0 else "inverse"
+                    st.metric("Best Performer", f"{best_arrow} {best_stock['ticker']}", delta=f"{best_return:.2f}%", delta_color=best_color)
                  
                  # Best Performing Sector and Channel for 1-Year Buy Transactions
-                 st.subheader("🏆 Best Performing Sector & Channel (1-Year Buy Transactions)")
+                st.subheader("🏆 Best Performing Sector & Channel (1-Year Buy Transactions)")
                  
                  # Sector Performance for 1-year buy transactions
-                 if 'sector' in stock_buys.columns and not stock_buys['sector'].isna().all():
+                if 'sector' in stock_buys.columns and not stock_buys['sector'].isna().all():
                      sector_perf_1y = stock_buys.groupby('sector').agg({
                          'invested_amount': 'sum',
                          'current_value': 'sum',
@@ -1528,7 +1528,7 @@ class PortfolioAnalytics:
                                  )
                  
                  # Channel Performance for 1-year buy transactions
-                 if 'channel' in stock_buys.columns and not stock_buys['channel'].isna().all():
+                if 'channel' in stock_buys.columns and not stock_buys['channel'].isna().all():
                      channel_perf_1y = stock_buys.groupby('channel').agg({
                          'invested_amount': 'sum',
                          'current_value': 'sum',
@@ -1564,10 +1564,10 @@ class PortfolioAnalytics:
                                  )
                  
                  # Quarterly Performance Analysis
-                 st.subheader("📅 Quarterly Performance Analysis")
-                 st.info("Shows how each stock has performed over each quarter since purchase until today")
+                st.subheader("📅 Quarterly Performance Analysis")
+                st.info("Shows how each stock has performed over each quarter since purchase until today")
                  
-                 try:
+                try:
                      # Create quarterly analysis for each stock
                      quarterly_performance = []
                      
@@ -1728,15 +1728,15 @@ class PortfolioAnalytics:
                      else:
                          st.info("No quarterly performance data available")
                          
-                 except Exception as e:
+                except Exception as e:
                      st.error(f"Error generating quarterly analysis: {e}")
                      st.info("This feature requires valid date and transaction data")
                  
                  # Rating distribution
-                 st.subheader("📊 Performance Rating Distribution")
-                 rating_counts = stock_performance['rating'].value_counts()
+                st.subheader("📊 Performance Rating Distribution")
+                rating_counts = stock_performance['rating'].value_counts()
                  
-                 if not rating_counts.empty:
+                if not rating_counts.empty:
                      fig_rating_dist = px.pie(
                          values=rating_counts.values,
                          names=rating_counts.index,
@@ -1752,34 +1752,34 @@ class PortfolioAnalytics:
                      st.plotly_chart(fig_rating_dist, width='stretch')
                  
                  # Detailed stock performance table
-                 st.subheader("📋 Detailed Stock Performance Table")
+                st.subheader("📋 Detailed Stock Performance Table")
                  
                  # Format the table for display
-                 display_performance = stock_performance.copy()
-                 display_performance['invested_amount_formatted'] = display_performance['invested_amount'].apply(lambda x: f"₹{x:,.2f}")
-                 display_performance['current_value_formatted'] = display_performance['current_value'].apply(lambda x: f"₹{x:,.2f}")
-                 display_performance['unrealized_pnl_formatted'] = display_performance['unrealized_pnl'].apply(lambda x: f"₹{x:,.2f}")
-                 display_performance['pnl_percentage_formatted'] = display_performance['pnl_percentage'].apply(lambda x: f"{x:.2f}%")
-                 display_performance['avg_price_formatted'] = display_performance['avg_price'].apply(lambda x: f"₹{x:.2f}")
+                display_performance = stock_performance.copy()
+                display_performance['invested_amount_formatted'] = display_performance['invested_amount'].apply(lambda x: f"₹{x:,.2f}")
+                display_performance['current_value_formatted'] = display_performance['current_value'].apply(lambda x: f"₹{x:,.2f}")
+                display_performance['unrealized_pnl_formatted'] = display_performance['unrealized_pnl'].apply(lambda x: f"₹{x:,.2f}")
+                display_performance['pnl_percentage_formatted'] = display_performance['pnl_percentage'].apply(lambda x: f"{x:.2f}%")
+                display_performance['avg_price_formatted'] = display_performance['avg_price'].apply(lambda x: f"₹{x:.2f}")
                  
                  # Select columns for display
-                 display_columns = [
+                display_columns = [
                      'ticker', 'rating', 'pnl_percentage_formatted', 'unrealized_pnl_formatted',
                      'invested_amount_formatted', 'current_value_formatted', 'avg_price_formatted'
                  ]
                  
-                 st.dataframe(
+                st.dataframe(
                      display_performance[display_columns],
                      width='stretch',
                      hide_index=True
                  )
                  
                  # Performance insights
-                 st.subheader("💡 Performance Insights")
+                st.subheader("💡 Performance Insights")
         
-                 col1, col2 = st.columns(2)
+                col1, col2 = st.columns(2)
         
-                 with col1:
+                with col1:
                      st.markdown("**📈 Positive Insights:**")
                      if len(stock_performance[stock_performance['pnl_percentage'] > 0]) > 0:
                          st.markdown(f"• {len(stock_performance[stock_performance['pnl_percentage'] > 0])} stocks are profitable")
@@ -1788,7 +1788,7 @@ class PortfolioAnalytics:
                      else:
                          st.markdown("• No stocks are currently profitable")
         
-                 with col2:
+                with col2:
                      st.markdown("**📉 Areas of Concern:**")
                      if len(stock_performance[stock_performance['pnl_percentage'] < 0]) > 0:
                          st.markdown(f"• {len(stock_performance[stock_performance['pnl_percentage'] < 0])} stocks are at a loss")
@@ -1797,10 +1797,9 @@ class PortfolioAnalytics:
                          st.markdown(f"• Total unrealized loss: ₹{stock_performance[stock_performance['pnl_percentage'] < 0]['unrealized_pnl'].sum():,.2f}")
                      else:
                          st.markdown("• All stocks are performing well!")
-             
             else:
-                 st.info("No stock buy transactions found in the last 1 year for analysis")
-                 st.info("This analysis requires stocks (not mutual funds) with buy transactions within the last 365 days")
+                st.info("No stock buy transactions found in the last 1 year for analysis")
+                st.info("This analysis requires stocks (not mutual funds) with buy transactions within the last 365 days")
             
         except Exception as e:
             st.error(f"Error processing performance data: {e}")
