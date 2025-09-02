@@ -127,7 +127,7 @@ class WebAgent:
         self.session_state = st.session_state
         self.mftool_client = None
         self.mftool_available = False
-        self._initialize_mftool()
+        # Mftool will be initialized after login, not here
         
         # Initialize other components
         try:
@@ -164,33 +164,50 @@ class WebAgent:
     
     def _initialize_mftool(self):
         """Initialize mftool client for Streamlit Cloud compatibility"""
+        # Check if already initialized
+        if self.mftool_client is not None:
+            return
+        
         try:
             import mftool
             print("🔄 Initializing mftool client...")
             
             # Create mftool instance with proper error handling
             self.mftool_client = mftool.Mftool()
+            print("✅ Mftool instance created successfully")
             
             # Test if mftool is working by trying to get a simple scheme
             try:
+                print("🔍 Testing mftool connectivity with test scheme 120466...")
                 # Try to get a test scheme to verify connectivity
                 test_scheme = self.mftool_client.get_scheme_details("120466")  # Example scheme
                 if test_scheme and 'nav' in test_scheme:
                     self.mftool_available = True
-                    print("✅ Mftool initialized successfully and working")
+                    nav = test_scheme.get('nav', 'N/A')
+                    name = test_scheme.get('scheme_name', 'N/A')
+                    print(f"✅ Mftool initialized successfully and working - Test scheme: {name} (NAV: ₹{nav})")
                 else:
-                    print("⚠️ Mftool initialized but test scheme failed")
+                    print("⚠️ Mftool initialized but test scheme failed - no NAV data")
                     self.mftool_available = False
             except Exception as test_error:
                 print(f"⚠️ Mftool test failed: {test_error}")
+                print(f"⚠️ Error type: {type(test_error).__name__}")
                 self.mftool_available = False
                 
         except ImportError as e:
             print(f"❌ Mftool not available: {e}")
+            print(f"❌ Please ensure mftool is installed: pip install mftool")
             self.mftool_available = False
         except Exception as e:
             print(f"❌ Error initializing mftool: {e}")
+            print(f"❌ Error type: {type(e).__name__}")
             self.mftool_available = False
+    
+    def _ensure_mftool_initialized(self):
+        """Ensure mftool is initialized before use"""
+        if self.mftool_client is None:
+            self._initialize_mftool()
+        return self.mftool_client is not None
     
     def initialize_session_state(self):
         """Initialize Streamlit session state"""
@@ -243,6 +260,10 @@ class WebAgent:
                 self.session_state['user_id'] = user_info['id']
                 self.session_state['user_role'] = user_info['role']
                 self.session_state['folder_path'] = user_info.get('folder_path', '')
+                
+                # Initialize mftool after successful login
+                print("🔄 User authenticated, initializing mftool...")
+                self.initialize_after_login()
             
             return True, "Login successful"
         else:
@@ -2043,6 +2064,15 @@ class WebAgent:
                 # Mftool status display
                 st.sidebar.markdown("---")
                 st.sidebar.markdown("### 🔍 Mftool Status")
+                
+                # Show initialization status
+                if self.mftool_client:
+                    st.sidebar.success("✅ Mftool Ready")
+                elif self.mftool_available:
+                    st.sidebar.info("🔄 Mftool Initializing...")
+                else:
+                    st.sidebar.warning("⚠️ Mftool Not Ready")
+                
                 self.display_mftool_status()
                 
                 # File upload section in sidebar below settings
@@ -2065,6 +2095,11 @@ class WebAgent:
                                 if user_data:
                                     user_id = user_data.get('id')
                                     self.session_state['user_id'] = user_id
+                                    
+                                    # Initialize mftool after user is authenticated
+                                    if not self.mftool_client:
+                                        st.sidebar.info("🔄 Initializing mftool for mutual fund data...")
+                                        self.initialize_after_login()
                         except:
                             pass
                 
@@ -2877,7 +2912,7 @@ class WebAgent:
                     except Exception as e:
                         print(f"⚠️ Mftool historical price failed for {ticker}: {e}")
                         # Try alternative approach for Streamlit Cloud using initialized client
-                        if self.mftool_available and self.mftool_client:
+                        if self._ensure_mftool_initialized():
                             try:
                                 # For historical prices, we'll use a date-based approach
                                 # Get current NAV and apply a small variation based on date
@@ -2894,7 +2929,7 @@ class WebAgent:
                             except Exception as mf_error:
                                 print(f"⚠️ Initialized mftool historical also failed for {ticker}: {mf_error}")
                         else:
-                            print(f"⚠️ Mftool not available for {ticker}")
+                            print(f"⚠️ Mftool initialization failed for {ticker}")
                 
                 # Method 2: Try to get transaction price from database as fallback
                 if not price:
@@ -3255,8 +3290,9 @@ class WebAgent:
     def test_mftool_connectivity(self):
         """Test mftool connectivity and display status"""
         try:
-            if not self.mftool_client:
-                return "❌ Mftool client not initialized"
+            # Ensure mftool is initialized
+            if not self._ensure_mftool_initialized():
+                return "❌ Mftool client initialization failed"
             
             if not self.mftool_available:
                 return "⚠️ Mftool initialized but not working"
@@ -3276,8 +3312,56 @@ class WebAgent:
         except Exception as e:
             return f"❌ Error testing mftool: {str(e)}"
     
+    def check_mftool_installation(self):
+        """Check if mftool is properly installed and accessible"""
+        try:
+            import mftool
+            print("✅ Mftool package is installed")
+            
+            # Check version
+            try:
+                version = mftool.__version__
+                print(f"📦 Mftool version: {version}")
+            except:
+                print("📦 Mftool version: Unknown")
+            
+            # Check if we can create an instance
+            try:
+                test_instance = mftool.Mftool()
+                print("✅ Mftool class can be instantiated")
+                return True
+            except Exception as e:
+                print(f"❌ Mftool instantiation failed: {e}")
+                return False
+                
+        except ImportError as e:
+            print(f"❌ Mftool package not found: {e}")
+            print("💡 To install mftool, run: pip install mftool")
+            return False
+        except Exception as e:
+            print(f"❌ Error checking mftool: {e}")
+            return False
+    
     def display_mftool_status(self):
         """Display mftool status in the UI"""
+        # Check installation first
+        if st.button("📦 Check Mftool Installation"):
+            st.info("🔍 Checking mftool installation...")
+            if self.check_mftool_installation():
+                st.success("✅ Mftool is properly installed!")
+            else:
+                st.error("❌ Mftool installation issues detected!")
+        
+        # Manual initialization button
+        if st.button("🔄 Initialize Mftool"):
+            st.info("🔄 Initializing mftool...")
+            if self._ensure_mftool_initialized():
+                st.success("✅ Mftool initialized successfully!")
+            else:
+                st.error("❌ Mftool initialization failed!")
+            st.rerun()
+        
+        # Test connectivity button
         if st.button("🔍 Test Mftool Status"):
             status = self.test_mftool_connectivity()
             st.info(status)
@@ -3375,6 +3459,34 @@ class WebAgent:
             if st.sidebar.button("❌ Close Debug"):
                 st.session_state['show_debug'] = False
                 st.rerun()
+
+    def initialize_after_login(self):
+        """Initialize components that need to be initialized after login"""
+        try:
+            print("🔄 Initializing components after login...")
+            
+            # Initialize mftool after login
+            if self._ensure_mftool_initialized():
+                print("✅ Mftool initialized successfully after login")
+            else:
+                print("⚠️ Mftool initialization failed after login")
+            
+            # Initialize other components that depend on user session
+            if self.user_file_agent:
+                print("✅ User file agent ready")
+            if self.stock_agent:
+                print("✅ Stock agent ready")
+            
+            print("✅ Post-login initialization complete")
+            
+        except Exception as e:
+            print(f"❌ Error in post-login initialization: {e}")
+    
+    def _ensure_mftool_initialized(self):
+        """Ensure mftool is initialized before use"""
+        if self.mftool_client is None:
+            self._initialize_mftool()
+        return self.mftool_client is not None
 
 # Global web agent instance
 web_agent = WebAgent()
