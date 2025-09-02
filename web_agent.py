@@ -89,6 +89,86 @@ class PortfolioAnalytics:
             st.subheader("📤 Upload Investment Files (Optional)")
             st.info("Upload your CSV transaction files during registration for immediate portfolio analysis")
             
+            # Sample CSV Format Button - Prominent and always visible
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                if st.button("📋 View Sample CSV Format", type="secondary", use_container_width=True):
+                    st.session_state.show_sample_csv = True
+            
+            # Show sample CSV format in a prominent popup-style display
+            if st.session_state.get('show_sample_csv', False):
+                st.markdown("---")
+                st.subheader("📋 Sample CSV Format")
+                st.success("💡 **Prepare your CSV file with the following format:**")
+                
+                # Create a nice formatted display
+                sample_col1, sample_col2 = st.columns([1, 1])
+                
+                with sample_col1:
+                    st.markdown("""
+                    **Required Columns:**
+                    - `date` - Transaction date (YYYY-MM-DD format)
+                    - `ticker` - Stock/Mutual Fund symbol (e.g., RELIANCE, 120828)
+                    - `quantity` - Number of shares/units
+                    - `transaction_type` - Buy or Sell
+                    
+                    **Optional Columns:**
+                    - `price` - Transaction price per share/unit
+                    - `stock_name` - Company/Fund name
+                    - `sector` - Industry sector
+                    - `channel` - Investment platform (e.g., Direct, Broker, Online)
+                    """)
+                
+                with sample_col2:
+                    st.markdown("""
+                    **Example CSV:**
+                    ```csv
+                    date,ticker,quantity,transaction_type,price,stock_name,sector,channel
+                    2024-01-15,RELIANCE,100,buy,2500.50,Reliance Industries,Oil & Gas,Direct
+                    2024-01-20,120828,500,buy,45.25,ICICI Prudential Technology Fund,Technology,Online
+                    2024-02-01,TCS,50,sell,3800.00,Tata Consultancy Services,Technology,Broker
+                    ```
+                    """)
+                
+                st.info("""
+                **Notes:**
+                - For mutual funds, use the numerical scheme code (e.g., 120828)
+                - For stocks, you can include exchange suffix (.NS, .BO) or leave without
+                - Transaction types: buy, sell, purchase, bought, sold, sale
+                - If price is missing, the system will fetch historical prices automatically
+                """)
+                
+                            # Action buttons
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col1:
+                if st.button("✖️ Close Sample Format", type="secondary"):
+                    st.session_state.show_sample_csv = False
+                    st.rerun()
+            
+            with col2:
+                # Create and download sample CSV
+                sample_data = {
+                    'date': ['2024-01-15', '2024-01-20', '2024-02-01'],
+                    'ticker': ['RELIANCE', '120828', 'TCS'],
+                    'quantity': [100, 500, 50],
+                    'transaction_type': ['buy', 'buy', 'sell'],
+                    'price': [2500.50, 45.25, 3800.00],
+                    'stock_name': ['Reliance Industries', 'ICICI Prudential Technology Fund', 'Tata Consultancy Services'],
+                    'sector': ['Oil & Gas', 'Technology', 'Technology'],
+                    'channel': ['Direct', 'Online', 'Broker']
+                }
+                sample_df = pd.DataFrame(sample_data)
+                csv = sample_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Sample CSV",
+                    data=csv,
+                    file_name="sample_investment_portfolio.csv",
+                    mime="text/csv",
+                    type="primary"
+                )
+                
+                st.markdown("---")
+            
             uploaded_files = st.file_uploader(
                 "Choose CSV files",
                 type=['csv'],
@@ -2511,39 +2591,61 @@ class PortfolioAnalytics:
             st.error("No user ID found")
             return
         
-        # Show sample CSV format prominently at the top
-        st.subheader("📋 Sample CSV Format")
-        st.info("💡 **Prepare your CSV file with the following format before uploading:**")
-        
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.markdown("""
-            **Required Columns:**
-            - `date` - Transaction date (YYYY-MM-DD format)
-            - `ticker` - Stock/Mutual Fund symbol (e.g., RELIANCE, 120828)
-            - `quantity` - Number of shares/units
-            - `transaction_type` - Buy or Sell
-            
-            **Optional Columns:**
-            - `price` - Transaction price per share/unit
-            - `stock_name` - Company/Fund name
-            - `sector` - Industry sector
-            - `channel` - Investment platform (e.g., Direct, Broker, Online)
-            """)
-        
+        # Sample CSV Format Button - Prominent and always visible
+        col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.markdown("""
-            **Example:**
-            ```csv
-            date,ticker,quantity,transaction_type,price,stock_name,sector,channel
-            2024-01-15,RELIANCE,100,buy,2500.50,Reliance Industries,Oil & Gas,Direct
-            2024-01-20,120828,500,buy,45.25,ICICI Prudential Technology Fund,Technology,Online
-            2024-02-01,TCS,50,sell,3800.00,Tata Consultancy Services,Technology,Broker
-            ```
-            """)
+            if st.button("📋 View Sample CSV Format", type="secondary", use_container_width=True):
+                st.session_state.show_sample_csv_files = True
         
-        st.markdown("---")
+        # Show sample CSV format in a prominent popup-style display
+        if st.session_state.get('show_sample_csv_files', False):
+            st.markdown("---")
+            st.subheader("📋 Sample CSV Format")
+            st.success("💡 **Prepare your CSV file with the following format:**")
+            
+            # Create a nice formatted display
+            sample_col1, sample_col2 = st.columns([1, 1])
+            
+            with sample_col1:
+                st.markdown("""
+                **Required Columns:**
+                - `date` - Transaction date (YYYY-MM-DD format)
+                - `ticker` - Stock/Mutual Fund symbol (e.g., RELIANCE, 120828)
+                - `quantity` - Number of shares/units
+                - `transaction_type` - Buy or Sell
+                
+                **Optional Columns:**
+                - `price` - Transaction price per share/unit
+                - `stock_name` - Company/Fund name
+                - `sector` - Industry sector
+                - `channel` - Investment platform (e.g., Direct, Broker, Online)
+                """)
+            
+            with sample_col2:
+                st.markdown("""
+                **Example CSV:**
+                ```csv
+                date,ticker,quantity,transaction_type,price,stock_name,sector,channel
+                2024-01-15,RELIANCE,100,buy,2500.50,Reliance Industries,Oil & Gas,Direct
+                2024-01-20,120828,500,buy,45.25,ICICI Prudential Technology Fund,Technology,Online
+                2024-02-01,TCS,50,sell,3800.00,Tata Consultancy Services,Technology,Broker
+                ```
+                """)
+            
+            st.info("""
+            **Notes:**
+            - For mutual funds, use the numerical scheme code (e.g., 120828)
+            - For stocks, you can include exchange suffix (.NS, .BO) or leave without
+            - Transaction types: buy, sell, purchase, bought, sold, sale
+            - If price is missing, the system will fetch historical prices automatically
+            """)
+            
+            # Close button
+            if st.button("✖️ Close Sample Format", type="secondary", key="close_files_sample"):
+                st.session_state.show_sample_csv_files = False
+                st.rerun()
+            
+            st.markdown("---")
         
         # File upload section
         st.subheader("📤 Upload Investment File")
