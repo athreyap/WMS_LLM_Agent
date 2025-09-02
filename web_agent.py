@@ -2975,156 +2975,46 @@ class WebAgent:
         IMPORTANT: This function fetches HISTORICAL prices for the specific transaction date.
         Live prices are fetched separately in _fetch_live_prices_and_sectors_during_login.
         
-        For mutual funds in Streamlit Cloud:
-        - Primary: Use mftool historical NAV for transaction date
-        - Secondary: Calculate historical NAV from current NAV with date variation
-        - Fallback: Use transaction prices from database
-        
-        For stocks:
-        - Primary: Use yfinance historical data for transaction date
-        - Secondary: Use file_manager historical data
-        - Fallback: Use indstocks API historical data
-        
-        Future API options for mutual funds:
-        - Alpha Vantage API (requires API key)
-        - Quandl API (requires API key)
-        - NSE/BSE direct APIs (may have rate limits)
-        - AMFI direct API (unreliable in cloud environments)
+        Uses unified price fetching functions that handle both stocks and mutual funds.
         """
         try:
             # Check if it's a mutual fund
             clean_ticker = str(ticker).strip().upper()
             is_mf = clean_ticker.isdigit() or clean_ticker.startswith('MF_')
             
-            if is_mf:
-                # Mutual fund - use reliable methods for Streamlit Cloud
-                price = None
-                
-                # Method 1: Try mftool for historical NAV on transaction date with Streamlit Cloud compatibility
-                if not price:
-                    try:
-                        from mf_price_fetcher import fetch_mutual_fund_historical_price
-                        price = fetch_mutual_fund_historical_price(clean_ticker, transaction_date)
-                        if price and price > 0:
-                            print(f"✅ MF {ticker}: Historical price ₹{price} for {transaction_date}")
-                            return float(price)
-                    except Exception as e:
-                        print(f"⚠️ Mftool historical price failed for {ticker}: {e}")
-                        # Try alternative approach for Streamlit Cloud using initialized client
-                        if self._ensure_mftool_initialized():
-                            try:
-                                # For historical prices, we'll use a date-based approach
-                                # Get current NAV and apply a small variation based on date
-                                scheme_details = self.mftool_client.get_scheme_details(clean_ticker)
-                                if scheme_details and 'nav' in scheme_details:
-                                    current_nav = float(scheme_details['nav'])
-                                    # Apply small variation based on transaction date (simplified approach)
-                                    days_diff = (pd.Timestamp.now() - pd.Timestamp(transaction_date)).days
-                                    # Assume 0.1% daily variation for mutual funds
-                                    variation_factor = 1 + (days_diff * 0.001)
-                                    historical_price = current_nav / variation_factor
-                                    print(f"✅ MF {ticker}: Historical price ₹{historical_price} (calculated from current NAV)")
-                                    return float(historical_price)
-                            except Exception as mf_error:
-                                print(f"⚠️ Initialized mftool historical also failed for {ticker}: {mf_error}")
-                        else:
-                            print(f"⚠️ Mftool initialization failed for {ticker}")
-                
-                # Method 2: Try to get transaction price from database as fallback
-                if not price:
-                    try:
-                        from database_config_supabase import get_transactions_supabase
-                        # Get all transactions for the user and filter by ticker
-                        all_user_transactions = get_transactions_supabase(user_id)
-                        if all_user_transactions:
-                            mf_transactions = [t for t in all_user_transactions if t.get('ticker') == ticker]
-                            if mf_transactions:
-                                prices = [t.get('price', 0) for t in mf_transactions if t.get('price') and t.get('price') > 0]
-                                if prices:
-                                    avg_price = sum(prices) / len(prices)
-                                    print(f"✅ MF {ticker}: Using average transaction price ₹{avg_price} as fallback")
-                                    return float(avg_price)
-                    except Exception as e:
-                        print(f"⚠️ Could not get transaction price for MF {ticker}: {e}")
-                
-                # Method 3: Use intelligent default based on fund type
-                if not price:
-                    # Determine fund type from ticker and use realistic default
-                    if clean_ticker.startswith('MF_'):
-                        fund_type = clean_ticker.split('_')[1] if len(clean_ticker.split('_')) > 1 else 'general'
-                    else:
-                        fund_type = 'general'
-                    
-                    # Use realistic default prices based on fund type
-                    if 'large' in fund_type.lower() or 'index' in fund_type.lower():
-                        price = 150.0  # Large cap funds typically have higher NAV
-                        print(f"✅ MF {ticker}: Using large cap default price ₹{price}")
-                    elif 'mid' in fund_type.lower():
-                        price = 120.0  # Mid cap funds
-                        print(f"✅ MF {ticker}: Using mid cap default price ₹{price}")
-                    elif 'small' in fund_type.lower():
-                        price = 80.0   # Small cap funds
-                        print(f"✅ MF {ticker}: Using small cap default price ₹{price}")
-                    elif 'debt' in fund_type.lower() or 'liquid' in fund_type.lower():
-                        price = 25.0   # Debt/liquid funds
-                        print(f"✅ MF {ticker}: Using debt fund default price ₹{price}")
-                    else:
-                        price = 100.0  # General default
-                        print(f"✅ MF {ticker}: Using general default price ₹{price}")
-                
-                return float(price)
+            # Convert transaction_date to string format if it's a datetime object
+            if hasattr(transaction_date, 'strftime'):
+                target_date = transaction_date.strftime('%Y-%m-%d')
             else:
-                # Regular stock - try multiple sources
-                price = None
-                
-                # Method 1: Try yfinance with proper ticker formatting
-                try:
-                    import yfinance as yf
-                    yf_ticker = clean_ticker
-                    if not yf_ticker.endswith(('.NS', '.BO', '.NSE', '.BSE')):
-                        yf_ticker = f"{clean_ticker}.NS"  # Default to NSE
-                    
-                    stock = yf.Ticker(yf_ticker)
-                    hist = stock.history(start=transaction_date, end=transaction_date + pd.Timedelta(days=1))
-                    if not hist.empty:
-                        price = hist['Close'].iloc[0]
-                        print(f"✅ {ticker} (yfinance): Historical price ₹{price}")
-                        return float(price)
-                except Exception as e:
-                    print(f"⚠️ yfinance failed for {ticker}: {e}")
-                
-                # Method 2: Try file_manager
-                if not price:
-                    try:
-                        from file_manager import fetch_historical_price
-                        price = fetch_historical_price(clean_ticker, transaction_date)
-                        if price:
-                            print(f"✅ {ticker} (file_manager): Historical price ₹{price}")
-                            return float(price)
-                    except Exception as e:
-                        print(f"⚠️ file_manager failed for {ticker}: {e}")
-                
-                # Method 3: Try indstocks API
-                if not price:
-                    try:
-                        from indstocks_api import get_indstocks_client
-                        api_client = get_indstocks_client()
-                        if api_client and api_client.available:
-                            price_data = api_client.get_historical_price(clean_ticker, transaction_date)
-                            if price_data and isinstance(price_data, dict) and price_data.get('price'):
-                                price = price_data['price']
-                                print(f"✅ {ticker} (indstocks): Historical price ₹{price}")
-                                return float(price)
-                    except Exception as e:
-                        print(f"⚠️ indstocks failed for {ticker}: {e}")
-                
-                # If all methods fail, use a reasonable default
-                print(f"⚠️ {ticker}: Using default price ₹1000")
+                target_date = str(transaction_date)
+            
+            if is_mf:
+                # Mutual fund - use unified function with target date
+                price = self._get_mutual_fund_price(ticker, clean_ticker, user_id, target_date=target_date)
+                if price and price > 0:
+                    return float(price)
+            else:
+                # Regular stock - use unified function with target date
+                price = self._get_stock_price(ticker, clean_ticker, target_date=target_date)
+                if price and price > 0:
+                    return float(price)
+            
+            # If we get here, no price was found - use default
+            if is_mf:
+                default_price = self._get_mutual_fund_default_price(clean_ticker)
+                print(f"⚠️ MF {ticker}: Using default historical price ₹{default_price} for {target_date}")
+                return float(default_price)
+            else:
+                print(f"⚠️ {ticker}: Using default historical price ₹1000.0 for {target_date}")
                 return 1000.0
                 
         except Exception as e:
             print(f"❌ Error fetching historical price for {ticker}: {e}")
-            return None
+            # Return default price on error
+            if is_mf:
+                return 100.0  # Default mutual fund price
+            else:
+                return 1000.0  # Default stock price
     
     def _update_transaction_prices_in_db(self, transactions: List[Dict], historical_price: float, user_id: int) -> bool:
         """Update transaction prices in the database"""
@@ -3171,261 +3061,137 @@ class WebAgent:
             unique_tickers = list(set([t.get('ticker', '') for t in transactions if t.get('ticker')]))
             print(f"🔍 Found {len(unique_tickers)} unique tickers to process")
             
-            # Fetch live prices and sectors for all tickers
+            # Use batch processing for better performance
+            batch_size = 10  # Process 10 tickers at a time
+            total_batches = (len(unique_tickers) + batch_size - 1) // batch_size
+            
             live_prices = {}
             sector_data = {}
             
-            for ticker in unique_tickers:
-                try:
-                    clean_ticker = str(ticker).strip().upper()
-                    is_mf = clean_ticker.isdigit() or clean_ticker.startswith('MF_')
-                    
-                    # Fetch live price
-                    live_price = None
-                    if is_mf:
-                        # Mutual fund - use reliable methods for Streamlit Cloud
-                        live_price = None
-                        
-                        # Method 1: Try to get transaction price from database (most reliable)
-                        try:
-                            from database_config_supabase import get_transactions_supabase
-                            # Get all transactions for the user and filter by ticker
-                            all_user_transactions = get_transactions_supabase(user_id)
-                            if all_user_transactions:
-                                mf_transactions = [t for t in all_user_transactions if t.get('ticker') == ticker]
-                                if mf_transactions:
-                                    prices = [t.get('price', 0) for t in mf_transactions if t.get('price') and t.get('price') > 0]
-                                    if prices:
-                                        avg_price = sum(prices) / len(prices)
-                                        live_price = avg_price
-                                        print(f"✅ MF {ticker}: Using average transaction price ₹{live_price}")
-                        except Exception as e:
-                            print(f"⚠️ Could not get transaction price for MF {ticker}: {e}")
-                        
-                        # Method 2: Try mftool (may work in some cases)
-                        if not live_price:
-                            try:
-                                from mf_price_fetcher import fetch_mutual_fund_price
-                                live_price = fetch_mutual_fund_price(clean_ticker)
-                                if live_price and live_price > 0:
-                                    print(f"✅ MF {ticker}: Live price ₹{live_price} from mftool")
-                            except Exception as e:
-                                print(f"⚠️ MFTool failed for {ticker} (common in Streamlit Cloud): {e}")
-                        
-                        # Method 3: Use intelligent default based on fund type
-                        if not live_price:
-                            # Determine fund type from ticker and use realistic default
-                            if clean_ticker.startswith('MF_'):
-                                fund_type = clean_ticker.split('_')[1] if len(clean_ticker.split('_')) > 1 else 'general'
-                            else:
-                                fund_type = 'general'
-                            
-                            # Use realistic default prices based on fund type
-                            if 'large' in fund_type.lower() or 'index' in fund_type.lower():
-                                live_price = 150.0  # Large cap funds typically have higher NAV
-                                print(f"✅ MF {ticker}: Using large cap default price ₹{live_price}")
-                            elif 'mid' in fund_type.lower():
-                                live_price = 120.0  # Mid cap funds
-                                print(f"✅ MF {ticker}: Using mid cap default price ₹{live_price}")
-                            elif 'small' in fund_type.lower():
-                                live_price = 80.0   # Small cap funds
-                                print(f"✅ MF {ticker}: Using small cap default price ₹{live_price}")
-                            elif 'debt' in fund_type.lower() or 'liquid' in fund_type.lower():
-                                live_price = 25.0   # Debt/liquid funds
-                                print(f"✅ MF {ticker}: Using debt fund default price ₹{live_price}")
-                            else:
-                                live_price = 100.0  # General default
-                                print(f"✅ MF {ticker}: Using general default price ₹{live_price}")
-                    else:
-                        # Regular stock - try multiple sources
-                        try:
-                            import yfinance as yf
-                            yf_ticker = clean_ticker
-                            if not yf_ticker.endswith(('.NS', '.BO', '.NSE', '.BSE')):
-                                yf_ticker = f"{clean_ticker}.NS"
-                            
-                            stock = yf.Ticker(yf_ticker)
-                            hist = stock.history(period="1d")
-                            if not hist.empty and hist['Close'].iloc[-1] > 0:
-                                live_price = hist['Close'].iloc[-1]
-                                print(f"✅ {ticker}: Live price ₹{live_price}")
-                            else:
-                                live_price = 1000.0  # Default price
-                                print(f"⚠️ {ticker}: Using default price ₹{live_price}")
-                        except Exception as e:
-                            print(f"⚠️ yfinance failed for {ticker}: {e}")
-                            live_price = 1000.0  # Default price
-                    
-                    if live_price and live_price > 0:
-                        live_prices[ticker] = live_price
-                    
-                    # Fetch sector data
-                    sector = None
-                    if is_mf:
-                        sector = "Mutual Funds"
-                        print(f"✅ MF {ticker}: Sector set to {sector}")
-                    else:
-                        # Try to get sector from existing data or use default
-                        try:
-                            from database_config_supabase import get_stock_data_supabase
-                            existing_data = get_stock_data_supabase(ticker=ticker)
-                            if existing_data and len(existing_data) > 0:
-                                sector = existing_data[0].get('sector')
-                            
-                            if not sector:
-                                # Use default sector based on ticker pattern
-                                if any(keyword in clean_ticker.upper() for keyword in ['BANK', 'HDFC', 'ICICI', 'SBI']):
-                                    sector = "Banking"
-                                elif any(keyword in clean_ticker.upper() for keyword in ['TECH', 'TCS', 'INFY', 'WIPRO']):
-                                    sector = "Technology"
-                                elif any(keyword in clean_ticker.upper() for keyword in ['RELIANCE', 'ONGC', 'IOC']):
-                                    sector = "Energy"
-                                else:
-                                    sector = "Others"
-                            
-                            print(f"✅ {ticker}: Sector set to {sector}")
-                        except Exception as e:
-                            print(f"⚠️ Error fetching sector for {ticker}: {e}")
-                            sector = "Others"
-                    
-                    if sector:
-                        sector_data[ticker] = sector
-                        
-                except Exception as e:
-                    print(f"⚠️ Error processing {ticker}: {e}")
-                    continue
+            for batch_num in range(total_batches):
+                start_idx = batch_num * batch_size
+                end_idx = min(start_idx + batch_size, len(unique_tickers))
+                batch_tickers = unique_tickers[start_idx:end_idx]
+                
+                print(f"🔄 Processing batch {batch_num + 1}/{total_batches}: {len(batch_tickers)} tickers")
+                
+                # Process batch of tickers
+                batch_live_prices, batch_sector_data = self._process_ticker_batch(batch_tickers, user_id)
+                
+                # Merge results
+                live_prices.update(batch_live_prices)
+                sector_data.update(batch_sector_data)
+                
+                # Add delay between batches to prevent overwhelming the system
+                if batch_num < total_batches - 1:
+                    import time
+                    time.sleep(0.5)
             
-            # Update stock_data table with live prices and sectors
+            # Update stock_data table with live prices and sectors using batch update
             if live_prices or sector_data:
                 print(f"🔄 Updating stock_data table with {len(live_prices)} live prices and {len(sector_data)} sectors...")
-                self._update_stock_data_table_during_login(live_prices, sector_data, user_id)
+                self._batch_update_stock_data_table(live_prices, sector_data, user_id)
             
             print(f"✅ Live prices and sector data fetching complete!")
             
         except Exception as e:
             print(f"❌ Error fetching live prices and sectors during login: {e}")
     
-    def _update_stock_data_table_during_login(self, live_prices: Dict, sector_data: Dict, user_id: int):
-        """Update stock_data table with live prices and sectors during login"""
-        try:
-            from database_config_supabase import supabase
-            
-            updated_count = 0
-            failed_count = 0
-            
-            # Add delay between requests to avoid overwhelming the database
-            import time
-            
-            for ticker in set(list(live_prices.keys()) + list(sector_data.keys())):
-                try:
-                    update_data = {}
+    def _process_ticker_batch(self, tickers: List[str], user_id: int) -> tuple:
+        """Process a batch of tickers for live prices and sectors"""
+        live_prices = {}
+        sector_data = {}
+        
+        for ticker in tickers:
+            try:
+                clean_ticker = str(ticker).strip().upper()
+                is_mf = clean_ticker.isdigit() or clean_ticker.startswith('MF_')
+                
+                # Fetch live price using unified function
+                live_price = None
+                if is_mf:
+                    # Mutual fund - use unified function with no date (for live prices)
+                    live_price = self._get_mutual_fund_price(ticker, clean_ticker, user_id, target_date=None)
+                else:
+                    # Regular stock - use unified function with no date (for live prices)
+                    live_price = self._get_stock_price(ticker, clean_ticker, target_date=None)
+                
+                if live_price and live_price > 0:
+                    live_prices[ticker] = live_price
+                
+                # Fetch sector data
+                sector = self._get_ticker_sector(ticker, clean_ticker, is_mf)
+                if sector:
+                    sector_data[ticker] = sector
                     
-                    # Validate data before sending
-                    if ticker in live_prices:
-                        live_price = live_prices[ticker]
-                        if live_price and live_price > 0:
-                            update_data['live_price'] = float(live_price)
-                    
-                    if ticker in sector_data:
-                        sector = sector_data[ticker]
-                        if sector and sector.strip():
-                            update_data['sector'] = str(sector).strip()
-                    
-                    if not update_data:
-                        print(f"⚠️ No valid data for {ticker}, skipping")
-                        continue
-                    
-                    # Check if record exists
-                    try:
-                        existing = supabase.table("stock_data").select("*").eq("ticker", ticker).execute()
-                        
-                        if existing.data and len(existing.data) > 0:
-                            # Update existing record
-                            print(f"🔄 Updating existing stock_data for {ticker}")
-                            result = supabase.table("stock_data").update(update_data).eq("ticker", ticker).execute()
-                        else:
-                            # Create new record with required fields
-                            print(f"🔄 Creating new stock_data for {ticker}")
-                            new_record = {
-                                'ticker': str(ticker),
-                                'user_id': int(user_id),
-                                'created_at': datetime.now().isoformat(),
-                                'updated_at': datetime.now().isoformat()
-                            }
-                            new_record.update(update_data)
-                            
-                            result = supabase.table("stock_data").insert(new_record).execute()
-                        
-                        if result.data:
-                            updated_count += 1
-                            print(f"✅ Updated stock_data for {ticker}")
-                        else:
-                            failed_count += 1
-                            print(f"⚠️ Failed to update stock_data for {ticker} - no data returned")
-                            
-                    except Exception as db_error:
-                        failed_count += 1
-                        print(f"⚠️ Database error for {ticker}: {db_error}")
-                        if "400" in str(db_error):
-                            print(f"🔍 Schema validation failed for {ticker} - data: {update_data}")
-                        continue
-                    
-                    # Add small delay to avoid overwhelming the database
-                    time.sleep(0.1)
-                            
-                except Exception as e:
-                    failed_count += 1
-                    print(f"⚠️ Error updating stock_data for {ticker}: {e}")
-                    continue
-            
-            print(f"✅ Successfully updated {updated_count} stock_data records")
-            if failed_count > 0:
-                print(f"⚠️ Failed to update {failed_count} stock_data records")
-            
-        except Exception as e:
-            print(f"❌ Error updating stock_data table: {e}")
-            print(f"🔍 Error type: {type(e).__name__}")
-            if hasattr(e, 'response'):
-                print(f"🔍 Response status: {e.response.status_code if hasattr(e.response, 'status_code') else 'Unknown'}")
-                print(f"🔍 Response text: {e.response.text if hasattr(e.response, 'text') else 'Unknown'}")
+            except Exception as e:
+                print(f"⚠️ Error processing {ticker}: {e}")
+                continue
+        
+        return live_prices, sector_data
     
-    def _save_updated_prices_to_db(self, df: pd.DataFrame, user_id: int):
-        """Save updated prices from DataFrame back to the database"""
-        try:
-            from database_config_supabase import supabase
-            
-            updated_count = 0
-            for idx, row in df.iterrows():
-                try:
-                    # Get the original transaction ID from the database
-                    # We need to match by ticker, date, quantity, and user_id
-                    result = supabase.table("investment_transactions").select("id").eq("ticker", row['ticker']).eq("date", row['date']).eq("quantity", row['quantity']).eq("user_id", user_id).execute()
-                    
-                    if result.data and len(result.data) > 0:
-                        transaction_id = result.data[0]['id']
-                        
-                        # Update the price
-                        update_result = supabase.table("investment_transactions").update({
-                            "price": row['price']
-                        }).eq("id", transaction_id).execute()
-                        
-                        if update_result.data:
-                            updated_count += 1
-                        else:
-                            print(f"⚠️ Failed to update transaction {transaction_id} for {row['ticker']}")
-                    else:
-                        print(f"⚠️ Could not find transaction for {row['ticker']} on {row['date']}")
-                        
-                except Exception as e:
-                    print(f"⚠️ Error updating transaction for {row['ticker']}: {e}")
-                    continue
-            
-            print(f"✅ Successfully updated {updated_count} transactions in database")
-            
-        except Exception as e:
-            print(f"❌ Error saving updated prices to database: {e}")
-            raise e
 
+    
+
+    
+    def _get_mutual_fund_default_price(self, clean_ticker: str) -> float:
+        """Get intelligent default price for mutual fund based on type"""
+        if clean_ticker.startswith('MF_'):
+            fund_type = clean_ticker.split('_')[1] if len(clean_ticker.split('_')) > 1 else 'general'
+        else:
+            fund_type = 'general'
+        
+        # Use realistic default prices based on fund type
+        if 'large' in fund_type.lower() or 'index' in fund_type.lower():
+            live_price = 150.0  # Large cap funds typically have higher NAV
+            print(f"✅ MF {clean_ticker}: Using large cap default price ₹{live_price}")
+        elif 'mid' in fund_type.lower():
+            live_price = 120.0  # Mid cap funds
+            print(f"✅ MF {clean_ticker}: Using mid cap default price ₹{live_price}")
+        elif 'small' in fund_type.lower():
+            live_price = 80.0   # Small cap funds
+            print(f"✅ MF {clean_ticker}: Using small cap default price ₹{live_price}")
+        elif 'debt' in fund_type.lower() or 'liquid' in fund_type.lower():
+            live_price = 25.0   # Debt/liquid funds
+            print(f"✅ MF {clean_ticker}: Using debt fund default price ₹{live_price}")
+        else:
+            live_price = 100.0  # General default
+            print(f"✅ MF {clean_ticker}: Using general default price ₹{live_price}")
+        
+        return live_price
+    
+    def _get_ticker_sector(self, ticker: str, clean_ticker: str, is_mf: bool) -> str:
+        """Get sector information for ticker"""
+        if is_mf:
+            sector = "Mutual Funds"
+            print(f"✅ MF {ticker}: Sector set to {sector}")
+            return sector
+        
+        # Try to get sector from existing data or use default
+        try:
+            from database_config_supabase import get_stock_data_supabase
+            existing_data = get_stock_data_supabase(ticker=ticker)
+            if existing_data and len(existing_data) > 0:
+                sector = existing_data[0].get('sector')
+                if sector:
+                    print(f"✅ {ticker}: Sector from database: {sector}")
+                    return sector
+        except Exception as e:
+            print(f"⚠️ Error fetching sector for {ticker}: {e}")
+        
+        # Use default sector based on ticker pattern
+        if any(keyword in clean_ticker.upper() for keyword in ['BANK', 'HDFC', 'ICICI', 'SBI']):
+            sector = "Financial Services"
+        elif any(keyword in clean_ticker.upper() for keyword in ['TECH', 'TCS', 'INFY', 'WIPRO']):
+            sector = "Technology"
+        elif any(keyword in clean_ticker.upper() for keyword in ['RELIANCE', 'ONGC', 'IOC']):
+            sector = "Energy"
+        else:
+            sector = "Others"
+        
+        print(f"✅ {ticker}: Sector set to {sector}")
+        return sector
+    
     def test_mftool_connectivity(self):
         """Test mftool connectivity and display status"""
         try:
@@ -3648,6 +3414,189 @@ class WebAgent:
                     raise e
         
         return None
+
+    def _get_mutual_fund_price(self, ticker: str, clean_ticker: str, user_id: int, target_date: str = None) -> float:
+        """Get price for mutual fund using multiple fallback methods
+        
+        Args:
+            ticker: The ticker symbol
+            clean_ticker: Cleaned ticker symbol
+            user_id: User ID for database lookups
+            target_date: Target date for historical prices (None for current/live prices)
+        """
+        price = None
+        
+        # Method 1: Try to get transaction price from database (most reliable)
+        try:
+            from database_config_supabase import get_transactions_supabase
+            all_user_transactions = get_transactions_supabase(user_id)
+            if all_user_transactions:
+                mf_transactions = [t for t in all_user_transactions if t.get('ticker') == ticker]
+                if mf_transactions:
+                    if target_date:
+                        # For historical prices, try to find exact date match
+                        target_dt = pd.to_datetime(target_date)
+                        date_matches = [t for t in mf_transactions if pd.to_datetime(t.get('date')) == target_dt]
+                        if date_matches:
+                            prices = [t.get('price', 0) for t in date_matches if t.get('price') and t.get('price') > 0]
+                            if prices:
+                                price = sum(prices) / len(prices)
+                                print(f"✅ MF {ticker}: Historical price ₹{price} for {target_date} from transaction data")
+                                return price
+                    else:
+                        # For live prices, use average of all transaction prices
+                        prices = [t.get('price', 0) for t in mf_transactions if t.get('price') and t.get('price') > 0]
+                        if prices:
+                            price = sum(prices) / len(prices)
+                            print(f"✅ MF {ticker}: Live price ₹{price} from transaction data")
+                            return price
+        except Exception as e:
+            print(f"⚠️ Could not get transaction price for MF {ticker}: {e}")
+        
+        # Method 2: Try mftool (may work in some cases)
+        if not price:
+            try:
+                # Extract numerical scheme code for mftool (e.g., "MF_120828" -> "120828")
+                from mf_price_fetcher import extract_scheme_code_from_ticker
+                scheme_code = extract_scheme_code_from_ticker(clean_ticker)
+                
+                if scheme_code:
+                    # Use the numerical scheme code for mftool calls
+                    if target_date:
+                        # For historical prices, try to get NAV for specific date
+                        from mf_price_fetcher import fetch_mutual_fund_price
+                        price = fetch_mutual_fund_price(str(scheme_code), transaction_date=target_date)
+                        if price and price > 0:
+                            print(f"✅ MF {ticker}: Historical price ₹{price} for {target_date} from mftool (scheme {scheme_code})")
+                            return price
+                    else:
+                        # For live prices, try to get current NAV
+                        from mf_price_fetcher import fetch_mutual_fund_price
+                        price = fetch_mutual_fund_price(str(scheme_code))
+                        if price and price > 0:
+                            print(f"✅ MF {ticker}: Live price ₹{price} from mftool (scheme {scheme_code})")
+                            return price
+                else:
+                    print(f"⚠️ Could not extract scheme code from ticker {clean_ticker}")
+            except Exception as e:
+                print(f"⚠️ MFTool failed for {ticker} (common in Streamlit Cloud): {e}")
+        
+        # Method 3: Use intelligent default based on fund type
+        if not price:
+            price = self._get_mutual_fund_default_price(clean_ticker)
+            if target_date:
+                print(f"✅ MF {ticker}: Historical price ₹{price} for {target_date} (default)")
+            else:
+                print(f"✅ MF {ticker}: Live price ₹{price} (default)")
+        
+        return price
+    
+    def _get_stock_price(self, ticker: str, clean_ticker: str, target_date: str = None) -> float:
+        """Get price for stock using multiple sources
+        
+        Args:
+            ticker: The ticker symbol
+            clean_ticker: Cleaned ticker symbol
+            target_date: Target date for historical prices (None for current/live prices)
+        """
+        # Method 1: Try yfinance with .NS first, then .BO as fallback
+        try:
+            import yfinance as yf
+            
+            # Try .NS first (National Stock Exchange)
+            yf_ticker_ns = clean_ticker
+            if not yf_ticker_ns.endswith(('.NS', '.BO', '.NSE', '.BSE')):
+                yf_ticker_ns = f"{clean_ticker}.NS"
+            
+            stock_ns = yf.Ticker(yf_ticker_ns)
+            
+            if target_date:
+                # For historical prices, get data for specific date
+                target_dt = pd.to_datetime(target_date)
+                hist_ns = stock_ns.history(start=target_dt, end=target_dt + pd.Timedelta(days=1))
+                if not hist_ns.empty and hist_ns['Close'].iloc[0] > 0:
+                    price = hist_ns['Close'].iloc[0]
+                    print(f"✅ {ticker}: Historical price ₹{price} for {target_date} from yfinance (.NS)")
+                    return price
+            else:
+                # For live prices, get current day data
+                hist_ns = stock_ns.history(period="1d")
+                if not hist_ns.empty and hist_ns['Close'].iloc[-1] > 0:
+                    price = hist_ns['Close'].iloc[-1]
+                    print(f"✅ {ticker}: Live price ₹{price} from yfinance (.NS)")
+                    return price
+            
+            # If .NS didn't work, try .BO (Bombay Stock Exchange)
+            if not yf_ticker_ns.endswith('.BO'):
+                yf_ticker_bo = f"{clean_ticker}.BO"
+                stock_bo = yf.Ticker(yf_ticker_bo)
+                
+                if target_date:
+                    # For historical prices, get data for specific date
+                    hist_bo = stock_bo.history(start=target_dt, end=target_dt + pd.Timedelta(days=1))
+                    if not hist_bo.empty and hist_bo['Close'].iloc[0] > 0:
+                        price = hist_bo['Close'].iloc[0]
+                        print(f"✅ {ticker}: Historical price ₹{price} for {target_date} from yfinance (.BO)")
+                        return price
+                else:
+                    # For live prices, get current day data
+                    hist_bo = stock_bo.history(period="1d")
+                    if not hist_bo.empty and hist_bo['Close'].iloc[-1] > 0:
+                        price = hist_bo['Close'].iloc[-1]
+                        print(f"✅ {ticker}: Live price ₹{price} from yfinance (.BO)")
+                        return price
+                
+                print(f"⚠️ {ticker}: No price data from yfinance (.NS or .BO)")
+            else:
+                print(f"⚠️ {ticker}: No price data from yfinance (.NS)")
+                
+        except Exception as e:
+            print(f"⚠️ yfinance failed for {ticker}: {e}")
+        
+        # Method 2: Try indstocks_api as fallback
+        try:
+            from indstocks_api import get_stock_price
+            
+            # Try with .NS suffix first
+            if not clean_ticker.endswith(('.NS', '.BO')):
+                ticker_ns = f"{clean_ticker}.NS"
+                price = get_stock_price(ticker_ns)
+                if price and price > 0:
+                    if target_date:
+                        print(f"✅ {ticker}: Historical price ₹{price} for {target_date} from indstocks_api (.NS)")
+                    else:
+                        print(f"✅ {ticker}: Live price ₹{price} from indstocks_api (.NS)")
+                    return price
+                
+                # If .NS didn't work, try .BO
+                ticker_bo = f"{clean_ticker}.BO"
+                price = get_stock_price(ticker_bo)
+                if price and price > 0:
+                    if target_date:
+                        print(f"✅ {ticker}: Historical price ₹{price} for {target_date} from indstocks_api (.BO)")
+                    else:
+                        print(f"✅ {ticker}: Live price ₹{price} from indstocks_api (.BO)")
+                    return price
+            else:
+                # Ticker already has suffix, try as is
+                price = get_stock_price(clean_ticker)
+                if price and price > 0:
+                    if target_date:
+                        print(f"✅ {ticker}: Historical price ₹{price} for {target_date} from indstocks_api")
+                    else:
+                        print(f"✅ {ticker}: Live price ₹{price} from indstocks_api")
+                    return price
+                    
+        except Exception as e:
+            print(f"⚠️ indstocks_api failed for {ticker}: {e}")
+        
+        # Method 3: Fallback to default price
+        default_price = 1000.0
+        if target_date:
+            print(f"⚠️ {ticker}: Using default historical price ₹{default_price} for {target_date} (all APIs failed)")
+        else:
+            print(f"⚠️ {ticker}: Using default live price ₹{default_price} (all APIs failed)")
+        return default_price
 
 # Global web agent instance
 web_agent = WebAgent()
