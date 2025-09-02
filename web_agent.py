@@ -136,7 +136,19 @@ class PortfolioAnalytics:
                 elif len(new_password) < 6:
                     st.error("Password must be at least 6 characters")
                 elif self.register_user(new_username, new_password, "user", uploaded_files):
-                    st.success("Registration successful! Please login.")
+                    # Clear any previous messages and show prominent success message
+                    st.empty()  # Clear previous content
+                    st.success("🎉 Registration successful! Automatically logging you in...")
+                    
+                    # Automatically authenticate the user after registration
+                    if self.authenticate_user(new_username, new_password):
+                        st.success("✅ Welcome! You're now logged in and viewing your portfolio.")
+                        st.info("📊 Your portfolio dashboard is loading with the files you uploaded...")
+                        
+                        # Force a rerun to show the main dashboard
+                        st.rerun()
+                    else:
+                        st.error("❌ Auto-login failed. Please try logging in manually.")
                 else:
                     st.error("Username already exists or registration failed")
     
@@ -181,26 +193,31 @@ class PortfolioAnalytics:
         
             for uploaded_file in uploaded_files:
                 try:
-                    # Process the uploaded file
+                    # Process the uploaded file silently during registration
                     result = self.process_csv_file(uploaded_file, user_id)
                     if result:
                         processed_count += 1
-                        st.success(f"✅ Processed {uploaded_file.name}")
                     else:
                         failed_count += 1
-                        st.warning(f"⚠️ Failed to process {uploaded_file.name}")
                         
                 except Exception as e:
                     failed_count += 1
-                    st.error(f"❌ Error processing {uploaded_file.name}: {e}")
+                    # Log error but don't display during registration to keep interface clean
             
-            if processed_count > 0:
-                st.success(f"🎉 Successfully processed {processed_count} file(s)!")
-            if failed_count > 0:
-                st.warning(f"⚠️ {failed_count} file(s) had processing issues")
+            # Return summary for display in main registration flow
+            return {
+                'processed': processed_count,
+                'failed': failed_count,
+                'total': len(uploaded_files)
+            }
                 
         except Exception as e:
-            st.error(f"Error during file processing: {e}")
+            return {
+                'processed': 0,
+                'failed': len(uploaded_files),
+                'total': len(uploaded_files),
+                'error': str(e)
+            }
     
     def process_csv_file(self, uploaded_file, user_id):
         """Process a single CSV file and store transactions with historical prices"""
@@ -470,15 +487,15 @@ class PortfolioAnalytics:
             result = create_user_supabase(username, hashed_password, salt, role=role)
             
             if result and uploaded_files:
-                # Process uploaded files after successful user creation
-                st.info("🔄 Processing uploaded files...")
+                # Process uploaded files silently after successful user creation
                 try:
                     user_id = result['id']
-                    self.process_uploaded_files_during_registration(uploaded_files, user_id)
-                    st.success(f"✅ Successfully processed {len(uploaded_files)} file(s)!")
+                    file_summary = self.process_uploaded_files_during_registration(uploaded_files, user_id)
+                    # Store file processing summary in session state for display after auto-login
+                    self.session_state.registration_file_summary = file_summary
                 except Exception as e:
-                    st.warning(f"⚠️ Files processed with warnings: {e}")
-                    st.info("You can still login and upload files later.")
+                    # Log error but don't display during registration
+                    pass
             
             return result
         except Exception as e:
@@ -1013,6 +1030,23 @@ class PortfolioAnalytics:
     def render_main_dashboard(self):
         """Render the main dashboard with comprehensive analytics"""
         st.title("📊 Portfolio Analytics Dashboard")
+        
+        # Show welcome message with file processing summary if user just registered
+        if hasattr(self.session_state, 'registration_file_summary') and self.session_state.registration_file_summary:
+            file_summary = self.session_state.registration_file_summary
+            
+            st.success("🎉 Welcome to your Portfolio Analytics Dashboard!")
+            
+            if file_summary.get('processed', 0) > 0:
+                st.info(f"📁 During registration, {file_summary['processed']} file(s) were successfully processed and added to your portfolio.")
+            
+            if file_summary.get('failed', 0) > 0:
+                st.warning(f"⚠️ {file_summary['failed']} file(s) had processing issues. You can re-upload them later.")
+            
+            # Clear the registration summary after displaying it
+            del self.session_state.registration_file_summary
+            
+            st.markdown("---")
         
         # Show loading animation if portfolio data is not loaded
         if self.session_state.portfolio_data is None:
@@ -1666,9 +1700,72 @@ class PortfolioAnalytics:
                                 best_channel['channel'],
                                 f"{best_channel['pnl_percentage']:.2f}% return"
                             )
+                    
+                    # Add detailed analysis tables below the charts
+                    st.subheader("📊 Detailed Analysis Tables")
+                    
+                    # Create two columns for detailed tables
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Sector Analysis Details
+                        st.subheader("🏭 Sector Analysis Details")
                         
-                        # Add detailed channel analysis table
-                        st.subheader("📊 Channel Analysis Details")
+                        # Create detailed sector table
+                        sector_table_data = []
+                        for _, row in sector_performance.iterrows():
+                            sector = row['sector']
+                            value = row['current_value']
+                            # Get sector-specific data
+                            sector_stocks = stock_buys[stock_buys['sector'] == sector]
+                            sector_count = len(sector_stocks['ticker'].unique())
+                            sector_pnl = sector_stocks['unrealized_pnl'].sum() if 'unrealized_pnl' in sector_stocks.columns else 0
+                            sector_pnl_pct = (sector_pnl / value * 100) if value > 0 else 0
+                            
+                            sector_table_data.append({
+                                'Sector': sector,
+                                'Current Value': f"₹{value:,.2f}",
+                                'Allocation %': f"{(value / sector_performance['current_value'].sum() * 100):.2f}%",
+                                'Number of Stocks': sector_count,
+                                'Total P&L': f"₹{sector_pnl:,.2f}",
+                                'P&L %': f"{sector_pnl_pct:.2f}%"
+                            })
+                        
+                        # Display sector table
+                        if sector_table_data:
+                            sector_df = pd.DataFrame(sector_table_data)
+                            st.dataframe(
+                                sector_df,
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                            
+                            # Add sector summary metrics
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric(
+                                    "Total Sectors",
+                                    len(sector_performance),
+                                    f"{len(sector_performance)} sectors covered"
+                                )
+                            with col2:
+                                st.metric(
+                                    "Largest Sector",
+                                    sector_performance.iloc[0]['sector'],
+                                    f"₹{sector_performance.iloc[0]['current_value']:,.2f}"
+                                )
+                            with col3:
+                                st.metric(
+                                    "Smallest Sector",
+                                    sector_performance.iloc[-1]['sector'],
+                                    f"₹{sector_performance.iloc[-1]['current_value']:,.2f}"
+                                )
+                        else:
+                            st.info("No detailed sector data available for table display")
+                    
+                    with col2:
+                        # Channel Analysis Details
+                        st.subheader("📡 Channel Analysis Details")
                         
                         # Create detailed channel table
                         channel_table_data = []
@@ -1984,58 +2081,7 @@ class PortfolioAnalytics:
                     )
                     st.plotly_chart(fig_sector, width='stretch')
                     
-                    # Add detailed sector allocation table
-                    st.subheader("📊 Sector Allocation Details")
-                    
-                    # Create detailed sector table
-                    sector_table_data = []
-                    for sector, value in sector_allocation.items():
-                        # Get sector-specific data
-                        sector_stocks = sector_data[sector_data['sector'] == sector]
-                        sector_count = len(sector_stocks['ticker'].unique())
-                        sector_pnl = sector_stocks['unrealized_pnl'].sum() if 'unrealized_pnl' in sector_stocks.columns else 0
-                        sector_pnl_pct = (sector_pnl / value * 100) if value > 0 else 0
-                        
-                        sector_table_data.append({
-                            'Sector': sector,
-                            'Current Value': f"₹{value:,.2f}",
-                            'Allocation %': f"{(value / sector_data['current_value'].sum() * 100):.2f}%",
-                            'Number of Stocks': sector_count,
-                            'Total P&L': f"₹{sector_pnl:,.2f}",
-                            'P&L %': f"{sector_pnl_pct:.2f}%"
-                        })
-                    
-                    # Display sector table
-                    if sector_table_data:
-                        sector_df = pd.DataFrame(sector_table_data)
-                        st.dataframe(
-                            sector_df,
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                        
-                        # Add sector summary metrics
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric(
-                                "Total Sectors",
-                                len(sector_allocation),
-                                f"{len(sector_allocation)} sectors covered"
-                            )
-                        with col2:
-                            st.metric(
-                                "Largest Sector",
-                                sector_allocation.index[0],
-                                f"₹{sector_allocation.iloc[0]:,.2f}"
-                            )
-                        with col3:
-                            st.metric(
-                                "Smallest Sector",
-                                sector_allocation.index[-1],
-                                f"₹{sector_allocation.iloc[-1]:,.2f}"
-                            )
-                    else:
-                        st.info("No detailed sector data available for table display")
+                    # Sector allocation chart is sufficient here - detailed tables moved to Performance page
                 else:
                     st.info("No sector data available for visualization")
             else:
