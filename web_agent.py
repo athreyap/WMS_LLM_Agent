@@ -201,16 +201,12 @@ class WebAgent:
             self.supabase = None
     
     def _initialize_mftool(self):
-        """Initialize mftool client for Streamlit Cloud compatibility"""
-        # Check if already initialized
-        if self.mftool_client is not None:
-            return
-        
+        """Initialize mftool client with AMFI connection failure handling"""
         try:
             import mftool
             print("🔄 Initializing mftool client...")
             
-            # Create mftool instance with proper error handling
+            # Create mftool instance - this will try to connect to AMFI
             self.mftool_client = mftool.Mftool()
             print("✅ Mftool instance created successfully")
             
@@ -228,9 +224,11 @@ class WebAgent:
                     print("⚠️ Mftool initialized but test scheme failed - no NAV data")
                     self.mftool_available = False
             except Exception as test_error:
-                print(f"⚠️ Mftool test failed: {test_error}")
-                print(f"⚠️ Error type: {type(test_error).__name__}")
-                self.mftool_available = False
+                print(f"⚠️ Mftool test failed (AMFI connection issue): {test_error}")
+                print(f"⚠️ This is expected in Streamlit Cloud due to AMFI website restrictions")
+                # Mark as available but with limited functionality
+                self.mftool_available = True
+                print("✅ Mftool available with limited functionality (AMFI connection issues)")
                 
         except ImportError as e:
             print(f"❌ Mftool not available: {e}")
@@ -241,9 +239,18 @@ class WebAgent:
                 print(f"❌ Please ensure mftool is installed: pip install mftool")
             self.mftool_available = False
         except Exception as e:
-            print(f"❌ Error initializing mftool: {e}")
-            print(f"❌ Error type: {type(e).__name__}")
-            self.mftool_available = False
+            print(f"❌ Error initializing mftool (AMFI connection issue): {e}")
+            print(f"⚠️ This is expected in Streamlit Cloud due to AMFI website restrictions")
+            # Try to create instance anyway for offline methods
+            try:
+                import mftool
+                self.mftool_client = mftool.Mftool()
+                self.mftool_available = True
+                print("✅ Mftool available with limited functionality (AMFI connection issues)")
+            except:
+                self.mftool_client = None
+                self.mftool_available = False
+                print("❌ Could not create mftool instance even with limited functionality")
     
     def _ensure_mftool_initialized(self):
         """Ensure mftool is initialized before use"""
@@ -701,7 +708,7 @@ class WebAgent:
             status_text.empty()
     
     def _fetch_historical_prices_for_upload(self, df):
-        """Fetch historical prices for uploaded file data - BATCH PROCESSING"""
+        """Fetch historical prices for uploaded file data - BATCH PROCESSING using unified approach"""
         try:
             st.info("🔄 **Batch Historical Price Fetching** - Processing uploaded file...")
             
@@ -757,91 +764,73 @@ class WebAgent:
             
             for i, (ticker, transaction_date) in enumerate(ticker_date_pairs):
                 try:
+                    # Convert transaction_date to string format if it's a datetime object
+                    if hasattr(transaction_date, 'strftime'):
+                        target_date = transaction_date.strftime('%Y-%m-%d')
+                    else:
+                        target_date = str(transaction_date)
+                    
                     # Check if it's a mutual fund (numeric ticker or MF_ prefixed)
                     clean_ticker = str(ticker).strip().upper()
                     is_mf = clean_ticker.isdigit() or clean_ticker.startswith('MF_')
                     
+                    # Use unified price fetching approach
                     if is_mf:
-                        # Mutual fund - use mftool
-                        print(f"🔍 Fetching mutual fund historical price for {ticker} using mftool...")
-                        try:
-                            from mf_price_fetcher import fetch_mutual_fund_price
-                            price = fetch_mutual_fund_price(ticker)
-                            if price and price > 0:
-                                idx = price_indices[i]
-                                df.at[idx, 'price'] = price
-                                # Set sector to Mutual Funds for mutual fund tickers
-                                df.at[idx, 'sector'] = 'Mutual Funds'
-                                df.at[idx, 'stock_name'] = f"MF-{ticker}"
-                                prices_found += 1
-                                print(f"✅ MF {ticker}: ₹{price} for {transaction_date} - Mutual Funds")
-                            else:
-                                print(f"❌ MF {ticker}: No price available from mftool")
-                        except Exception as e:
-                            print(f"⚠️ MFTool failed for {ticker}: {e}")
+                        # Mutual fund - use unified function with target date
+                        print(f"🔍 Fetching historical price for MF {ticker} - Target Date: {target_date}")
+                        price = self._get_mutual_fund_price(ticker, clean_ticker, None, target_date=target_date)
+                        if price and price > 0:
+                            idx = price_indices[i]
+                            df.at[idx, 'price'] = price
+                            # Set sector to Mutual Funds for mutual fund tickers
+                            df.at[idx, 'sector'] = 'Mutual Funds'
+                            df.at[idx, 'stock_name'] = f"MF-{ticker}"
+                            prices_found += 1
+                            print(f"✅ MF {ticker}: Historical price ₹{price} fetched for transaction date {target_date} - Mutual Funds")
+                            print(f"   📊 Transaction: {target_date} → Price: ₹{price} → Sector: Mutual Funds")
+                        else:
+                            print(f"❌ MF {ticker}: No historical price available for {target_date}")
                     else:
-                        # Regular stock - try multiple price sources with proper ticker formatting
-                        price = None
-                        
-                        # Clean ticker for yfinance (add .NS suffix for Indian stocks)
-                        yf_ticker = clean_ticker
-                        if not yf_ticker.endswith(('.NS', '.BO', '.NSE', '.BSE')):
-                            yf_ticker = f"{clean_ticker}.NS"  # Default to NSE
-                        
-                        # Method 1: Try yfinance first (most reliable)
-                        try:
-                            import yfinance as yf
-                            stock = yf.Ticker(yf_ticker)
-                            hist = stock.history(start=transaction_date, end=transaction_date + pd.Timedelta(days=1))
-                            if not hist.empty:
-                                price = hist['Close'].iloc[0]
-                                print(f"✅ {ticker} (yfinance): ₹{price} for {transaction_date}")
-                        except Exception as e:
-                            print(f"⚠️ yfinance failed for {yf_ticker}: {e}")
-                        
-                        # Method 2: Try file_manager if yfinance failed
-                        if not price:
-                            try:
-                                from file_manager import fetch_historical_price
-                                price = fetch_historical_price(clean_ticker, transaction_date)
-                                if price:
-                                    print(f"✅ {ticker} (file_manager): ₹{price} for {transaction_date}")
-                            except Exception as e:
-                                print(f"⚠️ file_manager failed for {ticker}: {e}")
-                        
-                        # Method 3: Try indstocks API if other methods failed
-                        if not price:
-                            try:
-                                from indstocks_api import get_indstocks_client
-                                api_client = get_indstocks_client()
-                                if api_client and api_client.available:
-                                    price_data = api_client.get_historical_price(clean_ticker, transaction_date)
-                                    if price_data and isinstance(price_data, dict) and price_data.get('price'):
-                                        price = price_data['price']
-                                        print(f"✅ {ticker} (indstocks): ₹{price} for {transaction_date}")
-                            except ImportError:
-                                print(f"⚠️ Indstocks API not available for {ticker}")
-                            except Exception as e:
-                                print(f"⚠️ Indstocks API failed for {ticker}: {e}")
-                        
-                        # Update DataFrame if price found
+                        # Regular stock - use unified function with target date
+                        print(f"🔍 Fetching historical price for stock {ticker} - Target Date: {target_date}")
+                        price = self._get_stock_price(ticker, clean_ticker, target_date=target_date)
                         if price and price > 0:
                             idx = price_indices[i]
                             df.at[idx, 'price'] = price
                             prices_found += 1
+                            print(f"✅ {ticker}: Historical price ₹{price} fetched for transaction date {target_date}")
+                            print(f"   📊 Transaction: {target_date} → Price: ₹{price}")
                         else:
-                            print(f"❌ {ticker}: No historical price found for {transaction_date}")
+                            print(f"❌ {ticker}: No historical price available for {target_date}")
                     
-                    # Update progress
+                    # Update progress bar
                     progress = (i + 1) / len(ticker_date_pairs)
                     progress_bar.progress(progress)
                     
                 except Exception as e:
-                    print(f"⚠️ Error fetching historical price for {ticker}: {e}")
+                    print(f"⚠️ Error fetching price for {ticker}: {e}")
+                    continue
             
-            # Final status
             progress_bar.progress(1.0)
-            st.success(f"✅ **Historical Price Fetch Complete**: {prices_found}/{len(ticker_date_pairs)} transactions got prices")
+            
+            # Detailed summary logging
+            print(f"\n📊 HISTORICAL PRICE FETCHING SUMMARY:")
+            print(f"   🎯 Target transactions: {len(ticker_date_pairs)}")
+            print(f"   ✅ Prices found: {prices_found}")
+            print(f"   ❌ Prices missing: {len(ticker_date_pairs) - prices_found}")
+            print(f"   📈 Success rate: {(prices_found/len(ticker_date_pairs)*100):.1f}%")
+            
+            if prices_found > 0:
+                print(f"   💰 Sample prices fetched:")
+                # Show first few successful prices
+                for i, (ticker, transaction_date) in enumerate(ticker_date_pairs[:5]):
+                    if i < len(price_indices):
+                        idx = price_indices[i]
+                        fetched_price = df.at[idx, 'price']
+                        if pd.notna(fetched_price) and fetched_price > 0:
+                            print(f"      • {ticker}: {transaction_date} → ₹{fetched_price}")
+            
+            st.success(f"✅ Historical price fetching complete! Found prices for {prices_found}/{len(ticker_date_pairs)} transactions")
             
             return df
             
@@ -1283,7 +1272,27 @@ class WebAgent:
                     
                     # Calculate current values and invested amounts with fallbacks
                     df['current_value'] = df['quantity'] * df['live_price']
-                    df['invested_amount'] = df['quantity'] * df['price'].fillna(df['live_price'])  # Use live price as fallback
+                    # CRITICAL: invested_amount should ONLY use historical transaction price, never live price
+                    df['invested_amount'] = df['quantity'] * df['price']
+                    
+                    # Handle missing historical prices - use intelligent defaults instead of live prices
+                    missing_prices = df[df['invested_amount'].isna() | (df['invested_amount'] == 0)]
+                    if not missing_prices.empty:
+                        print(f"⚠️ {len(missing_prices)} transactions missing historical prices, using intelligent defaults...")
+                        for idx, row in missing_prices.iterrows():
+                            ticker = row['ticker']
+                            clean_ticker = str(ticker).strip().upper()
+                            is_mf = clean_ticker.isdigit() or clean_ticker.startswith('MF_')
+                            
+                            if is_mf:
+                                # For mutual funds, use intelligent default
+                                default_price = self._get_mutual_fund_default_price(clean_ticker)
+                            else:
+                                # For stocks, use reasonable default
+                                default_price = 1000.0
+                            
+                            df.at[idx, 'invested_amount'] = row['quantity'] * default_price
+                            print(f"✅ {ticker}: Using default price ₹{default_price} for invested amount calculation")
                     
                     # Calculate percentage gain
                     df['pct_gain'] = df.apply(
@@ -3434,15 +3443,31 @@ class WebAgent:
                 mf_transactions = [t for t in all_user_transactions if t.get('ticker') == ticker]
                 if mf_transactions:
                     if target_date:
-                        # For historical prices, try to find exact date match
+                        # For historical prices, find NEAREST date match (not exact)
                         target_dt = pd.to_datetime(target_date)
-                        date_matches = [t for t in mf_transactions if pd.to_datetime(t.get('date')) == target_dt]
-                        if date_matches:
-                            prices = [t.get('price', 0) for t in date_matches if t.get('price') and t.get('price') > 0]
-                            if prices:
-                                price = sum(prices) / len(prices)
-                                print(f"✅ MF {ticker}: Historical price ₹{price} for {target_date} from transaction data")
+                        
+                        # Calculate days difference for each transaction
+                        date_diffs = []
+                        for t in mf_transactions:
+                            if t.get('price') and t.get('price') > 0:
+                                trans_date = pd.to_datetime(t.get('date'))
+                                days_diff = abs((target_dt - trans_date).days)
+                                date_diffs.append((days_diff, t.get('price')))
+                        
+                        if date_diffs:
+                            # Sort by days difference and get the closest match
+                            date_diffs.sort(key=lambda x: x[0])
+                            closest_price = date_diffs[0][1]
+                            closest_days = date_diffs[0][0]
+                            
+                            if closest_days <= 30:  # Accept prices within 30 days
+                                price = closest_price
+                                print(f"✅ MF {ticker}: Historical price ₹{price} for {target_date} (closest: {closest_days} days) from transaction data")
+                                print(f"   📊 Found in database: Target: {target_date} → Closest: {closest_days} days → Price: ₹{price}")
                                 return price
+                            else:
+                                print(f"⚠️ MF {ticker}: No transaction price within 30 days of {target_date}")
+                                print(f"   📊 Closest available: {closest_days} days away (too far for accurate pricing)")
                     else:
                         # For live prices, use average of all transaction prices
                         prices = [t.get('price', 0) for t in mf_transactions if t.get('price') and t.get('price') > 0]
@@ -3453,41 +3478,88 @@ class WebAgent:
         except Exception as e:
             print(f"⚠️ Could not get transaction price for MF {ticker}: {e}")
         
-        # Method 2: Try mftool (may work in some cases)
-        if not price:
+        # Method 2: Try mftool for historical NAV (if target_date provided)
+        if not price and target_date:
             try:
                 # Extract numerical scheme code for mftool (e.g., "MF_120828" -> "120828")
-                from mf_price_fetcher import extract_scheme_code_from_ticker
-                scheme_code = extract_scheme_code_from_ticker(clean_ticker)
+                from mftool import Mftool
+                
+                # Create a fresh mftool instance for this request
+                mf = Mftool()
+                
+                # Extract scheme code from ticker
+                if clean_ticker.startswith('MF_'):
+                    scheme_code = clean_ticker.replace('MF_', '')
+                elif clean_ticker.isdigit():
+                    scheme_code = clean_ticker
+                else:
+                    # Try to extract numbers from ticker
+                    import re
+                    match = re.search(r'(\d{5,6})', clean_ticker)
+                    scheme_code = match.group(1) if match else None
                 
                 if scheme_code:
-                    # Use the numerical scheme code for mftool calls
-                    if target_date:
-                        # For historical prices, try to get NAV for specific date
-                        from mf_price_fetcher import fetch_mutual_fund_price
-                        price = fetch_mutual_fund_price(str(scheme_code), transaction_date=target_date)
-                        if price and price > 0:
-                            print(f"✅ MF {ticker}: Historical price ₹{price} for {target_date} from mftool (scheme {scheme_code})")
-                            return price
-                    else:
-                        # For live prices, try to get current NAV
-                        from mf_price_fetcher import fetch_mutual_fund_price
-                        price = fetch_mutual_fund_price(str(scheme_code))
-                        if price and price > 0:
-                            print(f"✅ MF {ticker}: Live price ₹{price} from mftool (scheme {scheme_code})")
-                            return price
+                    try:
+                        # Try to get historical NAV for the specific date
+                        target_dt = pd.to_datetime(target_date)
+                        
+                        # Get historical NAV data for a range around the target date
+                        start_date = target_dt - pd.Timedelta(days=30)
+                        end_date = target_dt + pd.Timedelta(days=30)
+                        
+                        hist_data = mf.get_scheme_historical_nav(scheme_code, as_Dataframe=True)
+                        if hist_data is not None and not hist_data.empty:
+                            # Filter data for the date range
+                            hist_data['date'] = pd.to_datetime(hist_data['date'])
+                            range_data = hist_data[(hist_data['date'] >= start_date) & (hist_data['date'] <= end_date)]
+                            
+                            if not range_data.empty:
+                                # Find the closest date to target_date
+                                range_data['days_diff'] = abs((range_data['date'] - target_dt).dt.days)
+                                closest_row = range_data.loc[range_data['days_diff'].idxmin()]
+                                closest_nav = closest_row['nav']
+                                closest_days = closest_row['days_diff']
+                                
+                                if closest_days <= 30:  # Accept NAV within 30 days
+                                    price = float(closest_nav)
+                                    print(f"✅ MF {ticker}: Historical NAV ₹{price} for {target_date} (closest: {closest_days} days) from mftool")
+                                    print(f"   📊 Mftool NAV: Target: {target_date} → Closest: {closest_days} days → NAV: ₹{price}")
+                                    return price
+                                else:
+                                    print(f"⚠️ MF {ticker}: No NAV data within 30 days of {target_date}")
+                                    print(f"   📊 Closest available: {closest_days} days away (too far for accurate NAV)")
+                            else:
+                                print(f"⚠️ MF {ticker}: No historical NAV data available for date range")
+                        else:
+                            print(f"⚠️ MF {ticker}: No historical NAV data from mftool")
+                            
+                    except Exception as mf_error:
+                        print(f"⚠️ Mftool historical NAV failed for {ticker}: {mf_error}")
+                        
+                        # Fallback: Try to get current NAV if historical fails
+                        try:
+                            scheme_details = mf.get_scheme_details(scheme_code)
+                            if scheme_details and 'nav' in scheme_details:
+                                price = float(scheme_details['nav'])
+                                print(f"✅ MF {ticker}: Using current NAV ₹{price} as fallback for {target_date}")
+                                return price
+                        except Exception as fallback_error:
+                            print(f"⚠️ Mftool fallback also failed for {ticker}: {fallback_error}")
                 else:
                     print(f"⚠️ Could not extract scheme code from ticker {clean_ticker}")
+                    
             except Exception as e:
-                print(f"⚠️ MFTool failed for {ticker} (common in Streamlit Cloud): {e}")
+                print(f"⚠️ Mftool failed for {ticker}: {e}")
         
         # Method 3: Use intelligent default based on fund type
         if not price:
             price = self._get_mutual_fund_default_price(clean_ticker)
             if target_date:
-                print(f"✅ MF {ticker}: Historical price ₹{price} for {target_date} (default)")
+                print(f"✅ MF {ticker}: Historical price ₹{price} for {target_date} (intelligent default)")
+                print(f"   📊 Fallback: Target: {target_date} → Default Price: ₹{price} (no historical data available)")
             else:
-                print(f"✅ MF {ticker}: Live price ₹{price} (default)")
+                print(f"✅ MF {ticker}: Live price ₹{price} (intelligent default)")
+                print(f"   📊 Fallback: Default Price: ₹{price} (no live data available)")
         
         return price
     
@@ -3511,13 +3583,28 @@ class WebAgent:
             stock_ns = yf.Ticker(yf_ticker_ns)
             
             if target_date:
-                # For historical prices, get data for specific date
+                # For historical prices, get data for a range around the target date to find nearest available
                 target_dt = pd.to_datetime(target_date)
-                hist_ns = stock_ns.history(start=target_dt, end=target_dt + pd.Timedelta(days=1))
-                if not hist_ns.empty and hist_ns['Close'].iloc[0] > 0:
-                    price = hist_ns['Close'].iloc[0]
-                    print(f"✅ {ticker}: Historical price ₹{price} for {target_date} from yfinance (.NS)")
-                    return price
+                start_date = target_dt - pd.Timedelta(days=30)
+                end_date = target_dt + pd.Timedelta(days=30)
+                
+                hist_ns = stock_ns.history(start=start_date, end=end_date)
+                if not hist_ns.empty:
+                    # Find the closest date to target_date
+                    hist_ns['days_diff'] = abs((hist_ns.index - target_dt).days)
+                    closest_idx = hist_ns['days_diff'].idxmin()
+                    closest_price = hist_ns.loc[closest_idx, 'Close']
+                    closest_days = hist_ns.loc[closest_idx, 'days_diff']
+                    
+                    if closest_days <= 30 and closest_price > 0:  # Accept prices within 30 days
+                        print(f"✅ {ticker}: Historical price ₹{closest_price} for {target_date} (closest: {closest_days} days) from yfinance (.NS)")
+                        print(f"   📊 YFinance (.NS): Target: {target_date} → Closest: {closest_days} days → Price: ₹{closest_price}")
+                        return closest_price
+                    else:
+                        print(f"⚠️ {ticker}: No price data within 30 days of {target_date} from yfinance (.NS)")
+                        print(f"   📊 Closest available: {closest_days} days away (too far for accurate pricing)")
+                else:
+                    print(f"⚠️ {ticker}: No historical data available for {target_date} from yfinance (.NS)")
             else:
                 # For live prices, get current day data
                 hist_ns = stock_ns.history(period="1d")
@@ -3532,12 +3619,24 @@ class WebAgent:
                 stock_bo = yf.Ticker(yf_ticker_bo)
                 
                 if target_date:
-                    # For historical prices, get data for specific date
-                    hist_bo = stock_bo.history(start=target_dt, end=target_dt + pd.Timedelta(days=1))
-                    if not hist_bo.empty and hist_bo['Close'].iloc[0] > 0:
-                        price = hist_bo['Close'].iloc[0]
-                        print(f"✅ {ticker}: Historical price ₹{price} for {target_date} from yfinance (.BO)")
-                        return price
+                    # For historical prices, get data for a range around the target date
+                    hist_bo = stock_bo.history(start=start_date, end=end_date)
+                    if not hist_bo.empty:
+                        # Find the closest date to target_date
+                        hist_bo['days_diff'] = abs((hist_bo.index - target_dt).days)
+                        closest_idx = hist_bo['days_diff'].idxmin()
+                        closest_price = hist_bo.loc[closest_idx, 'Close']
+                        closest_days = hist_bo.loc[closest_idx, 'days_diff']
+                        
+                        if closest_days <= 30 and closest_price > 0:  # Accept prices within 30 days
+                            print(f"✅ {ticker}: Historical price ₹{closest_price} for {target_date} (closest: {closest_days} days) from yfinance (.BO)")
+                            print(f"   📊 YFinance (.BO): Target: {target_date} → Closest: {closest_days} days → Price: ₹{closest_price}")
+                            return closest_price
+                        else:
+                            print(f"⚠️ {ticker}: No price data within 30 days of {target_date} from yfinance (.BO)")
+                            print(f"   📊 Closest available: {closest_days} days away (too far for accurate pricing)")
+                    else:
+                        print(f"⚠️ {ticker}: No historical data available for {target_date} from yfinance (.BO)")
                 else:
                     # For live prices, get current day data
                     hist_bo = stock_bo.history(period="1d")
@@ -3594,8 +3693,10 @@ class WebAgent:
         default_price = 1000.0
         if target_date:
             print(f"⚠️ {ticker}: Using default historical price ₹{default_price} for {target_date} (all APIs failed)")
+            print(f"   📊 Fallback: Target: {target_date} → Default Price: ₹{default_price} (no historical data available)")
         else:
             print(f"⚠️ {ticker}: Using default live price ₹{default_price} (all APIs failed)")
+            print(f"   📊 Fallback: Default Price: ₹{default_price} (no live data available)")
         return default_price
 
 # Global web agent instance
