@@ -276,6 +276,22 @@ class PortfolioAnalytics:
     def fetch_historical_prices_for_transactions(self, df):
         """Fetch historical prices for transactions"""
         try:
+            # Count transactions that need historical prices
+            transactions_needing_prices = 0
+            for idx, row in df.iterrows():
+                if 'price' not in df.columns or pd.isna(df.at[idx, 'price']) or df.at[idx, 'price'] == 0:
+                    transactions_needing_prices += 1
+            
+            if transactions_needing_prices == 0:
+                return df
+            
+            # Create progress bar
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            status_text.text(f"🔍 Fetching historical prices for {transactions_needing_prices} transactions...")
+            
+            processed_count = 0
+            
             for idx, row in df.iterrows():
                 ticker = row['ticker']
                 transaction_date = row['date']
@@ -303,14 +319,27 @@ class PortfolioAnalytics:
                 
                 if historical_price and historical_price > 0:
                     df.at[idx, 'price'] = historical_price
-                    st.success(f"✅ {ticker}: Historical price ₹{historical_price:.2f}")
                 else:
                     # Use default price if historical price not available
                     if str(ticker).isdigit() or str(ticker).startswith('MF_'):
                         df.at[idx, 'price'] = 100.0  # Default MF price
                     else:
                         df.at[idx, 'price'] = 1000.0  # Default stock price
-                    st.warning(f"⚠️ {ticker}: Using default price ₹{df.at[idx, 'price']:.2f}")
+                
+                processed_count += 1
+                progress = processed_count / transactions_needing_prices
+                progress_bar.progress(progress)
+                status_text.text(f"🔍 Processing {processed_count}/{transactions_needing_prices} transactions...")
+            
+            # Complete progress bar
+            progress_bar.progress(1.0)
+            status_text.text("✅ Historical prices fetched successfully!")
+            
+            # Clear progress elements after a short delay
+            import time
+            time.sleep(1)
+            progress_bar.empty()
+            status_text.empty()
             
             return df
             
@@ -409,7 +438,12 @@ class PortfolioAnalytics:
                 st.info(f"📊 Found {len(missing_prices)} transactions with missing historical prices")
                 
                 try:
-                    for _, row in missing_prices.iterrows():
+                    # Create progress bar for updating historical prices
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    status_text.text(f"🔄 Updating historical prices for {len(missing_prices)} transactions...")
+                    
+                    for i, (_, row) in enumerate(missing_prices.iterrows()):
                         ticker = row['ticker']
                         transaction_date = pd.to_datetime(row['date'])
                         
@@ -425,13 +459,30 @@ class PortfolioAnalytics:
                             historical_price = get_stock_price(
                                 ticker, 
                                 ticker, 
+                                user_id, 
                                 transaction_date.strftime('%Y-%m-%d')
                             )
                         
                         if historical_price and historical_price > 0:
                             # Update transaction price in database
                             # Note: This would require a database update function
-                            st.success(f"✅ Updated {ticker} historical price: ₹{historical_price:.2f}")
+                            pass  # Silent update - no individual success messages
+                        
+                        # Update progress
+                        progress = (i + 1) / len(missing_prices)
+                        progress_bar.progress(progress)
+                        status_text.text(f"🔄 Updated {i + 1}/{len(missing_prices)} transactions...")
+                    
+                    # Complete progress bar
+                    progress_bar.progress(1.0)
+                    status_text.text("✅ Historical prices updated successfully!")
+                    
+                    # Clear progress elements after a short delay
+                    import time
+                    time.sleep(1)
+                    progress_bar.empty()
+                    status_text.empty()
+                    
                 except Exception as e:
                     st.error(f"Error updating historical prices: {e}")
         
@@ -594,12 +645,12 @@ class PortfolioAnalytics:
         with col3:
             total_pnl = df['unrealized_pnl'].sum()
             pnl_color = "normal" if total_pnl >= 0 else "inverse"
-            st.metric("Total P&L", f"₹{total_pnl:,.2f}", delta=f"{total_pnl:,.2f}", delta_color=pnl_color)
+            st.metric("Total P&L", f"₹{total_pnl:,.2f}", delta_color=pnl_color)
         
         with col4:
             if total_invested > 0:
                 total_return = (total_pnl / total_invested) * 100
-                st.metric("Total Return", f"{total_return:.2f}%", delta=f"{total_return:.2f}%", delta_color=pnl_color)
+                st.metric("Total Return", f"{total_return:.2f}%", delta_color=pnl_color)
         
         st.markdown("---")
         
@@ -608,27 +659,126 @@ class PortfolioAnalytics:
         
         with col1:
             st.subheader("🏆 Top Performers")
-            top_performers = df.groupby('ticker')['pnl_percentage'].sum().sort_values(ascending=False).head(5)
-            fig_top = px.bar(
-                x=top_performers.values,
-                y=top_performers.index,
-                orientation='h',
-                title="Top 5 Performers by Return %",
-                labels={'x': 'Return %', 'y': 'Ticker'}
-            )
-            st.plotly_chart(fig_top, use_container_width=True)
+            if 'pnl_percentage' in df.columns and not df['pnl_percentage'].isna().all():
+                valid_data = df.dropna(subset=['pnl_percentage'])
+                if not valid_data.empty:
+                    top_performers = valid_data.groupby('ticker')['pnl_percentage'].sum().sort_values(ascending=False).head(5)
+                    if not top_performers.empty:
+                        fig_top = px.bar(
+                            x=top_performers.values,
+                            y=top_performers.index,
+                            orientation='h',
+                            title="Top 5 Performers by Return %",
+                            labels={'x': 'Return %', 'y': 'Ticker'}
+                        )
+                        st.plotly_chart(fig_top, use_container_width=True)
+                    else:
+                        st.info("No performance data available")
+                else:
+                    st.info("No valid performance data available")
+            else:
+                st.info("Performance data not available")
         
         with col2:
             st.subheader("📉 Underperformers")
-            underperformers = df.groupby('ticker')['pnl_percentage'].sum().sort_values().head(5)
-            fig_bottom = px.bar(
-                x=underperformers.values,
-                y=underperformers.index,
-                orientation='h',
-                title="Bottom 5 Performers by Return %",
-                labels={'x': 'Return %', 'y': 'Ticker'}
-            )
-            st.plotly_chart(fig_bottom, use_container_width=True)
+            if 'pnl_percentage' in df.columns and not df['pnl_percentage'].isna().all():
+                valid_data = df.dropna(subset=['pnl_percentage'])
+                if not valid_data.empty:
+                    underperformers = valid_data.groupby('ticker')['pnl_percentage'].sum().sort_values().head(5)
+                    if not underperformers.empty:
+                        fig_bottom = px.bar(
+                            x=underperformers.values,
+                            y=underperformers.index,
+                            orientation='h',
+                            title="Bottom 5 Performers by Return %",
+                            labels={'x': 'Return %', 'y': 'Ticker'}
+                        )
+                        st.plotly_chart(fig_bottom, use_container_width=True)
+                    else:
+                        st.info("No performance data available")
+                else:
+                    st.info("No valid performance data available")
+            else:
+                st.info("Performance data not available")
+        
+        # Investment Timeline Chart
+        st.subheader("📈 Investment Timeline")
+        if 'date' in df.columns and 'invested_amount' in df.columns:
+            try:
+                # Ensure date is datetime
+                if not pd.api.types.is_datetime64_any_dtype(df['date']):
+                    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                
+                # Remove rows with invalid dates
+                timeline_df = df.dropna(subset=['date']).copy()
+                
+                if not timeline_df.empty:
+                    # Sort by date
+                    timeline_df = timeline_df.sort_values('date')
+                    
+                    # Calculate cumulative invested amount over time
+                    timeline_df['cumulative_invested'] = timeline_df['invested_amount'].cumsum()
+                    
+                    # Create the investment timeline chart
+                    fig_timeline = go.Figure()
+                    
+                    # Add cumulative invested amount line
+                    fig_timeline.add_trace(go.Scatter(
+                        x=timeline_df['date'],
+                        y=timeline_df['cumulative_invested'],
+                        mode='lines+markers',
+                        name='Cumulative Invested Amount',
+                        line=dict(color='blue', width=3),
+                        marker=dict(size=6),
+                        hovertemplate='<b>Date:</b> %{x}<br><b>Total Invested:</b> ₹%{y:,.2f}<extra></extra>'
+                    ))
+                    
+                    # Add individual transaction points
+                    fig_timeline.add_trace(go.Scatter(
+                        x=timeline_df['date'],
+                        y=timeline_df['invested_amount'],
+                        mode='markers',
+                        name='Individual Transactions',
+                        marker=dict(
+                            size=8,
+                            color='red',
+                            symbol='circle',
+                            line=dict(width=1, color='white')
+                        ),
+                        hovertemplate='<b>Date:</b> %{x}<br><b>Transaction Amount:</b> ₹%{y:,.2f}<extra></extra>'
+                    ))
+                    
+                    fig_timeline.update_layout(
+                        title="Investment Timeline - Cumulative Amount Over Time",
+                        xaxis_title="Date",
+                        yaxis_title="Amount (₹)",
+                        hovermode='x unified',
+                        showlegend=True,
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        )
+                    )
+                    
+                    st.plotly_chart(fig_timeline, use_container_width=True)
+                    
+                    # Show summary statistics
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("First Investment", timeline_df['date'].min().strftime('%Y-%m-%d'))
+                    with col2:
+                        st.metric("Latest Investment", timeline_df['date'].max().strftime('%Y-%m-%d'))
+                    with col3:
+                        st.metric("Total Investment Days", (timeline_df['date'].max() - timeline_df['date'].min()).days)
+                else:
+                    st.info("No valid date data available for timeline")
+            except Exception as e:
+                st.warning(f"Could not create investment timeline: {e}")
+        else:
+            st.info("Date or invested amount data not available for timeline")
         
         # Recent transactions
         st.subheader("📋 Recent Transactions")
@@ -648,77 +798,97 @@ class PortfolioAnalytics:
         
         df = self.session_state.portfolio_data
         
-        # Performance over time
-        st.subheader("📊 Portfolio Performance Over Time")
+        # Ensure date column is properly formatted as datetime
+        if 'date' not in df.columns:
+            st.error("Date column not found in portfolio data")
+            return
         
-        # Group by date and calculate cumulative performance
-        daily_performance = df.groupby(df['date'].dt.date).agg({
-            'invested_amount': 'sum',
-            'current_value': 'sum',
-            'unrealized_pnl': 'sum'
-        }).reset_index()
-        
-        daily_performance['cumulative_return'] = (
-            (daily_performance['current_value'] - daily_performance['invested_amount']) / 
-            daily_performance['invested_amount']
-        ) * 100
-        
-        # Performance line chart
-        fig_performance = go.Figure()
-        fig_performance.add_trace(go.Scatter(
-            x=daily_performance['date'],
-            y=daily_performance['cumulative_return'],
-            mode='lines+markers',
-            name='Cumulative Return %',
-            line=dict(color='blue', width=3)
-        ))
-        
-        fig_performance.update_layout(
-            title="Portfolio Cumulative Return Over Time",
-            xaxis_title="Date",
-            yaxis_title="Cumulative Return (%)",
-            hovermode='x unified'
-        )
-        
-        st.plotly_chart(fig_performance, use_container_width=True)
-        
-        # Rolling volatility
-        st.subheader("📈 Rolling Volatility (30-day)")
-        if len(daily_performance) > 30:
-            daily_performance['rolling_volatility'] = daily_performance['cumulative_return'].rolling(30).std()
+        try:
+            # Convert date column to datetime if it's not already
+            if not pd.api.types.is_datetime64_any_dtype(df['date']):
+                df['date'] = pd.to_datetime(df['date'], errors='coerce')
             
-            fig_volatility = go.Figure()
-            fig_volatility.add_trace(go.Scatter(
+            # Remove rows with invalid dates
+            df = df.dropna(subset=['date'])
+            
+            if df.empty:
+                st.warning("No valid date data available for performance analysis")
+                return
+            
+            # Performance over time
+            st.subheader("📊 Portfolio Performance Over Time")
+            
+            # Group by date and calculate cumulative performance
+            daily_performance = df.groupby(df['date'].dt.date).agg({
+                'invested_amount': 'sum',
+                'current_value': 'sum',
+                'unrealized_pnl': 'sum'
+            }).reset_index()
+            
+            daily_performance['cumulative_return'] = (
+                (daily_performance['current_value'] - daily_performance['invested_amount']) / 
+                daily_performance['invested_amount']
+            ) * 100
+            
+            # Performance line chart
+            fig_performance = go.Figure()
+            fig_performance.add_trace(go.Scatter(
                 x=daily_performance['date'],
-                y=daily_performance['rolling_volatility'],
-                mode='lines',
-                name='30-day Rolling Volatility',
-                line=dict(color='red', width=2)
+                y=daily_performance['cumulative_return'],
+                mode='lines+markers',
+                name='Cumulative Return %',
+                line=dict(color='blue', width=3)
             ))
             
-            fig_volatility.update_layout(
-                title="Portfolio Volatility Over Time",
+            fig_performance.update_layout(
+                title="Portfolio Cumulative Return Over Time",
                 xaxis_title="Date",
-                yaxis_title="Volatility (%)",
+                yaxis_title="Cumulative Return (%)",
                 hovermode='x unified'
             )
             
-            st.plotly_chart(fig_volatility, use_container_width=True)
-        
-        # Performance metrics table
-        st.subheader("📊 Performance Metrics")
-        
-        # Calculate key metrics
-        total_return = ((df['current_value'].sum() - df['invested_amount'].sum()) / df['invested_amount'].sum()) * 100
-        volatility = df.groupby(df['date'].dt.date)['unrealized_pnl'].sum().std()
-        sharpe_ratio = total_return / volatility if volatility > 0 else 0
-        
-        metrics_df = pd.DataFrame({
-            'Metric': ['Total Return (%)', 'Volatility (%)', 'Sharpe Ratio', 'Max Drawdown (%)'],
-            'Value': [f"{total_return:.2f}", f"{volatility:.2f}", f"{sharpe_ratio:.2f}", "N/A"]
-        })
-        
-        st.dataframe(metrics_df, use_container_width=True)
+            st.plotly_chart(fig_performance, use_container_width=True)
+            
+            # Rolling volatility
+            st.subheader("📈 Rolling Volatility (30-day)")
+            if len(daily_performance) > 30:
+                daily_performance['rolling_volatility'] = daily_performance['cumulative_return'].rolling(30).std()
+                
+                fig_volatility = go.Figure()
+                fig_volatility.add_trace(go.Scatter(
+                    x=daily_performance['date'],
+                    y=daily_performance['rolling_volatility'],
+                    mode='lines',
+                    name='30-day Rolling Volatility',
+                    line=dict(color='red', width=2)
+                ))
+                
+                fig_volatility.update_layout(
+                    title="Portfolio Volatility Over Time",
+                    xaxis_title="Date",
+                    yaxis_title="Volatility (%)",
+                    hovermode='x unified'
+                )
+                
+                st.plotly_chart(fig_volatility, use_container_width=True)
+            
+            # Performance metrics table
+            st.subheader("📊 Performance Metrics")
+            
+            # Calculate key metrics
+            total_return = ((df['current_value'].sum() - df['invested_amount'].sum()) / df['invested_amount'].sum()) * 100
+            volatility = df.groupby(df['date'].dt.date)['unrealized_pnl'].sum().std()
+            sharpe_ratio = total_return / volatility if volatility > 0 else 0
+            
+            metrics_df = pd.DataFrame({
+                'Metric': ['Total Return (%)', 'Volatility (%)', 'Sharpe Ratio', 'Max Drawdown (%)'],
+                'Value': [f"{total_return:.2f}", f"{total_return:.2f}", f"{sharpe_ratio:.2f}", "N/A"]
+            })
+            
+            st.dataframe(metrics_df, use_container_width=True)
+            
+        except Exception as e:
+            st.error(f"Error processing performance data: {e}")
     
     def render_allocation_page(self):
         """Render asset allocation analysis"""
@@ -733,52 +903,84 @@ class PortfolioAnalytics:
         # Asset allocation by type
         st.subheader("🏦 Asset Allocation by Type")
         
-        # Categorize assets
-        df['asset_type'] = df['ticker'].apply(
-            lambda x: 'Mutual Fund' if x.startswith('MF_') else 'Stock'
-        )
-        
-        allocation_by_type = df.groupby('asset_type')['current_value'].sum()
-        
-        fig_type = px.pie(
-            values=allocation_by_type.values,
-            names=allocation_by_type.index,
-            title="Allocation by Asset Type"
-        )
-        st.plotly_chart(fig_type, use_container_width=True)
+        if 'current_value' in df.columns and not df['current_value'].isna().all():
+            # Categorize assets
+            df['asset_type'] = df['ticker'].apply(
+                lambda x: 'Mutual Fund' if str(x).startswith('MF_') else 'Stock'
+            )
+            
+            # Filter out rows with missing current values
+            valid_data = df.dropna(subset=['current_value'])
+            if not valid_data.empty:
+                allocation_by_type = valid_data.groupby('asset_type')['current_value'].sum()
+                
+                if not allocation_by_type.empty:
+                    fig_type = px.pie(
+                        values=allocation_by_type.values,
+                        names=allocation_by_type.index,
+                        title="Allocation by Asset Type"
+                    )
+                    st.plotly_chart(fig_type, use_container_width=True)
+                else:
+                    st.info("No asset type allocation data available")
+            else:
+                st.info("No valid current value data available for asset allocation")
+        else:
+            st.info("Current value information not available for asset allocation")
         
         # Sector allocation
         st.subheader("🏭 Sector Allocation")
         
-        if 'sector' in df.columns:
-            sector_allocation = df.groupby('sector')['current_value'].sum().sort_values(ascending=False)
-            
-            fig_sector = px.bar(
-                x=sector_allocation.values,
-                y=sector_allocation.index,
-                orientation='h',
-                title="Allocation by Sector",
-                labels={'x': 'Current Value (₹)', 'y': 'Sector'}
-            )
-            st.plotly_chart(fig_sector, use_container_width=True)
+        if 'sector' in df.columns and not df['sector'].isna().all():
+            # Filter out rows with missing sectors and check if we have data
+            sector_data = df.dropna(subset=['sector'])
+            if not sector_data.empty and 'current_value' in sector_data.columns:
+                sector_allocation = sector_data.groupby('sector')['current_value'].sum().sort_values(ascending=False)
+                
+                if not sector_allocation.empty:
+                    fig_sector = px.bar(
+                        x=sector_allocation.values,
+                        y=sector_allocation.index,
+                        orientation='h',
+                        title="Allocation by Sector",
+                        labels={'x': 'Current Value (₹)', 'y': 'Sector'}
+                    )
+                    st.plotly_chart(fig_sector, use_container_width=True)
+                else:
+                    st.info("No sector data available for visualization")
+            else:
+                st.info("No sector or current value data available")
+        else:
+            st.info("Sector information not available in portfolio data")
         
         # Top holdings
         st.subheader("📈 Top Holdings")
         
-        top_holdings = df.groupby('ticker').agg({
-            'current_value': 'sum',
-            'unrealized_pnl': 'sum',
-            'pnl_percentage': 'mean'
-        }).sort_values('current_value', ascending=False).head(10)
-        
-        fig_holdings = px.bar(
-            x=top_holdings.index,
-            y=top_holdings['current_value'],
-            title="Top 10 Holdings by Current Value",
-            labels={'x': 'Ticker', 'y': 'Current Value (₹)'}
-        )
-        fig_holdings.update_xaxes(tickangle=45)
-        st.plotly_chart(fig_holdings, use_container_width=True)
+        if 'current_value' in df.columns and not df['current_value'].isna().all():
+            # Check if we have valid current value data
+            valid_data = df.dropna(subset=['current_value'])
+            if not valid_data.empty:
+                top_holdings = valid_data.groupby('ticker').agg({
+                    'current_value': 'sum',
+                    'unrealized_pnl': 'sum' if 'unrealized_pnl' in valid_data.columns else 'current_value',
+                    'pnl_percentage': 'mean' if 'pnl_percentage' in valid_data.columns else 'current_value'
+                }).sort_values('current_value', ascending=False).head(10)
+                
+                if not top_holdings.empty:
+                    fig_holdings = px.bar(
+                        x=top_holdings.index,
+                        y=top_holdings['current_value'],
+                        title="Top 10 Holdings by Current Value",
+                        labels={'x': 'Ticker', 'y': 'Current Value (₹)'}
+                    )
+                    fig_holdings.update_xaxes(tickangle=45)
+                    st.plotly_chart(fig_holdings, use_container_width=True)
+                else:
+                    st.info("No holdings data available for visualization")
+            else:
+                st.info("No valid current value data available")
+        else:
+            st.info("Current value information not available in portfolio data")
         
         # Market cap distribution (if available)
         st.subheader("📊 Market Cap Distribution")
@@ -906,18 +1108,50 @@ class PortfolioAnalytics:
             files = get_file_records_supabase(user_id=user_id)
             if files:
                 files_df = pd.DataFrame(files)
-                files_df['upload_date'] = pd.to_datetime(files_df['upload_date'])
-                files_df = files_df.sort_values('upload_date', ascending=False)
                 
-                st.dataframe(
-                    files_df[['filename', 'upload_date', 'status', 'records_processed']],
-                    use_container_width=True
-                )
+                # Check what columns are actually available
+                st.write(f"Available columns: {list(files_df.columns)}")
+                
+                # Handle different possible date column names
+                date_column = None
+                for col in ['upload_date', 'created_at', 'date', 'timestamp']:
+                    if col in files_df.columns:
+                        date_column = col
+                        break
+                
+                if date_column:
+                    try:
+                        files_df[date_column] = pd.to_datetime(files_df[date_column])
+                        files_df = files_df.sort_values(date_column, ascending=False)
+                        
+                        # Show available columns in the dataframe
+                        display_columns = ['filename']
+                        if date_column in files_df.columns:
+                            display_columns.append(date_column)
+                        if 'status' in files_df.columns:
+                            display_columns.append('status')
+                        if 'records_processed' in files_df.columns:
+                            display_columns.append('records_processed')
+                        if 'file_path' in files_df.columns:
+                            display_columns.append('file_path')
+                        
+                        st.dataframe(
+                            files_df[display_columns],
+                            use_container_width=True
+                        )
+                    except Exception as date_error:
+                        st.warning(f"Could not process date column '{date_column}': {date_error}")
+                        # Show without date sorting
+                        st.dataframe(files_df, use_container_width=True)
+                else:
+                    st.warning("No date column found in file records")
+                    st.dataframe(files_df, use_container_width=True)
             else:
                 st.info("No files uploaded yet")
                 
         except Exception as e:
             st.error(f"Error loading file history: {e}")
+            st.info("This might be due to missing columns in the database schema")
     
     def render_settings_page(self):
         """Render settings page"""
