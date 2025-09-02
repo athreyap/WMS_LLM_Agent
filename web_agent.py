@@ -383,6 +383,14 @@ class PortfolioAnalytics:
                 except Exception as e:
                     st.warning(f"⚠️ Live price update had warnings: {e}")
                 
+                # Refresh portfolio data to include new transactions
+                st.info("🔄 Refreshing portfolio data...")
+                try:
+                    self.load_portfolio_data(user_id)
+                    st.success("✅ Portfolio data refreshed successfully!")
+                except Exception as e:
+                    st.warning(f"⚠️ Portfolio refresh had warnings: {e}")
+                
                 return True
             else:
                 st.error("Failed to save transactions to database")
@@ -664,6 +672,9 @@ class PortfolioAnalytics:
             # Store processed data
             self.session_state.portfolio_data = df
             
+            # Set last refresh time
+            self.session_state.last_refresh_time = datetime.now()
+            
         except Exception as e:
             st.error(f"Error loading portfolio data: {e}")
     
@@ -738,6 +749,14 @@ class PortfolioAnalytics:
     def render_overview_page(self):
         """Render portfolio overview with key metrics"""
         st.header("🏠 Portfolio Overview")
+        
+        # Add refresh notification
+        if hasattr(self.session_state, 'last_refresh_time'):
+            time_since_refresh = (datetime.now() - self.session_state.last_refresh_time).total_seconds() / 60
+            if time_since_refresh > 30:  # Show warning if data is older than 30 minutes
+                st.warning(f"⚠️ Portfolio data was last updated {time_since_refresh:.0f} minutes ago. Use the '🔄 Refresh Portfolio Data' button in Settings to get the latest data.")
+        else:
+            st.info("ℹ️ Use the '🔄 Refresh Portfolio Data' button in Settings to get the latest portfolio data.")
         
         if self.session_state.portfolio_data is None:
             st.warning("No portfolio data available")
@@ -1243,6 +1262,87 @@ class PortfolioAnalytics:
             stock_data = df[~df['ticker'].astype(str).str.isdigit() & ~df['ticker'].str.startswith('MF_')].copy()
             
             if not stock_data.empty:
+                # Normalize ticker names by removing exchange suffixes and standardizing names
+                def normalize_ticker(ticker):
+                    """Normalize ticker by removing exchange suffixes and standardizing names"""
+                    if pd.isna(ticker):
+                        return ticker
+                    
+                    ticker_str = str(ticker).upper()
+                    
+                    # Remove exchange suffixes
+                    if ticker_str.endswith('.NS') or ticker_str.endswith('.BO'):
+                        ticker_str = ticker_str[:-3]
+                    
+                    # Handle common variations
+                    if ticker_str == 'RELIANCE':
+                        return 'RELIANCE'
+                    elif ticker_str == 'HDFCBANK':
+                        return 'HDFCBANK'
+                    elif ticker_str == 'BHARTIARTL':
+                        return 'BHARTIARTL'
+                    elif ticker_str == 'TCS':
+                        return 'TCS'
+                    elif ticker_str == 'ICICIBANK':
+                        return 'ICICIBANK'
+                    elif ticker_str == 'INFY':
+                        return 'INFY'
+                    elif ticker_str == 'SBIN':
+                        return 'SBIN'
+                    elif ticker_str == 'ITC':
+                        return 'ITC'
+                    elif ticker_str == 'LT':
+                        return 'LT'
+                    elif ticker_str == 'ASIANPAINT':
+                        return 'ASIANPAINT'
+                    elif ticker_str == 'MARUTI':
+                        return 'MARUTI'
+                    elif ticker_str == 'BAJFINANCE':
+                        return 'BAJFINANCE'
+                    elif ticker_str == 'HCLTECH':
+                        return 'HCLTECH'
+                    elif ticker_str == 'WIPRO':
+                        return 'WIPRO'
+                    elif ticker_str == 'TECHM':
+                        return 'TECHM'
+                    elif ticker_str == 'AXISBANK':
+                        return 'AXISBANK'
+                    elif ticker_str == 'KOTAKBANK':
+                        return 'KOTAKBANK'
+                    elif ticker_str == 'NESTLEIND':
+                        return 'NESTLEIND'
+                    elif ticker_str == 'SUNPHARMA':
+                        return 'SUNPHARMA'
+                    elif ticker_str == 'TITAN':
+                        return 'TITAN'
+                    elif ticker_str == 'ONGC':
+                        return 'ONGC'
+                    elif ticker_str == 'COALINDIA':
+                        return 'COALINDIA'
+                    elif ticker_str == 'DRREDDY':
+                        return 'DRREDDY'
+                    elif ticker_str == 'CIPLA':
+                        return 'CIPLA'
+                    elif ticker_str == 'POWERGRID':
+                        return 'POWERGRID'
+                    elif ticker_str == 'GRASIM':
+                        return 'GRASIM'
+                    elif ticker_str == 'JSWSTEEL':
+                        return 'JSWSTEEL'
+                    elif ticker_str == 'HINDZINC':
+                        return 'HINDZINC'
+                    elif ticker_str == 'TATAMOTORS':
+                        return 'TATAMOTORS'
+                    elif ticker_str == 'TATASTEEL':
+                        return 'TATASTEEL'
+                    elif ticker_str == 'BAJAJ-AUTO':
+                        return 'BAJAJ-AUTO'
+                    else:
+                        return ticker_str
+                
+                # Add normalized ticker column
+                stock_data['normalized_ticker'] = stock_data['ticker'].apply(normalize_ticker)
+                
                 # Add market cap data to stock data
                 stock_data['market_cap'] = stock_data['ticker'].map(self.session_state.market_caps)
                 
@@ -1250,6 +1350,15 @@ class PortfolioAnalytics:
                 stocks_with_market_cap = stock_data.dropna(subset=['market_cap'])
                 
                 if not stocks_with_market_cap.empty:
+                    # Group by normalized ticker and aggregate data
+                    market_cap_grouped = stocks_with_market_cap.groupby('normalized_ticker').agg({
+                        'market_cap': 'first',  # Take first market cap value
+                        'current_value': 'sum',  # Sum current values for same stock
+                        'invested_amount': 'sum',  # Sum invested amounts for same stock
+                        'quantity': 'sum',  # Sum quantities for same stock
+                        'ticker': lambda x: ', '.join(x.unique())  # Show all ticker variations
+                    }).reset_index()
+                    
                     # Categorize stocks by market cap (in Crores)
                     def categorize_market_cap(market_cap):
                         if market_cap >= 20000:  # 20,000 Cr and above
@@ -1261,10 +1370,10 @@ class PortfolioAnalytics:
                         else:  # Below 500 Cr
                             return 'Micro Cap (<₹500 Cr)'
                     
-                    stocks_with_market_cap['market_cap_category'] = stocks_with_market_cap['market_cap'].apply(categorize_market_cap)
+                    market_cap_grouped['market_cap_category'] = market_cap_grouped['market_cap'].apply(categorize_market_cap)
                     
                     # Group by market cap category and sum current values
-                    market_cap_distribution = stocks_with_market_cap.groupby('market_cap_category')['current_value'].sum().sort_values(ascending=False)
+                    market_cap_distribution = market_cap_grouped.groupby('market_cap_category')['current_value'].sum().sort_values(ascending=False)
                     
                     if not market_cap_distribution.empty:
                         # Create pie chart
@@ -1298,17 +1407,23 @@ class PortfolioAnalytics:
                         
                         # Show detailed breakdown
                         st.subheader("📋 Market Cap Breakdown by Stock")
-                        market_cap_breakdown = stocks_with_market_cap[['ticker', 'market_cap', 'market_cap_category', 'current_value']].copy()
-                        market_cap_breakdown['market_cap_cr'] = market_cap_breakdown['market_cap'] / 100  # Convert to Crores
-                        market_cap_breakdown = market_cap_breakdown.sort_values('market_cap', ascending=False)
                         
                         # Format the display
-                        market_cap_breakdown_display = market_cap_breakdown[['ticker', 'market_cap_cr', 'market_cap_category', 'current_value']].copy()
-                        market_cap_breakdown_display.columns = ['Ticker', 'Market Cap (Cr)', 'Category', 'Portfolio Value']
-                        market_cap_breakdown_display['Market Cap (Cr)'] = market_cap_breakdown_display['Market Cap (Cr)'].apply(lambda x: f"₹{x:,.0f}")
-                        market_cap_breakdown_display['Portfolio Value'] = market_cap_breakdown_display['Portfolio Value'].apply(lambda x: f"₹{x:,.0f}")
+                        market_cap_breakdown_display = market_cap_grouped[['normalized_ticker', 'market_cap', 'market_cap_category', 'current_value', 'invested_amount', 'quantity', 'ticker']].copy()
+                        market_cap_breakdown_display['market_cap_cr'] = market_cap_breakdown_display['market_cap'] / 100  # Convert to Crores
+                        market_cap_breakdown_display = market_cap_breakdown_display.sort_values('market_cap', ascending=False)
                         
-                        st.dataframe(market_cap_breakdown_display, use_container_width=True)
+                        # Rename columns for display
+                        market_cap_breakdown_display.columns = ['Stock Name', 'Market Cap', 'Category', 'Portfolio Value', 'Invested Amount', 'Total Quantity', 'Ticker Variations', 'Market Cap (Cr)']
+                        
+                        # Format the display columns
+                        display_df = market_cap_breakdown_display[['Stock Name', 'Market Cap (Cr)', 'Category', 'Portfolio Value', 'Invested Amount', 'Total Quantity', 'Ticker Variations']].copy()
+                        display_df['Market Cap (Cr)'] = display_df['Market Cap (Cr)'].apply(lambda x: f"₹{x:,.0f}")
+                        display_df['Portfolio Value'] = display_df['Portfolio Value'].apply(lambda x: f"₹{x:,.0f}")
+                        display_df['Invested Amount'] = display_df['Invested Amount'].apply(lambda x: f"₹{x:,.0f}")
+                        display_df['Total Quantity'] = display_df['Total Quantity'].apply(lambda x: f"{x:,.0f}")
+                        
+                        st.dataframe(display_df, use_container_width=True)
                         
                     else:
                         st.info("No market cap distribution data available")
@@ -1608,8 +1723,19 @@ class PortfolioAnalytics:
         with col1:
             if st.button("🔄 Refresh Portfolio Data"):
                 with st.spinner("Refreshing data..."):
-                    self.load_portfolio_data(user_id)
-                    st.success("Portfolio data refreshed!")
+                    try:
+                        # First fetch live prices and sectors
+                        self.fetch_live_prices_and_sectors(user_id)
+                        st.success("Live prices updated!")
+                        
+                        # Then reload portfolio data
+                        self.load_portfolio_data(user_id)
+                        st.success("Portfolio data refreshed!")
+                        
+                        # Force a rerun to show updated values
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error refreshing data: {e}")
         
         with col2:
             if st.button("📊 Update Live Prices"):
