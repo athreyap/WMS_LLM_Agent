@@ -652,11 +652,19 @@ class UserFileReadingAgent:
                     clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
                     
                     if clean_ticker.isdigit() or clean_ticker.startswith('MF_'):
-                        # Mutual fund - use mftool
-                        print(f"🔍 Fetching mutual fund historical price for {ticker} using mftool...")
+                        # Mutual fund - use unified approach with target date
+                        print(f"🔍 Fetching historical price for MF {ticker} - Target Date: {transaction_date}")
                         try:
-                            from mf_price_fetcher import fetch_mutual_fund_historical_price
-                            price = fetch_mutual_fund_historical_price(ticker, transaction_date)
+                            # Convert transaction_date to string format if it's a datetime object
+                            if hasattr(transaction_date, 'strftime'):
+                                target_date = transaction_date.strftime('%Y-%m-%d')
+                            else:
+                                target_date = str(transaction_date)
+                            
+                            # Use the unified mutual fund price fetching from unified_price_fetcher
+                            from unified_price_fetcher import get_mutual_fund_price
+                            price = get_mutual_fund_price(ticker, clean_ticker, user_id, target_date=target_date)
+                            
                             if price and price > 0:
                                 idx = price_indices[i]
                                 df.at[idx, 'price'] = price
@@ -668,58 +676,59 @@ class UserFileReadingAgent:
                                 df.at[idx, 'sector'] = 'Mutual Funds'
                                 df.at[idx, 'stock_name'] = f"MF-{ticker}"
                                 prices_found += 1
-                                print(f"✅ MF {ticker}: ₹{price} for {transaction_date} - Mutual Funds")
+                                print(f"✅ MF {ticker}: Historical price ₹{price} fetched for transaction date {target_date} - Mutual Funds")
+                                print(f"   📊 Transaction: {target_date} → Price: ₹{price} → Sector: Mutual Funds")
+                            else:
+                                print(f"❌ MF {ticker}: No historical price available for {target_date}")
                         except Exception as e:
-                            print(f"⚠️ MFTool failed for {ticker}: {e}")
+                            print(f"⚠️ Error fetching MF price for {ticker}: {e}")
                     else:
-                        # Regular stock - try multiple price sources
-                        price = None
-                        
-                        # Method 1: Try file_manager
+                        # Regular stock - use unified approach with target date
+                        print(f"🔍 Fetching historical price for stock {ticker} - Target Date: {transaction_date}")
                         try:
-                            from file_manager import fetch_historical_price
-                            price = fetch_historical_price(ticker, transaction_date)
-                        except:
-                            pass
-                        
-                        # Method 2: Try yfinance
-                        if not price:
-                            try:
-                                import yfinance as yf
-                                stock = yf.Ticker(ticker)
-                                hist = stock.history(start=transaction_date, end=transaction_date + pd.Timedelta(days=1))
-                                if not hist.empty:
-                                    price = hist['Close'].iloc[0]
-                            except:
-                                pass
-                        
-                        # Method 3: Try indstocks API
-                        if not price:
-                            try:
-                                from indstocks_api import get_indstocks_client
-                                api_client = get_indstocks_client()
-                                if api_client and api_client.available:
-                                    price_data = api_client.get_historical_price(ticker, transaction_date)
-                                    if price_data and isinstance(price_data, dict) and price_data.get('price'):
-                                        price = price_data['price']
-                            except Exception as e:
-                                print(f"⚠️ Indstocks API failed for {ticker}: {e}")
-                                pass
-                        
-                        # Update DataFrame if price found
-                        if price and price > 0:
-                            idx = price_indices[i]
-                            df.at[idx, 'price'] = price
-                            prices_found += 1
-                            print(f"✅ {ticker}: ₹{price} for {transaction_date}")
-                        else:
-                            print(f"❌ {ticker}: No historical price found for {transaction_date}")
+                            # Convert transaction_date to string format if it's a datetime object
+                            if hasattr(transaction_date, 'strftime'):
+                                target_date = transaction_date.strftime('%Y-%m-%d')
+                            else:
+                                target_date = str(transaction_date)
+                            
+                            # Use the unified stock price fetching from unified_price_fetcher
+                            from unified_price_fetcher import get_stock_price
+                            price = get_stock_price(ticker, clean_ticker, target_date=target_date)
+                            
+                            if price and price > 0:
+                                idx = price_indices[i]
+                                df.at[idx, 'price'] = price
+                                prices_found += 1
+                                print(f"✅ {ticker}: Historical price ₹{price} fetched for transaction date {target_date}")
+                                print(f"   📊 Transaction: {target_date} → Price: ₹{price}")
+                            else:
+                                print(f"❌ {ticker}: No historical price available for {target_date}")
+                        except Exception as e:
+                            print(f"⚠️ Error fetching stock price for {ticker}: {e}")
                     
                 except Exception as e:
                     print(f"⚠️ Error fetching historical price for {ticker}: {e}")
             
             # Final status
             print(f"✅ **Historical Price Fetch Complete**: {prices_found}/{len(ticker_date_pairs)} transactions got prices")
+            
+            # Detailed summary logging
+            print(f"\n📊 HISTORICAL PRICE FETCHING SUMMARY:")
+            print(f"   🎯 Target transactions: {len(ticker_date_pairs)}")
+            print(f"   ✅ Prices found: {prices_found}")
+            print(f"   ❌ Prices missing: {len(ticker_date_pairs) - prices_found}")
+            print(f"   📈 Success rate: {(prices_found/len(ticker_date_pairs)*100):.1f}%")
+            
+            if prices_found > 0:
+                print(f"   💰 Sample prices fetched:")
+                # Show first few successful prices
+                for i, (ticker, transaction_date) in enumerate(ticker_date_pairs[:5]):
+                    if i < len(price_indices):
+                        idx = price_indices[i]
+                        fetched_price = df.at[idx, 'price']
+                        if pd.notna(fetched_price) and fetched_price > 0:
+                            print(f"      • {ticker}: {transaction_date} → ₹{fetched_price}")
             
             return df
             

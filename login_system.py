@@ -435,7 +435,7 @@ def login_page():
                 - **transaction_type**: 'buy' or 'sell'
                 - **stock_name**: Company name (optional)
                                  - **channel**: Investment channel (optional - auto-generated from filename if missing)
-                 - **sector**: Stock sector (optional)
+                - **sector**: Stock sector (optional)
                 """)
         
         # Password strength indicator
@@ -698,7 +698,7 @@ def process_uploaded_files_during_registration(uploaded_files, folder_path, user
                 if 'price' not in df.columns or df['price'].isna().any():
                     status_text.text(f"🔍 Fetching historical prices for {uploaded_file.name}...")
                     try:
-                        df = fetch_historical_prices_for_upload(df)
+                    df = fetch_historical_prices_for_upload(df)
                     except ValueError as e:
                         print(f"❌ SECURITY ERROR: {e}")
                         failed_count += 1
@@ -708,7 +708,7 @@ def process_uploaded_files_during_registration(uploaded_files, folder_path, user
                 from user_file_reading_agent import user_file_agent
                 success = user_file_agent._process_uploaded_file_direct(df, user_id, uploaded_file.name)
                 
-                if success:
+                    if success:
                     processed_count += 1
                     print(f"✅ Successfully processed {uploaded_file.name}")
                 else:
@@ -766,15 +766,15 @@ def fetch_historical_prices_for_upload(df):
         
         for idx, row in df.iterrows():
             try:
-                ticker = row['ticker']
-                transaction_date = row['date']
-                
+            ticker = row['ticker']
+            transaction_date = row['date']
+            
                 # Skip if ticker or date is missing/invalid
                 if pd.isna(ticker) or pd.isna(transaction_date):
                     continue
                 
-                tickers_with_dates.append((ticker, transaction_date))
-                price_indices.append(idx)
+            tickers_with_dates.append((ticker, transaction_date))
+            price_indices.append(idx)
             except KeyError as e:
                 error_msg = f"❌ SECURITY ERROR: Missing column in row {idx}: {e}. File processing stopped."
                 print(error_msg)
