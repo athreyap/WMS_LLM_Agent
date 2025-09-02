@@ -1254,7 +1254,9 @@ class PortfolioAnalytics:
         with col4:
             if total_invested > 0:
                 total_return = (total_pnl / total_invested) * 100
-                st.metric("Total Return", f"{total_return:.2f}%", delta_color=pnl_color)
+                return_arrow = "🔼" if total_return >= 0 else "🔽"
+                return_color = "normal" if total_return >= 0 else "inverse"
+                st.metric("Total Return", f"{return_arrow} {total_return:.2f}%", delta_color=return_color)
         
         st.markdown("---")
         
@@ -1655,14 +1657,19 @@ class PortfolioAnalytics:
                     # Add summary statistics
                     col1, col2, col3 = st.columns(3)
                     with col1:
+                        avg_return = stock_performance['pnl_percentage'].mean()
+                        avg_arrow = "🔼" if avg_return >= 0 else "🔽"
+                        avg_color = "normal" if avg_return >= 0 else "inverse"
                         st.metric(
                             "Total Invested",
                             f"₹{stock_performance['invested_amount'].sum():,.2f}",
-                            f"{stock_performance['pnl_percentage'].mean():.2f}% avg return"
+                            delta=f"{avg_arrow} {avg_return:.2f}% avg return",
+                            delta_color=avg_color
                         )
                     with col2:
                         total_pnl = stock_performance['unrealized_pnl'].sum()
-                        pnl_delta = f"₹{total_pnl:,.2f} total P&L"
+                        pnl_arrow = "🔼" if total_pnl >= 0 else "🔽"
+                        pnl_delta = f"{pnl_arrow} ₹{total_pnl:,.2f} total P&L"
                         pnl_color = "normal" if total_pnl >= 0 else "inverse"
                         
                         st.metric(
@@ -1672,10 +1679,14 @@ class PortfolioAnalytics:
                             delta_color=pnl_color
                         )
                     with col3:
+                        best_return = stock_performance.iloc[0]['pnl_percentage']
+                        best_arrow = "🔼" if best_return >= 0 else "🔽"
+                        best_color = "normal" if best_return >= 0 else "inverse"
                         st.metric(
                             "Best Performer",
                             stock_performance.iloc[0]['ticker'],
-                            f"{stock_performance.iloc[0]['pnl_percentage']:.2f}% return"
+                            delta=f"{best_arrow} {best_return:.2f}% return",
+                            delta_color=best_color
                         )
                 else:
                     st.info("No detailed data available for table display")
@@ -1716,12 +1727,6 @@ class PortfolioAnalytics:
                     if quarterly_data:
                         # Combine all quarterly data
                         all_quarterly = pd.concat(quarterly_data, ignore_index=True)
-                        
-                        # Debug: Show what we have after combining
-                        st.info(f"Debug: Combined quarterly data shape: {all_quarterly.shape}")
-                        st.info(f"Debug: Combined columns: {list(all_quarterly.columns)}")
-                        st.info(f"Debug: Unique quarters: {sorted(all_quarterly['quarter_label'].unique())}")
-                        st.info(f"Debug: Sample combined data:\n{all_quarterly.head()}")
                         
                         # Sort quarters chronologically for proper x-axis ordering
                         # Create a sortable quarter key for chronological ordering
@@ -1784,11 +1789,6 @@ class PortfolioAnalytics:
                             'ticker': 'nunique'  # Count unique tickers instead of all rows
                         }).reset_index()
                         
-                        # Debug: Show what we have before sorting
-                        st.info(f"Debug: Quarterly summary shape: {quarterly_summary.shape}")
-                        st.info(f"Debug: Columns before sorting: {list(quarterly_summary.columns)}")
-                        st.info(f"Debug: Sample data:\n{quarterly_summary.head()}")
-                        
                         # Ensure we have the expected columns before proceeding
                         expected_columns = ['quarter_label', 'unrealized_pnl', 'invested_amount', 'current_value', 'ticker']
                         if list(quarterly_summary.columns) == expected_columns:
@@ -1803,10 +1803,7 @@ class PortfolioAnalytics:
                             quarterly_summary.columns = ['Quarter', 'Total Gain (₹)', 'Total Invested (₹)', 'Total Current Value (₹)', 'Number of Stocks']
                             quarterly_summary['Return %'] = (quarterly_summary['Total Gain (₹)'] / quarterly_summary['Total Invested (₹)'] * 100).round(2)
                             
-                            # Debug: Show final data
-                            st.success(f"✅ Quarterly summary created successfully with {len(quarterly_summary)} quarters")
-                            st.info(f"Debug: Final columns: {list(quarterly_summary.columns)}")
-                            st.info(f"Debug: Final data:\n{quarterly_summary.head()}")
+                            # Quarterly summary created successfully
                         else:
                             st.warning(f"Unexpected quarterly summary columns: {list(quarterly_summary.columns)}")
                             st.info("Expected: quarter_label, unrealized_pnl, invested_amount, current_value, ticker")
@@ -1830,24 +1827,42 @@ class PortfolioAnalytics:
                                 # Best performing quarter
                                 best_quarter = quarterly_summary.loc[quarterly_summary['Total Gain (₹)'].idxmax()]
                                 worst_quarter = quarterly_summary.loc[quarterly_summary['Total Gain (₹)'].idxmin()]
+                                avg_return = quarterly_summary['Return %'].mean()
                                 
-                                st.metric(
-                                    "Best Performing Quarter",
-                                    best_quarter['Quarter'],
-                                    f"₹{best_quarter['Total Gain (₹)']:,.2f} gain"
-                                )
+                                # Create single line display with arrows and colors
+                                st.markdown("**📊 Quarterly Performance Summary**")
                                 
-                                st.metric(
-                                    "Worst Performing Quarter",
-                                    worst_quarter['Quarter'],
-                                    f"₹{worst_quarter['Total Gain (₹)']:,.2f} gain"
-                                )
+                                # Best quarter
+                                best_gain = best_quarter['Total Gain (₹)']
+                                best_arrow = "🔼" if best_gain >= 0 else "🔽"
+                                best_color = "green" if best_gain >= 0 else "red"
                                 
-                                st.metric(
-                                    "Average Quarterly Return",
-                                    f"{quarterly_summary['Return %'].mean():.2f}%",
-                                    f"Across {len(quarterly_summary)} quarters"
-                                )
+                                st.markdown(f"""
+                                <div style="margin: 10px 0; padding: 10px; border-left: 4px solid {best_color}; background-color: rgba(0,255,0,0.1);">
+                                    <strong>🏆 Best Quarter:</strong> {best_quarter['Quarter']} - {best_arrow} ₹{best_gain:,.2f}
+                                </div>
+                                """, unsafe_allow_html=True)
+                                
+                                # Worst quarter
+                                worst_gain = worst_quarter['Total Gain (₹)']
+                                worst_arrow = "🔼" if worst_gain >= 0 else "🔽"
+                                worst_color = "green" if worst_gain >= 0 else "red"
+                                
+                                st.markdown(f"""
+                                <div style="margin: 10px 0; padding: 10px; border-left: 4px solid {worst_color}; background-color: rgba(255,0,0,0.1);">
+                                    <strong>⚠️ Worst Quarter:</strong> {worst_quarter['Quarter']} - {worst_arrow} ₹{worst_gain:,.2f}
+                                </div>
+                                """, unsafe_allow_html=True)
+                                
+                                # Average return
+                                avg_arrow = "🔼" if avg_return >= 0 else "🔽"
+                                avg_color = "green" if avg_return >= 0 else "red"
+                                
+                                st.markdown(f"""
+                                <div style="margin: 10px 0; padding: 10px; border-left: 4px solid {avg_color}; background-color: rgba(0,0,255,0.1);">
+                                    <strong>📈 Average Return:</strong> {avg_arrow} {avg_return:.2f}% (Across {len(quarterly_summary)} quarters)
+                                </div>
+                                """, unsafe_allow_html=True)
                         else:
                             st.warning("Quarterly summary could not be generated due to data format issues")
                     else:
@@ -1897,10 +1912,14 @@ class PortfolioAnalytics:
                         # Best performing sector
                         if not sector_performance.empty:
                             best_sector = sector_performance.iloc[0]
+                            sector_return = best_sector['pnl_percentage']
+                            sector_arrow = "🔼" if sector_return >= 0 else "🔽"
+                            sector_color = "normal" if sector_return >= 0 else "inverse"
                             st.metric(
                                 "🏆 Best Performing Sector",
                                 best_sector['sector'],
-                                f"{best_sector['pnl_percentage']:.2f}% return"
+                                delta=f"{sector_arrow} {sector_return:.2f}% return",
+                                delta_color=sector_color
                             )
                     
                     with col2:
@@ -1936,10 +1955,14 @@ class PortfolioAnalytics:
                         # Best performing channel
                         if not channel_performance.empty:
                             best_channel = channel_performance.iloc[0]
+                            channel_return = best_channel['pnl_percentage']
+                            channel_arrow = "🔼" if channel_return >= 0 else "🔽"
+                            channel_color = "normal" if channel_return >= 0 else "inverse"
                             st.metric(
                                 "🏆 Best Performing Channel",
                                 best_channel['channel'],
-                                f"{best_channel['pnl_percentage']:.2f}% return"
+                                delta=f"{channel_arrow} {channel_return:.2f}% return",
+                                delta_color=channel_color
                             )
                     
                     # Add detailed analysis tables below the charts
@@ -2265,11 +2288,15 @@ class PortfolioAnalytics:
                     
                     with col3:
                         avg_return = stock_performance['pnl_percentage'].mean()
-                        st.metric("Average Return", f"{avg_return:.2f}%")
+                        avg_arrow = "🔼" if avg_return >= 0 else "🔽"
+                        avg_color = "normal" if avg_return >= 0 else "inverse"
+                        st.metric("Average Return", f"{avg_arrow} {avg_return:.2f}%", delta_color=avg_color)
                     
                     with col4:
                         best_overall = stock_performance.iloc[0]['pnl_percentage']
-                        st.metric("Best Return", f"{best_overall:.2f}%")
+                        best_arrow = "🔼" if best_overall >= 0 else "🔽"
+                        best_color = "normal" if best_overall >= 0 else "inverse"
+                        st.metric("Best Return", f"{best_arrow} {best_overall:.2f}%", delta_color=best_color)
             else:
                 st.info("No stock buy transactions found in the last 1 year")
                 
@@ -2653,7 +2680,7 @@ class PortfolioAnalytics:
             with col1:
                 best_sector = pnl_by_sector.loc[pnl_by_sector['unrealized_pnl'].idxmax()]
                 best_pnl = best_sector['unrealized_pnl']
-                best_arrow = "↗️" if best_pnl > 0 else "↘️" if best_pnl < 0 else "➡️"
+                best_arrow = "🔼" if best_pnl > 0 else "🔽" if best_pnl < 0 else "➡️"
                 best_color = "normal" if best_pnl > 0 else "inverse"
                 st.metric(
                     "Best Sector", 
@@ -2664,8 +2691,8 @@ class PortfolioAnalytics:
             with col2:
                 worst_sector = pnl_by_sector.loc[pnl_by_sector['unrealized_pnl'].idxmin()]
                 worst_pnl = worst_sector['unrealized_pnl']
-                worst_arrow = "↗️" if worst_pnl > 0 else "↘️" if worst_pnl < 0 else "➡️"
-                worst_color = "normal" if worst_pnl > 0 else "inverse"
+                worst_arrow = "🔼" if worst_pnl > 0 else "🔽" if worst_pnl < 0 else "➡️"
+                worst_color = "normal" if worst_pnl > 0 else "➡️"
                 st.metric(
                     "Worst Sector", 
                     f"{worst_arrow} {worst_sector['sector']}", 
@@ -2701,7 +2728,7 @@ class PortfolioAnalytics:
             with col1:
                 best_channel = pnl_by_channel.loc[pnl_by_channel['unrealized_pnl'].idxmax()]
                 best_pnl = best_channel['unrealized_pnl']
-                best_arrow = "↗️" if best_pnl > 0 else "↘️" if best_pnl < 0 else "➡️"
+                best_arrow = "🔼" if best_pnl > 0 else "🔽" if best_pnl < 0 else "➡️"
                 best_color = "normal" if best_pnl > 0 else "inverse"
                 st.metric(
                     "Best Channel", 
@@ -2712,7 +2739,7 @@ class PortfolioAnalytics:
             with col2:
                 worst_channel = pnl_by_channel.loc[pnl_by_channel['unrealized_pnl'].idxmin()]
                 worst_pnl = worst_channel['unrealized_pnl']
-                worst_arrow = "↗️" if worst_pnl > 0 else "↘️" if worst_pnl < 0 else "➡️"
+                worst_arrow = "🔼" if worst_pnl > 0 else "🔽" if worst_pnl < 0 else "➡️"
                 worst_color = "normal" if worst_pnl > 0 else "inverse"
                 st.metric(
                     "Worst Channel", 
