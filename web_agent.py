@@ -854,7 +854,13 @@ class WebAgent:
          if not self.session_state.get('agents_initialized', False):
              try:
                  # Initialize stock data agent silently
-                 stock_stats = get_stock_data_stats()
+                 try:
+                     from stock_data_agent import get_stock_data_stats
+                     stock_stats = get_stock_data_stats()
+                     print("✅ Stock data agent initialized successfully")
+                 except ImportError as e:
+                     print(f"⚠️ Stock data agent not available: {e}")
+                     stock_stats = None
                  
                  # Initialize user file reading agent silently
                  # Note: User-specific file processing will be triggered when user logs in
@@ -876,8 +882,12 @@ class WebAgent:
             if user_id:
                 # Process user's files first
                 try:
+                    from user_file_reading_agent import process_user_files_on_login
                     result = process_user_files_on_login(user_id)
                     print(f"🔍 File processing result: {result}")
+                except ImportError as e:
+                    print(f"⚠️ User file reading agent not available: {e}")
+                    result = None
                 except Exception as e:
                     print(f"⚠️ File processing error: {e}")
                     pass  # Silently handle file processing errors
@@ -936,45 +946,45 @@ class WebAgent:
                     if all_transactions:
                         print(f"🔍 Sample transaction user_id: {all_transactions[0].get('user_id') if all_transactions else 'None'}")
                     
-                                    # If no transactions found, try a small delay and retry (in case of timing issue)
-                if not transactions and user_id:
-                    print(f"🔄 Retrying transaction fetch after delay...")
-                    import time
-                    time.sleep(2)  # Wait 2 seconds
-                    try:
-                        from database_config_supabase import get_transactions_with_historical_prices
-                        transactions = get_transactions_with_historical_prices(user_id=user_id)
-                    except ImportError as e:
-                        print(f"❌ Import error: {e}")
-                        transactions = []
-                    print(f"🔍 Retry result: {len(transactions) if transactions else 0} transactions")
-                    
-                    # If still no transactions, check if there's a file path issue
-                    if not transactions:
-                        print(f"🔍 Checking for file path issues...")
+                    # If no transactions found, try a small delay and retry (in case of timing issue)
+                    if not transactions and user_id:
+                        print(f"🔄 Retrying transaction fetch after delay...")
+                        import time
+                        time.sleep(2)  # Wait 2 seconds
                         try:
-                            from database_config_supabase import get_file_records_supabase
-                            file_records = get_file_records_supabase(user_id)
-                            print(f"🔍 File records found: {len(file_records) if file_records else 0}")
-                            if file_records:
-                                for file_record in file_records:
-                                    print(f"🔍 File: {file_record.get('filename', 'N/A')} - Path: {file_record.get('file_path', 'N/A')} - User: {file_record.get('user_id', 'N/A')}")
-                        except Exception as e:
-                            print(f"⚠️ Error checking file records: {e}")
-                    
-                    # Final attempt: try to get transactions directly from database
-                    if not transactions:
-                        print(f"🔄 Final attempt: Direct database query...")
-                        try:
-                            from database_config_supabase import get_transactions_supabase
-                            direct_transactions = get_transactions_supabase(user_id)
-                            if direct_transactions:
-                                print(f"✅ Direct query successful: {len(direct_transactions)} transactions found")
-                                transactions = direct_transactions
-                            else:
-                                print(f"❌ Direct query also failed: No transactions found")
-                        except Exception as e:
-                            print(f"❌ Direct query error: {e}")
+                            from database_config_supabase import get_transactions_with_historical_prices
+                            transactions = get_transactions_with_historical_prices(user_id=user_id)
+                        except ImportError as e:
+                            print(f"❌ Import error: {e}")
+                            transactions = []
+                        print(f"🔍 Retry result: {len(transactions) if transactions else 0} transactions")
+                        
+                        # If still no transactions, check if there's a file path issue
+                        if not transactions:
+                            print(f"🔍 Checking for file path issues...")
+                            try:
+                                from database_config_supabase import get_file_records_supabase
+                                file_records = get_file_records_supabase(user_id)
+                                print(f"🔍 File records found: {len(file_records) if file_records else 0}")
+                                if file_records:
+                                    for file_record in file_records:
+                                        print(f"🔍 File: {file_record.get('filename', 'N/A')} - Path: {file_record.get('file_path', 'N/A')} - User: {file_record.get('user_id', 'N/A')}")
+                            except Exception as e:
+                                print(f"⚠️ Error checking file records: {e}")
+                        
+                        # Final attempt: try to get transactions directly from database
+                        if not transactions:
+                            print(f"🔄 Final attempt: Direct database query...")
+                            try:
+                                from database_config_supabase import get_transactions_supabase
+                                direct_transactions = get_transactions_supabase(user_id)
+                                if direct_transactions:
+                                    print(f"✅ Direct query successful: {len(direct_transactions)} transactions found")
+                                    transactions = direct_transactions
+                                else:
+                                    print(f"❌ Direct query also failed: No transactions found")
+                            except Exception as e:
+                                print(f"❌ Direct query error: {e}")
                 
                 if not transactions:
                     st.warning(f"⚠️ No transactions found for user ID {user_id}")
@@ -2556,7 +2566,10 @@ class WebAgent:
                     folder_access_ok, folder_message = self.check_user_folder_access()
                     if folder_access_ok:
                         try:
+                            from user_file_reading_agent import start_user_file_monitoring
                             start_user_file_monitoring(user_id)
+                        except ImportError as e:
+                            print(f"⚠️ User file monitoring not available: {e}")
                         except Exception as e:
                             pass  # Silently handle monitoring errors
                 
@@ -3298,43 +3311,83 @@ class WebAgent:
             from database_config_supabase import supabase
             
             updated_count = 0
+            failed_count = 0
+            
+            # Add delay between requests to avoid overwhelming the database
+            import time
+            
             for ticker in set(list(live_prices.keys()) + list(sector_data.keys())):
                 try:
                     update_data = {}
                     
+                    # Validate data before sending
                     if ticker in live_prices:
-                        update_data['live_price'] = live_prices[ticker]
+                        live_price = live_prices[ticker]
+                        if live_price and live_price > 0:
+                            update_data['live_price'] = float(live_price)
                     
                     if ticker in sector_data:
-                        update_data['sector'] = sector_data[ticker]
+                        sector = sector_data[ticker]
+                        if sector and sector.strip():
+                            update_data['sector'] = str(sector).strip()
                     
-                    if update_data:
-                        # Check if record exists
+                    if not update_data:
+                        print(f"⚠️ No valid data for {ticker}, skipping")
+                        continue
+                    
+                    # Check if record exists
+                    try:
                         existing = supabase.table("stock_data").select("*").eq("ticker", ticker).execute()
                         
                         if existing.data and len(existing.data) > 0:
                             # Update existing record
+                            print(f"🔄 Updating existing stock_data for {ticker}")
                             result = supabase.table("stock_data").update(update_data).eq("ticker", ticker).execute()
                         else:
-                            # Create new record
-                            update_data['ticker'] = ticker
-                            update_data['user_id'] = user_id
-                            result = supabase.table("stock_data").insert(update_data).execute()
+                            # Create new record with required fields
+                            print(f"🔄 Creating new stock_data for {ticker}")
+                            new_record = {
+                                'ticker': str(ticker),
+                                'user_id': int(user_id),
+                                'created_at': datetime.now().isoformat(),
+                                'updated_at': datetime.now().isoformat()
+                            }
+                            new_record.update(update_data)
+                            
+                            result = supabase.table("stock_data").insert(new_record).execute()
                         
                         if result.data:
                             updated_count += 1
                             print(f"✅ Updated stock_data for {ticker}")
                         else:
-                            print(f"⚠️ Failed to update stock_data for {ticker}")
+                            failed_count += 1
+                            print(f"⚠️ Failed to update stock_data for {ticker} - no data returned")
+                            
+                    except Exception as db_error:
+                        failed_count += 1
+                        print(f"⚠️ Database error for {ticker}: {db_error}")
+                        if "400" in str(db_error):
+                            print(f"🔍 Schema validation failed for {ticker} - data: {update_data}")
+                        continue
+                    
+                    # Add small delay to avoid overwhelming the database
+                    time.sleep(0.1)
                             
                 except Exception as e:
+                    failed_count += 1
                     print(f"⚠️ Error updating stock_data for {ticker}: {e}")
                     continue
             
             print(f"✅ Successfully updated {updated_count} stock_data records")
+            if failed_count > 0:
+                print(f"⚠️ Failed to update {failed_count} stock_data records")
             
         except Exception as e:
             print(f"❌ Error updating stock_data table: {e}")
+            print(f"🔍 Error type: {type(e).__name__}")
+            if hasattr(e, 'response'):
+                print(f"🔍 Response status: {e.response.status_code if hasattr(e.response, 'status_code') else 'Unknown'}")
+                print(f"🔍 Response text: {e.response.text if hasattr(e.response, 'text') else 'Unknown'}")
     
     def _save_updated_prices_to_db(self, df: pd.DataFrame, user_id: int):
         """Save updated prices from DataFrame back to the database"""
@@ -3573,6 +3626,28 @@ class WebAgent:
         if self.mftool_client is None:
             self._initialize_mftool()
         return self.mftool_client is not None
+
+    def _safe_database_operation(self, operation_func, max_retries=3, delay=1):
+        """Safely execute database operations with retry logic"""
+        for attempt in range(max_retries):
+            try:
+                return operation_func()
+            except Exception as e:
+                if "Resource temporarily unavailable" in str(e) or "Errno 11" in str(e):
+                    if attempt < max_retries - 1:
+                        print(f"⚠️ Resource temporarily unavailable (attempt {attempt + 1}/{max_retries}), retrying in {delay}s...")
+                        import time
+                        time.sleep(delay)
+                        delay *= 2  # Exponential backoff
+                        continue
+                    else:
+                        print(f"❌ Resource unavailable after {max_retries} attempts: {e}")
+                        raise e
+                else:
+                    # Non-retryable error
+                    raise e
+        
+        return None
 
 # Global web agent instance
 web_agent = WebAgent()
