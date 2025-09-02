@@ -457,9 +457,13 @@ def get_transactions_with_historical_prices(user_id: int = None) -> List[Dict]:
 def save_file_record_supabase(filename: str, file_path: str, user_id: int) -> Optional[Dict]:
     """Save file record using Supabase client"""
     try:
-        # Generate file hash from file path (this was already correct - unique per user due to different paths)
+        # Generate file hash from file path AND user_id to allow different users to have files with same content
         import hashlib
-        file_hash = hashlib.md5(file_path.encode()).hexdigest()
+        # Combine file path and user_id to create a unique hash per user
+        hash_input = f"{file_path}:{user_id}".encode()
+        file_hash = hashlib.md5(hash_input).hexdigest()
+        
+        print(f"💡 Generated hash for {filename}: {file_hash} (includes user_id: {user_id})")
         
         # First, check if a file with the same name already exists for this user
         try:
@@ -474,16 +478,16 @@ def save_file_record_supabase(filename: str, file_path: str, user_id: int) -> Op
         except Exception as check_error:
             print(f"⚠️ Could not check for existing files: {check_error}")
         
-        # Also check if a file with the same hash already exists (global check)
+        # Check if a file with the same hash already exists for this user (should be rare now with user_id in hash)
         try:
             hash_check = supabase.table("investment_files").select("id, filename, user_id").eq("file_hash", file_hash).execute()
             if hash_check.data:
                 for hash_file in hash_check.data:
-                    if hash_file.get('user_id') == user_id and hash_file.get('filename') == filename:
+                    if hash_file.get('user_id') == user_id:
                         print(f"⚠️ File {filename} with hash {file_hash} already exists for user {user_id}")
                         print(f"💡 This is a duplicate upload - returning existing record")
                         return hash_file
-                    elif hash_file.get('user_id') != user_id:
+                    else:
                         print(f"💡 Hash {file_hash} exists for different user {hash_file.get('user_id')} (file: {hash_file.get('filename')})")
                         print(f"💡 This is normal - different users can have files with same content")
         except Exception as hash_check_error:
