@@ -1705,9 +1705,9 @@ class PortfolioAnalytics:
                     st.subheader("📊 Detailed Analysis Tables")
                     
                     # Create two columns for detailed tables
-                    col1, col2 = st.columns(2)
+                    table_col1, table_col2 = st.columns(2)
                     
-                    with col1:
+                    with table_col1:
                         # Sector Analysis Details
                         st.subheader("🏭 Sector Analysis Details")
                         
@@ -1739,31 +1739,10 @@ class PortfolioAnalytics:
                                 use_container_width=True,
                                 hide_index=True
                             )
-                            
-                            # Add sector summary metrics
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric(
-                                    "Total Sectors",
-                                    len(sector_performance),
-                                    f"{len(sector_performance)} sectors covered"
-                                )
-                            with col2:
-                                st.metric(
-                                    "Largest Sector",
-                                    sector_performance.iloc[0]['sector'],
-                                    f"₹{sector_performance.iloc[0]['current_value']:,.2f}"
-                                )
-                            with col3:
-                                st.metric(
-                                    "Smallest Sector",
-                                    sector_performance.iloc[-1]['sector'],
-                                    f"₹{sector_performance.iloc[-1]['current_value']:,.2f}"
-                                )
                         else:
                             st.info("No detailed sector data available for table display")
                     
-                    with col2:
+                    with table_col2:
                         # Channel Analysis Details
                         st.subheader("📡 Channel Analysis Details")
                         
@@ -1795,8 +1774,43 @@ class PortfolioAnalytics:
                                 use_container_width=True,
                                 hide_index=True
                             )
-                            
-                            # Add channel summary metrics
+                        else:
+                            st.info("No detailed channel data available for table display")
+                    
+                    # Add summary metrics below the tables in a balanced layout
+                    st.subheader("📈 Summary Metrics")
+                    
+                    # Create two columns for summary metrics
+                    metrics_col1, metrics_col2 = st.columns(2)
+                    
+                    with metrics_col1:
+                        # Sector summary metrics
+                        if sector_table_data:
+                            st.subheader("🏭 Sector Summary")
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric(
+                                    "Total Sectors",
+                                    len(sector_performance),
+                                    f"{len(sector_performance)} sectors covered"
+                                )
+                            with col2:
+                                st.metric(
+                                    "Largest Sector",
+                                    sector_performance.iloc[0]['sector'],
+                                    f"₹{sector_performance.iloc[0]['current_value']:,.2f}"
+                                )
+                            with col3:
+                                st.metric(
+                                    "Smallest Sector",
+                                    sector_performance.iloc[-1]['sector'],
+                                    f"₹{sector_performance.iloc[-1]['current_value']:,.2f}"
+                                )
+                    
+                    with metrics_col2:
+                        # Channel summary metrics
+                        if channel_table_data:
+                            st.subheader("📡 Channel Summary")
                             col1, col2, col3 = st.columns(3)
                             with col1:
                                 st.metric(
@@ -1816,8 +1830,6 @@ class PortfolioAnalytics:
                                     channel_performance.iloc[-1]['channel'],
                                     f"₹{channel_performance.iloc[-1]['current_value']:,.2f}"
                                 )
-                        else:
-                            st.info("No detailed channel data available for table display")
                     
                     # Best Stock in Each Sector
                     st.subheader("⭐ Best Stock in Each Sector (1-Year Buy Transactions)")
