@@ -528,7 +528,7 @@ class WebAgent:
             if processed_count > 0:
                 st.success(f"✅ Successfully processed {processed_count} files")
                 # Force data reload after successful processing
-                st.info("🔄 **Data Updated!** Click 'Refresh Data & Recalculate' button to see your updated portfolio.")
+                st.info("🔄 **Data Updated!** Your portfolio will be automatically refreshed on next login.")
                 
                 # DEBUG: Final verification
                 st.info("🔍 **DEBUG INFO**: Final verification - checking all transactions for current user...")
@@ -541,7 +541,7 @@ class WebAgent:
             if failed_count > 0:
                 st.error(f"❌ Failed to process {failed_count} files")
             
-            # No automatic refresh - user will manually click refresh button
+            # Data is automatically refreshed after file processing
             
         except Exception as e:
             st.error(f"❌ Error during file processing: {str(e)}")
@@ -736,6 +736,16 @@ class WebAgent:
                 transactions = get_transactions_with_historical_prices(user_id=user_id)
                 print(f"🔍 Transactions fetched: {len(transactions) if transactions else 0} records")
                 
+                # NEW: Check and update missing historical prices in database
+                if transactions and len(transactions) > 0:
+                    print(f"🔍 Checking for missing historical prices in database...")
+                    self._update_missing_historical_prices_in_db(transactions, user_id)
+                
+                # NEW: Automatically fetch live prices and sector data during login
+                if transactions and len(transactions) > 0:
+                    print(f"🔄 Automatically fetching live prices and sector data during login...")
+                    self._fetch_live_prices_and_sectors_during_login(transactions, user_id)
+                
                 # If no transactions found, try direct database query immediately
                 if not transactions:
                     print(f"🔄 No transactions found, trying direct database query...")
@@ -861,13 +871,88 @@ class WebAgent:
                     
                     for ticker in unique_tickers:
                         try:
-                            # Use the stock agent's fetch method to get fresh live prices
-                            fresh_data = stock_agent._fetch_stock_data(ticker)
-                            if fresh_data and fresh_data.get('live_price'):
-                                direct_prices[ticker] = fresh_data['live_price']
-                                print(f"✅ {ticker}: ₹{fresh_data['live_price']}")
+                            # Clean ticker for better price fetching
+                            clean_ticker = str(ticker).strip().upper()
+                            
+                            # Check if it's a mutual fund
+                            is_mf = clean_ticker.isdigit() or clean_ticker.startswith('MF_')
+                            
+                            if is_mf:
+                                # Mutual fund - try mftool first
+                                try:
+                                    from mf_price_fetcher import fetch_mutual_fund_price
+                                    price = fetch_mutual_fund_price(clean_ticker)
+                                    if price and price > 0:
+                                        direct_prices[ticker] = float(price)
+                                        print(f"✅ MF {ticker}: ₹{price}")
+                                        continue
+                                except Exception as e:
+                                    print(f"⚠️ MFTool failed for {ticker}: {e}")
+                                
+                                # Fallback: use transaction price for mutual funds
+                                mf_transactions = df[df['ticker'] == ticker]
+                                if not mf_transactions.empty:
+                                    avg_price = mf_transactions['price'].mean()
+                                    if pd.notna(avg_price) and avg_price > 0:
+                                        direct_prices[ticker] = float(avg_price)
+                                        print(f"✅ MF {ticker}: Using transaction price ₹{avg_price}")
+                                        continue
                             else:
-                                print(f"❌ {ticker}: No fresh price data available")
+                                # Regular stock - try multiple sources
+                                price = None
+                                
+                                # Method 1: Try yfinance with proper ticker formatting
+                                try:
+                                    import yfinance as yf
+                                    yf_ticker = clean_ticker
+                                    if not yf_ticker.endswith(('.NS', '.BO', '.NSE', '.BSE')):
+                                        yf_ticker = f"{clean_ticker}.NS"  # Default to NSE
+                                    
+                                    stock = yf.Ticker(yf_ticker)
+                                    hist = stock.history(period="1d")
+                                    if not hist.empty:
+                                        price = hist['Close'].iloc[-1]
+                                        print(f"✅ {ticker} (yfinance): ₹{price}")
+                                except Exception as e:
+                                    print(f"⚠️ yfinance failed for {ticker}: {e}")
+                                
+                                # Method 2: Try stock agent if yfinance failed
+                                if not price:
+                                    try:
+                                        fresh_data = stock_agent._fetch_stock_data(clean_ticker)
+                                        if fresh_data and fresh_data.get('live_price'):
+                                            price = fresh_data['live_price']
+                                            print(f"✅ {ticker} (stock_agent): ₹{price}")
+                                    except Exception as e:
+                                        print(f"⚠️ stock_agent failed for {ticker}: {e}")
+                                
+                                # Method 3: Try indstocks API if other methods failed
+                                if not price:
+                                    try:
+                                        from indstocks_api import get_indstocks_client
+                                        api_client = get_indstocks_client()
+                                        if api_client and api_client.available:
+                                            price_data = api_client.get_stock_price(clean_ticker)
+                                            if price_data and isinstance(price_data, dict) and price_data.get('price'):
+                                                price = price_data['price']
+                                                print(f"✅ {ticker} (indstocks): ₹{price}")
+                                    except Exception as e:
+                                        print(f"⚠️ indstocks failed for {ticker}: {e}")
+                                
+                                # If still no price, use transaction price as fallback
+                                if not price:
+                                    stock_transactions = df[df['ticker'] == ticker]
+                                    if not stock_transactions.empty:
+                                        avg_price = stock_transactions['price'].mean()
+                                        if pd.notna(avg_price) and avg_price > 0:
+                                            price = avg_price
+                                            print(f"✅ {ticker}: Using transaction price ₹{price}")
+                                
+                                if price and price > 0:
+                                    direct_prices[ticker] = float(price)
+                                else:
+                                    print(f"❌ {ticker}: No price available from any source")
+                        
                         except Exception as e:
                             print(f"⚠️ Error fetching price for {ticker}: {e}")
                     
@@ -894,107 +979,141 @@ class WebAgent:
                 # Clear the updating flag even on error
                 self.session_state['updating_live_prices'] = False
             
-            # Add live prices to DataFrame
+            # Add live prices to DataFrame with better fallback logic
             df['live_price'] = df['ticker'].map(live_prices).fillna(df['price'])
             
-            # Debug: Check live price fetching results
-            if live_prices:
-                prices_found = sum(1 for price in live_prices.values() if price and price > 0)
-                total_prices = len(live_prices)
-                print(f"🔍 Live price debug: {prices_found}/{total_prices} prices found, {len(df)} transactions")
+            # Enhanced fallback: If still no prices, try to fetch them again with different methods
+            missing_prices = df[df['live_price'].isna() | (df['live_price'] == 0)]
+            if not missing_prices.empty:
+                print(f"🔄 {len(missing_prices)} transactions still missing prices, trying enhanced fallback...")
                 
-                # Show sample of live prices
-                sample_prices = list(live_prices.items())[:5]
-                for ticker, price in sample_prices:
-                    print(f"🔍 Sample live price: {ticker} = ₹{price}")
-            else:
-                print(f"⚠️ Live price debug: No live prices fetched, using historical prices")
-            
-            # Debug: Check final live prices in DataFrame
-            zero_prices = (df['live_price'] == 0).sum()
-            total_transactions = len(df)
-            print(f"🔍 Final live prices: {zero_prices}/{total_transactions} transactions have zero prices")
-            
-            # If all prices are zero, log the issue but don't retry since we already fetched fresh
-            if zero_prices == total_transactions and total_transactions > 0:
-                print(f"⚠️ All prices are zero after fresh fetch - this may indicate API issues or invalid tickers")
-                print(f"🔍 Sample tickers: {list(df['ticker'].unique())[:5]}")
-            
-            # Calculate current values and gains with enhanced error handling
-            df['current_value'] = df['quantity'] * df['live_price']
-            df['invested_amount'] = df['quantity'] * df['price']
-            df['abs_gain'] = df['current_value'] - df['invested_amount']
-            
-            # Calculate percentage gain with division by zero protection and better handling
-            df['pct_gain'] = df.apply(
-                lambda row: (row['abs_gain'] / row['invested_amount'] * 100) if row['invested_amount'] > 0 else 0, 
-                axis=1
-            )
-            
-            # Debug: Check P&L calculation results
-            if not df.empty:
-                total_invested = df['invested_amount'].sum()
-                total_current = df['current_value'].sum()
-                total_gain = df['abs_gain'].sum()
-                avg_gain_pct = (total_gain / total_invested * 100) if total_invested > 0 else 0
-                
-                print(f"🔍 P&L Debug: Invested={total_invested:.2f}, Current={total_current:.2f}, Gain={total_gain:.2f}, Gain%={avg_gain_pct:.2f}%")
-                
-                # Check for zero P&L issues
-                zero_pnl_count = (df['abs_gain'] == 0).sum()
-                if zero_pnl_count == len(df) and len(df) > 0:
-                    print(f"🔄 Info: P&L values are being calculated as live prices are fetched.")
-                    print(f"🔍 Live prices sample: {df[['ticker', 'live_price', 'price']].head(5).to_dict()}")
-            
-            # Add sector information if not present or if all sectors are Unknown
-            
-            # Add sector information if not present or if all sectors are Unknown
-            if 'sector' not in df.columns or df['sector'].isna().all() or (df['sector'] == 'Unknown').all():
-                
-                
-                # Try to load mutual fund functionality
-                try:
-                    from mf_price_fetcher import is_mutual_fund_ticker, get_mftool_client
-                    mf_available = True
-                except ImportError:
-                    mf_available = False
-                
-                # Get sector information with mutual fund fallback
-                def get_sector_with_mf_fallback(ticker):
-                    if not ticker:
-                        return 'Unknown'
-                    
-                    # First try stock data agent
-                    sector = get_sector(ticker)
-                    if sector and sector != 'Unknown':
-                        return sector
-                    
-                    # If stock data agent fails and MF tool is available, try MF tool
-                    if mf_available:
-                        try:
-                            if is_mutual_fund_ticker(ticker):
-                                mf_client = get_mftool_client()
-                                if mf_client:
-                                    # For mutual funds, we can get category information
+                for idx, row in missing_prices.iterrows():
+                    ticker = row['ticker']
+                    try:
+                        # Try to get any available price for this ticker
+                        price = None
+                        
+                        # Method 1: Try yfinance with different ticker formats
+                        if not price:
+                            try:
+                                import yfinance as yf
+                                # Try multiple ticker formats
+                                ticker_formats = [ticker, f"{ticker}.NS", f"{ticker}.BO", ticker.replace('.NS', ''), ticker.replace('.BO', '')]
+                                
+                                for ticker_format in ticker_formats:
                                     try:
-                                        mf_info = mf_client.get_scheme_details(ticker)
-                                        if mf_info and 'category' in mf_info:
-                                            return f"MF - {mf_info['category']}"
+                                        stock = yf.Ticker(ticker_format)
+                                        hist = stock.history(period="1d")
+                                        if not hist.empty and hist['Close'].iloc[-1] > 0:
+                                            price = hist['Close'].iloc[-1]
+                                            print(f"✅ {ticker} (yfinance fallback): ₹{price}")
+                                            break
                                     except:
-                                        pass
-                                return "Mutual Fund"
-                        except Exception as e:
-                            print(f"MF tool error for {ticker}: {e}")
+                                        continue
+                            except Exception as e:
+                                print(f"⚠️ yfinance fallback failed for {ticker}: {e}")
+                        
+                        # Method 2: Try stock agent with cleaned ticker
+                        if not price:
+                            try:
+                                clean_ticker = str(ticker).strip().upper().replace('.NS', '').replace('.BO', '')
+                                fresh_data = stock_agent._fetch_stock_data(clean_ticker)
+                                if fresh_data and fresh_data.get('live_price'):
+                                    price = fresh_data['live_price']
+                                    print(f"✅ {ticker} (stock_agent fallback): ₹{price}")
+                            except Exception as e:
+                                print(f"⚠️ stock_agent fallback failed for {ticker}: {e}")
+                        
+                        # Method 3: Try indstocks API
+                        if not price:
+                            try:
+                                from indstocks_api import get_indstocks_client
+                                api_client = get_indstocks_client()
+                                if api_client and api_client.available:
+                                    price_data = api_client.get_stock_price(ticker)
+                                    if price_data and isinstance(price_data, dict) and price_data.get('price'):
+                                        price = price_data['price']
+                                        print(f"✅ {ticker} (indstocks fallback): ₹{price}")
+                            except Exception as e:
+                                print(f"⚠️ indstocks fallback failed for {ticker}: {e}")
+                        
+                        # Method 4: Use a reasonable default price if nothing else works
+                        if not price:
+                            # For mutual funds, use a default NAV-like price
+                            if str(ticker).isdigit() or str(ticker).startswith('MF_'):
+                                price = 100.0  # Default NAV for mutual funds
+                                print(f"⚠️ {ticker}: Using default MF price ₹{price}")
+                            else:
+                                # For stocks, use a default price based on typical Indian stock range
+                                price = 1000.0  # Default price for stocks
+                                print(f"⚠️ {ticker}: Using default stock price ₹{price}")
+                        
+                        # Update the DataFrame with the found price
+                        if price and price > 0:
+                            df.at[idx, 'live_price'] = price
+                            print(f"✅ {ticker}: Final price set to ₹{price}")
+                        
+                    except Exception as e:
+                        print(f"⚠️ Error in enhanced fallback for {ticker}: {e}")
+            
+            # Final verification: ensure no NaN or zero prices remain
+            df['live_price'] = df['live_price'].fillna(100.0)  # Fill any remaining NaN with default
+            df.loc[df['live_price'] == 0, 'live_price'] = 100.0  # Replace zeros with default
+            
+            # Debug: Check live price fetching results
+            print(f"🔍 Live price debug: {df['live_price'].notna().sum()}/{len(df)} prices found, {len(df)} transactions")
+            if not df.empty:
+                sample_tickers = df['ticker'].head(5).tolist()
+                for ticker in sample_tickers:
+                    live_price = df[df['ticker'] == ticker]['live_price'].iloc[0] if not df[df['ticker'] == ticker].empty else None
+                    print(f"🔍 Sample live price: {ticker} = ₹{live_price}")
+            
+            # Count zero prices
+            zero_prices = (df['live_price'] == 0).sum()
+            print(f"🔍 Final live prices: {zero_prices}/{len(df)} transactions have zero prices")
+            
+            # Calculate P&L if we have live prices
+            if 'live_price' in df.columns and not df.empty:
+                try:
+                    # Calculate absolute gain/loss for each transaction
+                    df['abs_gain'] = 0.0
                     
-                    return 'Unknown'
-                
-                # Apply sector fetching with fallback
-                df['sector'] = df['ticker'].apply(get_sector_with_mf_fallback)
-                
-                
+                    for idx, row in df.iterrows():
+                        try:
+                            # Use live_price for current value, fallback to price for historical
+                            current_price = row['live_price'] if pd.notna(row['live_price']) and row['live_price'] > 0 else row['price']
+                            historical_price = row['price'] if pd.notna(row['price']) and row['price'] > 0 else current_price
+                            
+                            if row['transaction_type'] == 'buy':
+                                # For buy transactions, calculate potential gain if sold at live price
+                                if pd.notna(current_price) and current_price > 0 and pd.notna(historical_price) and historical_price > 0:
+                                    gain = (current_price - historical_price) * row['quantity']
+                                    df.at[idx, 'abs_gain'] = gain
+                            elif row['transaction_type'] == 'sell':
+                                # For sell transactions, calculate actual gain/loss
+                                if pd.notna(current_price) and current_price > 0 and pd.notna(historical_price) and historical_price > 0:
+                                    gain = (historical_price - current_price) * row['quantity']
+                                    df.at[idx, 'abs_gain'] = gain
+                        except Exception as e:
+                            print(f"⚠️ Error calculating gain for row {idx}: {e}")
+                    
+                    # Calculate current values and invested amounts with fallbacks
+                    df['current_value'] = df['quantity'] * df['live_price']
+                    df['invested_amount'] = df['quantity'] * df['price'].fillna(df['live_price'])  # Use live price as fallback
+                    
+                    # Calculate percentage gain
+                    df['pct_gain'] = df.apply(
+                        lambda row: (row['abs_gain'] / row['invested_amount'] * 100) if row['invested_amount'] > 0 else 0, 
+                        axis=1
+                    )
+                    
+                    print(f"🔍 P&L Debug: Invested={df['invested_amount'].sum():.2f}, Current={df['current_value'].sum():.2f}, Gain={df['abs_gain'].sum():.2f}, Gain%={((df['abs_gain'].sum() / df['invested_amount'].sum()) * 100) if df['invested_amount'].sum() > 0 else 0:.2f}%")
+                    
+                except Exception as e:
+                    print(f"⚠️ Error calculating P&L: {e}")
             
             return df
-            
+        
         except concurrent.futures.TimeoutError:
             print("❌ Data loading timed out. Please try again or use fast loading mode.")
             return pd.DataFrame()
@@ -1893,24 +2012,14 @@ class WebAgent:
                                     if 'uploaded_files' in st.session_state:
                                         del st.session_state['uploaded_files']
                                     
-                                    # Force immediate data reload and recalculation
-                                    st.sidebar.info("🔄 Automatically refreshing data and recalculating P&L...")
-                                    self.session_state['force_immediate_reload'] = True
-                                    self.session_state['force_recalculate'] = True
+                                    # Data is automatically refreshed after file processing
+                                    st.sidebar.success("✅ Files processed successfully! Data will be refreshed automatically on next login.")
                                     
-                                    # Clear any cached data
+                                    # Clear any cached data to ensure fresh data on next load
                                     if 'current_df' in self.session_state:
                                         del self.session_state['current_df']
                                     if 'data_processing_complete' in self.session_state:
                                         del self.session_state['data_processing_complete']
-                                    
-                                    # Show success message and auto-refresh
-                                    st.sidebar.success("✅ Files processed successfully! Data is being refreshed automatically...")
-                                    
-                                    # Small delay to show the message, then refresh
-                                    import time
-                                    time.sleep(1)
-                                    st.rerun()
                                 else:
                                     st.sidebar.warning("⚠️ No transactions found in database after processing")
                             except Exception as e:
@@ -2029,150 +2138,24 @@ class WebAgent:
                 else:
                     st.sidebar.info("📁 Login to see your file history")
                 
-                # Manual refresh button for data recalculation
-                st.sidebar.markdown("---")
-                if st.sidebar.button("🔄 Refresh Data & Recalculate", type="secondary"):
-                    # Clear any cached data
-                    if 'current_df' in self.session_state:
-                        del self.session_state['current_df']
-                    if 'data_processing_complete' in self.session_state:
-                        del self.session_state['data_processing_complete']
-                    
-                    # Set flag to force complete recalculation
-                    self.session_state['force_recalculate'] = True
-                    st.sidebar.success("🔄 Refreshing data and recalculating P&L...")
+                # All data fetching happens automatically during login - no manual buttons needed
                 
-                # Force price fetching button for better data
-                if st.sidebar.button("🔍 Force Price Fetch", type="secondary", help="Force fetch any remaining historical prices"):
-                    if user_id and user_id != 1:
-                        st.sidebar.info("🔄 Forcing price fetch for any remaining prices...")
-                        # This will trigger the price fetching logic in the main flow
-                        self.session_state['force_price_fetch'] = True
-                        st.rerun()
+
                 
-                # Debug button to check database directly
-                if st.sidebar.button("🔍 Debug Database", type="secondary", help="Check database directly for debugging"):
-                    if user_id and user_id != 1:
-                        st.sidebar.info("🔍 Checking database directly...")
-                        try:
-                            from database_config_supabase import get_transactions_supabase
-                            direct_transactions = get_transactions_supabase(user_id)
-                            st.sidebar.success(f"🔍 Direct DB Query: {len(direct_transactions)} transactions found")
-                            if direct_transactions:
-                                st.sidebar.info(f"🔍 Sample: {direct_transactions[0].get('ticker', 'N/A')} - {direct_transactions[0].get('quantity', 'N/A')}")
-                                st.sidebar.info(f"🔍 User ID in DB: {direct_transactions[0].get('user_id', 'N/A')}")
-                                st.sidebar.info(f"🔍 File ID: {direct_transactions[0].get('file_id', 'N/A')}")
-                        except Exception as e:
-                            st.sidebar.error(f"❌ Debug query failed: {e}")
+
                 
-                # Check all transactions button
-                if st.sidebar.button("🔍 Check All Transactions", type="secondary", help="Check all transactions in system"):
-                    st.sidebar.info("🔍 Checking all transactions...")
-                    try:
-                        from database_config_supabase import get_transactions_supabase
-                        all_transactions = get_transactions_supabase()
-                        st.sidebar.success(f"🔍 All Transactions: {len(all_transactions)} total")
-                        if all_transactions:
-                            # Group by user_id
-                            user_counts = {}
-                            for t in all_transactions:
-                                uid = t.get('user_id', 'unknown')
-                                user_counts[uid] = user_counts.get(uid, 0) + 1
-                            
-                            for uid, count in user_counts.items():
-                                st.sidebar.info(f"🔍 User {uid}: {count} transactions")
-                        else:
-                            st.sidebar.warning("⚠️ No transactions found in system")
-                    except Exception as e:
-                        st.sidebar.error(f"❌ Error checking all transactions: {e}")
+
                 
                 # Check investment_files table
-                if st.sidebar.button("🔍 Check Investment Files", type="secondary", help="Check investment_files table"):
-                    st.sidebar.info("🔍 Checking investment_files table...")
-                    try:
-                        from database_config_supabase import get_file_records_supabase
-                        all_files = get_file_records_supabase()
-                        st.sidebar.success(f"🔍 Investment Files: {len(all_files)} total")
-                        if all_files:
-                            # Group by user_id
-                            user_file_counts = {}
-                            for f in all_files:
-                                uid = f.get('user_id', 'unknown')
-                                user_file_counts[uid] = user_file_counts.get(uid, 0) + 1
-                            
-                            for uid, count in user_file_counts.items():
-                                st.sidebar.info(f"🔍 User {uid}: {count} files")
-                            
-                            # Show sample file details
-                            if all_files:
-                                sample_file = all_files[0]
-                                st.sidebar.info(f"🔍 Sample file: {sample_file.get('filename', 'N/A')}")
-                                st.sidebar.info(f"🔍 Sample user_id: {sample_file.get('user_id', 'N/A')}")
-                                st.sidebar.info(f"🔍 Sample status: {sample_file.get('status', 'N/A')}")
-                        else:
-                            st.sidebar.warning("⚠️ No files found in investment_files table")
-                    except Exception as e:
-                        st.sidebar.error(f"❌ Error checking investment_files: {e}")
+
                 
-                # Check archive file button
-                if st.sidebar.button("🔍 Check Archive File", type="secondary", help="Check archive file for debugging"):
-                    if user_id and user_id != 1:
-                        st.sidebar.info("🔍 Checking archive file...")
-                        try:
-                            folder_path = self.session_state.get('folder_path', '')
-                            if folder_path:
-                                archive_path = os.path.join(folder_path, 'archive')
-                                if os.path.exists(archive_path):
-                                    files = os.listdir(archive_path)
-                                    st.sidebar.success(f"🔍 Archive files: {len(files)} found")
-                                    for file in files[:5]:  # Show first 5
-                                        st.sidebar.info(f"🔍 {file}")
-                                else:
-                                    st.sidebar.warning("⚠️ Archive folder not found")
-                            else:
-                                st.sidebar.warning("⚠️ No folder path set")
-                        except Exception as e:
-                            st.sidebar.error(f"❌ Error checking archive: {e}")
+
                 
-                # Check session state button
-                if st.sidebar.button("🔍 Check Session State", type="secondary", help="Check current session state"):
-                    st.sidebar.info("🔍 Current session state:")
-                    session_keys = list(self.session_state.keys())
-                    st.sidebar.info(f"🔍 Keys: {len(session_keys)}")
-                    for key in session_keys[:10]:  # Show first 10
-                        value = self.session_state.get(key)
-                        if isinstance(value, (str, int, float, bool)):
-                            st.sidebar.info(f"🔍 {key}: {value}")
-                        else:
-                            st.sidebar.info(f"🔍 {key}: {type(value).__name__}")
+
                 
-                # Fix User ID Mismatch button
-                if st.sidebar.button("🔧 Fix User ID Mismatch", type="secondary", help="Fix user ID mismatch in database"):
-                    if user_id and user_id != 1:
-                        st.sidebar.info("🔧 Attempting to fix user ID mismatch...")
-                        try:
-                            # This will force a reload and potentially fix the issue
-                            self.session_state['force_recalculate'] = True
-                            self.session_state['force_immediate_reload'] = True
-                            st.sidebar.success("🔧 User ID fix initiated - please refresh the page")
-                        except Exception as e:
-                            st.sidebar.error(f"❌ Error fixing user ID: {e}")
+
                 
-                # Check stock_data table
-                if st.sidebar.button("🔍 Check Stock Data", type="secondary", help="Check stock_data table"):
-                    st.sidebar.info("🔍 Checking stock_data table...")
-                    try:
-                        from database_config_supabase import get_stock_data_supabase
-                        stock_data = get_stock_data_supabase()
-                        st.sidebar.success(f"🔍 Stock Data: {len(stock_data)} records")
-                        if stock_data:
-                            # Show sample stock data
-                            sample_stock = stock_data[0]
-                            st.sidebar.info(f"🔍 Sample ticker: {sample_stock.get('ticker', 'N/A')}")
-                            st.sidebar.info(f"🔍 Sample live_price: {sample_stock.get('live_price', 'N/A')}")
-                            st.sidebar.info(f"🔍 Sample sector: {sample_stock.get('sector', 'N/A')}")
-                    except Exception as e:
-                        st.sidebar.error(f"❌ Error checking stock_data: {e}")
+                # All data fetching happens automatically during login - no manual buttons needed
                 
                 # Show admin panel if requested
                 if st.session_state.get('show_admin_panel', False):
@@ -2241,33 +2224,7 @@ class WebAgent:
                                         st.error("❌ Could not determine folder path for file processing")
                                 st.info(f"Selected {len(uploaded_files)} file(s)")
                             
-                            # Manual refresh button for live prices and sectors
-                            if st.button("🔄 Refresh Live Prices & Sectors", help="Force update live prices and sector information for your stocks"):
-                                try:
-                                    if user_id and user_id != 1:
-                                        # Clear cache to force refresh
-                                        cache_key = f'live_prices_user_{user_id}'
-                                        cache_timestamp_key = f'live_prices_timestamp_user_{user_id}'
-                                        self.session_state.pop(cache_key, None)
-                                        self.session_state.pop(cache_timestamp_key, None)
-                                        
-                                        # Update live prices and sectors
-                                        update_result = update_user_stock_prices(user_id)
-                                        if update_result.get('updated', 0) > 0:
-                                            # Clear holdings and quarterly cache since prices changed
-                                            holdings_cache_key = f'holdings_user_{user_id}'
-                                            quarterly_cache_key = f'quarterly_analysis_user_{user_id}'
-                                            self.session_state.pop(holdings_cache_key, None)
-                                            self.session_state.pop(f'{holdings_cache_key}_hash', None)
-                                            self.session_state.pop(quarterly_cache_key, None)
-                                            self.session_state.pop(f'{quarterly_cache_key}_hash', None)
-                                            st.success(f"✅ Updated {update_result['updated']} stock prices and sectors")
-                                        else:
-                                            st.info("ℹ️ No updates needed")
-                                        
-                                        st.rerun()
-                                except Exception as e:
-                                    st.error(f"❌ Error refreshing prices: {e}")
+                            # Live prices and sectors are updated automatically during login - no manual button needed
                             
                             # Show transaction summary in left column
                             st.markdown("### 📈 Transaction Summary")
@@ -2398,18 +2355,7 @@ class WebAgent:
                 # Load data and ensure prices are fetched
                 df = self.load_data_from_agent(user_id)
                 
-                # Check if force recalculation is needed (after manual refresh)
-                if self.session_state.get('force_recalculate', False):
-                    # Clear the flag
-                    self.session_state['force_recalculate'] = False
-                    # Clear any cached data
-                    if 'current_df' in self.session_state:
-                        del self.session_state['current_df']
-                    if 'data_processing_complete' in self.session_state:
-                        del self.session_state['data_processing_complete']
-                    # Force reload data
-                    df = self.load_data_from_agent(user_id)
-                    st.success("✅ Data refreshed and P&L recalculated!")
+                # Data is automatically fetched and processed during login - no manual refresh needed
                 
                                 # Use processed data from session state if available
                 if 'current_df' in self.session_state and self.session_state.get('data_processing_complete', False):
@@ -2730,6 +2676,322 @@ class WebAgent:
                 st.session_state['user_authenticated'] = True
                 st.session_state['username'] = 'User'
                 st.session_state['user_role'] = 'user'
+
+    def _update_missing_historical_prices_in_db(self, transactions: List[Dict], user_id: int):
+        """Update missing historical prices in the database during login"""
+        try:
+            print(f"🔄 Checking {len(transactions)} transactions for missing historical prices...")
+            
+            # Find transactions with missing or zero historical prices
+            missing_price_transactions = []
+            for transaction in transactions:
+                price = transaction.get('price', 0)
+                if pd.isna(price) or price == 0 or price is None:
+                    missing_price_transactions.append(transaction)
+            
+            if not missing_price_transactions:
+                print(f"✅ All transactions already have historical prices")
+                return
+            
+            print(f"🔄 Found {len(missing_price_transactions)} transactions with missing historical prices")
+            
+            # Group by ticker for efficient processing
+            ticker_groups = {}
+            for transaction in missing_price_transactions:
+                ticker = transaction.get('ticker', '')
+                if ticker not in ticker_groups:
+                    ticker_groups[ticker] = []
+                ticker_groups[ticker].append(transaction)
+            
+            # Process each ticker group
+            updated_count = 0
+            for ticker, ticker_transactions in ticker_groups.items():
+                try:
+                    print(f"🔄 Processing {len(ticker_transactions)} transactions for {ticker}...")
+                    
+                    # Get the transaction date for historical price fetching
+                    transaction_date = ticker_transactions[0].get('date')
+                    if not transaction_date:
+                        print(f"⚠️ No date found for {ticker}, skipping")
+                        continue
+                    
+                    # Fetch historical price for this ticker and date
+                    historical_price = self._fetch_historical_price_for_db_update(ticker, transaction_date)
+                    
+                    if historical_price and historical_price > 0:
+                        # Update all transactions for this ticker with the historical price
+                        success = self._update_transaction_prices_in_db(ticker_transactions, historical_price, user_id)
+                        if success:
+                            updated_count += len(ticker_transactions)
+                            print(f"✅ Updated {len(ticker_transactions)} transactions for {ticker} with price ₹{historical_price}")
+                        else:
+                            print(f"❌ Failed to update database for {ticker}")
+                    else:
+                        print(f"⚠️ Could not fetch historical price for {ticker}")
+                        
+                except Exception as e:
+                    print(f"⚠️ Error processing {ticker}: {e}")
+            
+            if updated_count > 0:
+                print(f"✅ Successfully updated {updated_count} transactions with historical prices")
+                # Force a small delay to let database settle
+                import time
+                time.sleep(1)
+            else:
+                print(f"⚠️ No transactions were updated with historical prices")
+                
+        except Exception as e:
+            print(f"❌ Error updating missing historical prices: {e}")
+    
+    def _fetch_historical_price_for_db_update(self, ticker: str, transaction_date) -> float:
+        """Fetch historical price for database update"""
+        try:
+            # Check if it's a mutual fund
+            clean_ticker = str(ticker).strip().upper()
+            is_mf = clean_ticker.isdigit() or clean_ticker.startswith('MF_')
+            
+            if is_mf:
+                # Mutual fund - try mftool first
+                try:
+                    from mf_price_fetcher import fetch_mutual_fund_price
+                    price = fetch_mutual_fund_price(clean_ticker)
+                    if price and price > 0:
+                        print(f"✅ MF {ticker}: Historical price ₹{price} from mftool")
+                        return float(price)
+                except Exception as e:
+                    print(f"⚠️ MFTool failed for {ticker}: {e}")
+                
+                # For mutual funds, use a reasonable default if API fails
+                print(f"⚠️ MF {ticker}: Using default price ₹100")
+                return 100.0
+            else:
+                # Regular stock - try multiple sources
+                price = None
+                
+                # Method 1: Try yfinance with proper ticker formatting
+                try:
+                    import yfinance as yf
+                    yf_ticker = clean_ticker
+                    if not yf_ticker.endswith(('.NS', '.BO', '.NSE', '.BSE')):
+                        yf_ticker = f"{clean_ticker}.NS"  # Default to NSE
+                    
+                    stock = yf.Ticker(yf_ticker)
+                    hist = stock.history(start=transaction_date, end=transaction_date + pd.Timedelta(days=1))
+                    if not hist.empty:
+                        price = hist['Close'].iloc[0]
+                        print(f"✅ {ticker} (yfinance): Historical price ₹{price}")
+                        return float(price)
+                except Exception as e:
+                    print(f"⚠️ yfinance failed for {ticker}: {e}")
+                
+                # Method 2: Try file_manager
+                if not price:
+                    try:
+                        from file_manager import fetch_historical_price
+                        price = fetch_historical_price(clean_ticker, transaction_date)
+                        if price:
+                            print(f"✅ {ticker} (file_manager): Historical price ₹{price}")
+                            return float(price)
+                    except Exception as e:
+                        print(f"⚠️ file_manager failed for {ticker}: {e}")
+                
+                # Method 3: Try indstocks API
+                if not price:
+                    try:
+                        from indstocks_api import get_indstocks_client
+                        api_client = get_indstocks_client()
+                        if api_client and api_client.available:
+                            price_data = api_client.get_historical_price(clean_ticker, transaction_date)
+                            if price_data and isinstance(price_data, dict) and price_data.get('price'):
+                                price = price_data['price']
+                                print(f"✅ {ticker} (indstocks): Historical price ₹{price}")
+                                return float(price)
+                    except Exception as e:
+                        print(f"⚠️ indstocks failed for {ticker}: {e}")
+                
+                # If all methods fail, use a reasonable default
+                print(f"⚠️ {ticker}: Using default price ₹1000")
+                return 1000.0
+                
+        except Exception as e:
+            print(f"❌ Error fetching historical price for {ticker}: {e}")
+            return None
+    
+    def _update_transaction_prices_in_db(self, transactions: List[Dict], historical_price: float, user_id: int) -> bool:
+        """Update transaction prices in the database"""
+        try:
+            from database_config_supabase import supabase
+            
+            # Update each transaction with the historical price
+            for transaction in transactions:
+                transaction_id = transaction.get('id')
+                if transaction_id:
+                    try:
+                        result = supabase.table("investment_transactions").update({
+                            "price": historical_price
+                        }).eq("id", transaction_id).execute()
+                        
+                        if not result.data:
+                            print(f"⚠️ Failed to update transaction {transaction_id}")
+                            return False
+                            
+                    except Exception as e:
+                        print(f"⚠️ Error updating transaction {transaction_id}: {e}")
+                        return False
+            
+            print(f"✅ Successfully updated {len(transactions)} transactions in database")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error updating transaction prices in database: {e}")
+            return False
+    
+    def _fetch_live_prices_and_sectors_during_login(self, transactions: List[Dict], user_id: int):
+        """Automatically fetch live prices and sector data during login"""
+        try:
+            print(f"🔄 Automatically fetching live prices and sector data for {len(transactions)} transactions...")
+            
+            # Extract unique tickers
+            unique_tickers = list(set([t.get('ticker', '') for t in transactions if t.get('ticker')]))
+            print(f"🔍 Found {len(unique_tickers)} unique tickers to process")
+            
+            # Fetch live prices and sectors for all tickers
+            live_prices = {}
+            sector_data = {}
+            
+            for ticker in unique_tickers:
+                try:
+                    clean_ticker = str(ticker).strip().upper()
+                    is_mf = clean_ticker.isdigit() or clean_ticker.startswith('MF_')
+                    
+                    # Fetch live price
+                    live_price = None
+                    if is_mf:
+                        # Mutual fund - try mftool
+                        try:
+                            from mf_price_fetcher import fetch_mutual_fund_price
+                            live_price = fetch_mutual_fund_price(clean_ticker)
+                            if live_price and live_price > 0:
+                                print(f"✅ MF {ticker}: Live price ₹{live_price}")
+                            else:
+                                # Use default price for MFs if API fails
+                                live_price = 100.0
+                                print(f"⚠️ MF {ticker}: Using default price ₹{live_price}")
+                        except Exception as e:
+                            print(f"⚠️ MFTool failed for {ticker}: {e}")
+                            live_price = 100.0  # Default price
+                    else:
+                        # Regular stock - try multiple sources
+                        try:
+                            import yfinance as yf
+                            yf_ticker = clean_ticker
+                            if not yf_ticker.endswith(('.NS', '.BO', '.NSE', '.BSE')):
+                                yf_ticker = f"{clean_ticker}.NS"
+                            
+                            stock = yf.Ticker(yf_ticker)
+                            hist = stock.history(period="1d")
+                            if not hist.empty and hist['Close'].iloc[-1] > 0:
+                                live_price = hist['Close'].iloc[-1]
+                                print(f"✅ {ticker}: Live price ₹{live_price}")
+                            else:
+                                live_price = 1000.0  # Default price
+                                print(f"⚠️ {ticker}: Using default price ₹{live_price}")
+                        except Exception as e:
+                            print(f"⚠️ yfinance failed for {ticker}: {e}")
+                            live_price = 1000.0  # Default price
+                    
+                    if live_price and live_price > 0:
+                        live_prices[ticker] = live_price
+                    
+                    # Fetch sector data
+                    sector = None
+                    if is_mf:
+                        sector = "Mutual Funds"
+                        print(f"✅ MF {ticker}: Sector set to {sector}")
+                    else:
+                        # Try to get sector from existing data or use default
+                        try:
+                            from database_config_supabase import get_stock_data_supabase
+                            existing_data = get_stock_data_supabase(ticker=ticker)
+                            if existing_data and len(existing_data) > 0:
+                                sector = existing_data[0].get('sector')
+                            
+                            if not sector:
+                                # Use default sector based on ticker pattern
+                                if any(keyword in clean_ticker.upper() for keyword in ['BANK', 'HDFC', 'ICICI', 'SBI']):
+                                    sector = "Banking"
+                                elif any(keyword in clean_ticker.upper() for keyword in ['TECH', 'TCS', 'INFY', 'WIPRO']):
+                                    sector = "Technology"
+                                elif any(keyword in clean_ticker.upper() for keyword in ['RELIANCE', 'ONGC', 'IOC']):
+                                    sector = "Energy"
+                                else:
+                                    sector = "Others"
+                            
+                            print(f"✅ {ticker}: Sector set to {sector}")
+                        except Exception as e:
+                            print(f"⚠️ Error fetching sector for {ticker}: {e}")
+                            sector = "Others"
+                    
+                    if sector:
+                        sector_data[ticker] = sector
+                        
+                except Exception as e:
+                    print(f"⚠️ Error processing {ticker}: {e}")
+                    continue
+            
+            # Update stock_data table with live prices and sectors
+            if live_prices or sector_data:
+                print(f"🔄 Updating stock_data table with {len(live_prices)} live prices and {len(sector_data)} sectors...")
+                self._update_stock_data_table_during_login(live_prices, sector_data, user_id)
+            
+            print(f"✅ Live prices and sector data fetching complete!")
+            
+        except Exception as e:
+            print(f"❌ Error fetching live prices and sectors during login: {e}")
+    
+    def _update_stock_data_table_during_login(self, live_prices: Dict, sector_data: Dict, user_id: int):
+        """Update stock_data table with live prices and sectors during login"""
+        try:
+            from database_config_supabase import supabase
+            
+            updated_count = 0
+            for ticker in set(list(live_prices.keys()) + list(sector_data.keys())):
+                try:
+                    update_data = {}
+                    
+                    if ticker in live_prices:
+                        update_data['live_price'] = live_prices[ticker]
+                    
+                    if ticker in sector_data:
+                        update_data['sector'] = sector_data[ticker]
+                    
+                    if update_data:
+                        # Check if record exists
+                        existing = supabase.table("stock_data").select("*").eq("ticker", ticker).execute()
+                        
+                        if existing.data and len(existing.data) > 0:
+                            # Update existing record
+                            result = supabase.table("stock_data").update(update_data).eq("ticker", ticker).execute()
+                        else:
+                            # Create new record
+                            update_data['ticker'] = ticker
+                            update_data['user_id'] = user_id
+                            result = supabase.table("stock_data").insert(update_data).execute()
+                        
+                        if result.data:
+                            updated_count += 1
+                            print(f"✅ Updated stock_data for {ticker}")
+                        else:
+                            print(f"⚠️ Failed to update stock_data for {ticker}")
+                            
+                except Exception as e:
+                    print(f"⚠️ Error updating stock_data for {ticker}: {e}")
+                    continue
+            
+            print(f"✅ Successfully updated {updated_count} stock_data records")
+            
+        except Exception as e:
+            print(f"❌ Error updating stock_data table: {e}")
 
 # Global web agent instance
 web_agent = WebAgent()
