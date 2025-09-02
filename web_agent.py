@@ -123,9 +123,75 @@ class WebAgent:
     """Web Agent that coordinates with Stock Data Agent and File Reading Agent"""
     
     def __init__(self):
+        """Initialize the web agent with necessary components"""
         self.session_state = st.session_state
-        self.initialize_session_state()
+        self.mftool_client = None
+        self.mftool_available = False
+        self._initialize_mftool()
         
+        # Initialize other components
+        try:
+            from login_system import LoginSystem
+            self.login_system = LoginSystem()
+            print("✅ Login system imported successfully")
+        except Exception as e:
+            print(f"❌ Error importing login system: {e}")
+            self.login_system = None
+        
+        try:
+            from user_file_reading_agent import UserFileReadingAgent
+            self.user_file_agent = UserFileReadingAgent()
+            print("✅ User file reading agent imported successfully")
+        except Exception as e:
+            print(f"❌ Error importing user file reading agent: {e}")
+            self.user_file_agent = None
+        
+        try:
+            from stock_data_agent import StockDataAgent
+            self.stock_agent = StockDataAgent()
+            print("✅ Stock data agent imported successfully")
+        except Exception as e:
+            print(f"❌ Error importing stock data agent: {e}")
+            self.stock_agent = None
+        
+        try:
+            from database_config_supabase import supabase
+            self.supabase = supabase
+            print("✅ Database config imported successfully")
+        except Exception as e:
+            print(f"❌ Error importing database config: {e}")
+            self.supabase = None
+    
+    def _initialize_mftool(self):
+        """Initialize mftool client for Streamlit Cloud compatibility"""
+        try:
+            import mftool
+            print("🔄 Initializing mftool client...")
+            
+            # Create mftool instance with proper error handling
+            self.mftool_client = mftool.Mftool()
+            
+            # Test if mftool is working by trying to get a simple scheme
+            try:
+                # Try to get a test scheme to verify connectivity
+                test_scheme = self.mftool_client.get_scheme_details("120466")  # Example scheme
+                if test_scheme and 'nav' in test_scheme:
+                    self.mftool_available = True
+                    print("✅ Mftool initialized successfully and working")
+                else:
+                    print("⚠️ Mftool initialized but test scheme failed")
+                    self.mftool_available = False
+            except Exception as test_error:
+                print(f"⚠️ Mftool test failed: {test_error}")
+                self.mftool_available = False
+                
+        except ImportError as e:
+            print(f"❌ Mftool not available: {e}")
+            self.mftool_available = False
+        except Exception as e:
+            print(f"❌ Error initializing mftool: {e}")
+            self.mftool_available = False
+    
     def initialize_session_state(self):
         """Initialize Streamlit session state"""
         if 'df' not in self.session_state:
@@ -1974,6 +2040,11 @@ class WebAgent:
                 if st.sidebar.button("⚙️ Settings"):
                     st.session_state['show_settings'] = True
                 
+                # Mftool status display
+                st.sidebar.markdown("---")
+                st.sidebar.markdown("### 🔍 Mftool Status")
+                self.display_mftool_status()
+                
                 # File upload section in sidebar below settings
                 st.sidebar.markdown("---")
                 st.sidebar.markdown("### 📤 Upload Files")
@@ -2805,26 +2876,27 @@ class WebAgent:
                             return float(price)
                     except Exception as e:
                         print(f"⚠️ Mftool historical price failed for {ticker}: {e}")
-                        # Try alternative approach for Streamlit Cloud
-                        try:
-                            import mftool
-                            mf = mftool.Mftool()
-                            # For historical prices, we'll use a date-based approach
-                            # Get current NAV and apply a small variation based on date
-                            scheme_details = mf.get_scheme_details(clean_ticker)
-                            if scheme_details and 'nav' in scheme_details:
-                                current_nav = float(scheme_details['nav'])
-                                # Apply small variation based on transaction date (simplified approach)
-                                days_diff = (pd.Timestamp.now() - pd.Timestamp(transaction_date)).days
-                                # Assume 0.1% daily variation for mutual funds
-                                variation_factor = 1 + (days_diff * 0.001)
-                                historical_price = current_nav / variation_factor
-                                print(f"✅ MF {ticker}: Historical price ₹{historical_price} (calculated from current NAV)")
-                                return float(historical_price)
-                        except Exception as mf_error:
-                            print(f"⚠️ Direct mftool historical also failed for {ticker}: {mf_error}")
+                        # Try alternative approach for Streamlit Cloud using initialized client
+                        if self.mftool_available and self.mftool_client:
+                            try:
+                                # For historical prices, we'll use a date-based approach
+                                # Get current NAV and apply a small variation based on date
+                                scheme_details = self.mftool_client.get_scheme_details(clean_ticker)
+                                if scheme_details and 'nav' in scheme_details:
+                                    current_nav = float(scheme_details['nav'])
+                                    # Apply small variation based on transaction date (simplified approach)
+                                    days_diff = (pd.Timestamp.now() - pd.Timestamp(transaction_date)).days
+                                    # Assume 0.1% daily variation for mutual funds
+                                    variation_factor = 1 + (days_diff * 0.001)
+                                    historical_price = current_nav / variation_factor
+                                    print(f"✅ MF {ticker}: Historical price ₹{historical_price} (calculated from current NAV)")
+                                    return float(historical_price)
+                            except Exception as mf_error:
+                                print(f"⚠️ Initialized mftool historical also failed for {ticker}: {mf_error}")
+                        else:
+                            print(f"⚠️ Mftool not available for {ticker}")
                 
-                # Method 3: Try to get transaction price from database as fallback
+                # Method 2: Try to get transaction price from database as fallback
                 if not price:
                     try:
                         from database_config_supabase import get_transactions_supabase
@@ -3179,6 +3251,130 @@ class WebAgent:
         except Exception as e:
             print(f"❌ Error saving updated prices to database: {e}")
             raise e
+
+    def test_mftool_connectivity(self):
+        """Test mftool connectivity and display status"""
+        try:
+            if not self.mftool_client:
+                return "❌ Mftool client not initialized"
+            
+            if not self.mftool_available:
+                return "⚠️ Mftool initialized but not working"
+            
+            # Test with a known scheme
+            try:
+                test_scheme = self.mftool_client.get_scheme_details("120466")
+                if test_scheme and 'nav' in test_scheme:
+                    nav = test_scheme.get('nav', 'N/A')
+                    name = test_scheme.get('scheme_name', 'N/A')
+                    return f"✅ Mftool working - Test scheme: {name} (NAV: ₹{nav})"
+                else:
+                    return "⚠️ Mftool connected but test scheme failed"
+            except Exception as e:
+                return f"❌ Mftool test failed: {str(e)}"
+                
+        except Exception as e:
+            return f"❌ Error testing mftool: {str(e)}"
+    
+    def display_mftool_status(self):
+        """Display mftool status in the UI"""
+        if st.button("🔍 Test Mftool Status"):
+            status = self.test_mftool_connectivity()
+            st.info(status)
+            
+            # Also show detailed status
+            st.write("**Detailed Mftool Status:**")
+            st.write(f"- Client initialized: {'✅' if self.mftool_client else '❌'}")
+            st.write(f"- Available: {'✅' if self.mftool_available else '❌'}")
+            if self.mftool_client:
+                st.write(f"- Client type: {type(self.mftool_client).__name__}")
+
+    def debug_historical_price_fetching(self, ticker: str, transaction_date, user_id: int):
+        """Debug function to show what's happening with historical price fetching"""
+        st.write(f"🔍 **Debug: Historical Price Fetching for {ticker}**")
+        st.write(f"📅 Transaction Date: {transaction_date}")
+        st.write(f"👤 User ID: {user_id}")
+        
+        # Test each method step by step
+        clean_ticker = str(ticker).strip().upper()
+        is_mf = clean_ticker.isdigit() or clean_ticker.startswith('MF_')
+        st.write(f"🏷️ Clean Ticker: {clean_ticker}")
+        st.write(f"📊 Is Mutual Fund: {is_mf}")
+        
+        if is_mf:
+            st.write("🔄 **Testing Mutual Fund Methods:**")
+            
+            # Method 1: mftool historical
+            try:
+                from mf_price_fetcher import fetch_mutual_fund_historical_price
+                price = fetch_mutual_fund_historical_price(clean_ticker, transaction_date)
+                if price and price > 0:
+                    st.success(f"✅ Method 1 (mftool): ₹{price}")
+                else:
+                    st.warning(f"⚠️ Method 1 (mftool): No price returned")
+            except Exception as e:
+                st.error(f"❌ Method 1 (mftool): {e}")
+            
+            # Method 2: Initialized mftool client
+            if self.mftool_available and self.mftool_client:
+                try:
+                    scheme_details = self.mftool_client.get_scheme_details(clean_ticker)
+                    if scheme_details and 'nav' in scheme_details:
+                        current_nav = float(scheme_details['nav'])
+                        days_diff = (pd.Timestamp.now() - pd.Timestamp(transaction_date)).days
+                        variation_factor = 1 + (days_diff * 0.001)
+                        historical_price = current_nav / variation_factor
+                        st.success(f"✅ Method 2 (initialized mftool): ₹{historical_price}")
+                    else:
+                        st.warning(f"⚠️ Method 2 (initialized mftool): No scheme details")
+                except Exception as e:
+                    st.error(f"❌ Method 2 (initialized mftool): {e}")
+            else:
+                st.warning(f"⚠️ Method 2 (initialized mftool): Mftool not available")
+            
+            # Method 3: Database fallback
+            try:
+                from database_config_supabase import get_transactions_supabase
+                all_user_transactions = get_transactions_supabase(user_id)
+                if all_user_transactions:
+                    mf_transactions = [t for t in all_user_transactions if t.get('ticker') == ticker]
+                    if mf_transactions:
+                        prices = [t.get('price', 0) for t in mf_transactions if t.get('price') and t.get('price') > 0]
+                        if prices:
+                            avg_price = sum(prices) / len(prices)
+                            st.success(f"✅ Method 3 (database): ₹{avg_price}")
+                        else:
+                            st.warning(f"⚠️ Method 3 (database): No valid prices found")
+                    else:
+                        st.warning(f"⚠️ Method 3 (database): No transactions found for ticker")
+                else:
+                    st.warning(f"⚠️ Method 3 (database): No user transactions found")
+            except Exception as e:
+                st.error(f"❌ Method 3 (database): {e}")
+        else:
+            st.write("🔄 **Testing Stock Methods:**")
+            # Add stock debugging here if needed
+            st.info("Stock debugging not implemented yet")
+    
+    def display_debug_section(self):
+        """Display debug section in the UI"""
+        if st.sidebar.button("🐛 Debug Historical Prices"):
+            st.session_state['show_debug'] = True
+        
+        if st.session_state.get('show_debug', False):
+            st.sidebar.markdown("### 🐛 Debug Historical Prices")
+            
+            # Input fields for debugging
+            debug_ticker = st.sidebar.text_input("Ticker to debug:", value="MF_120466")
+            debug_date = st.sidebar.date_input("Transaction date:", value=pd.Timestamp.now().date())
+            debug_user_id = st.sidebar.number_input("User ID:", value=1, min_value=1)
+            
+            if st.sidebar.button("🔍 Debug"):
+                self.debug_historical_price_fetching(debug_ticker, debug_date, debug_user_id)
+            
+            if st.sidebar.button("❌ Close Debug"):
+                st.session_state['show_debug'] = False
+                st.rerun()
 
 # Global web agent instance
 web_agent = WebAgent()
