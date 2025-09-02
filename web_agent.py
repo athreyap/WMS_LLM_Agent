@@ -1082,11 +1082,16 @@ class PortfolioAnalytics:
                  
                  with col3:
                      avg_return = stock_performance['pnl_percentage'].mean()
-                     st.metric("Average Return", f"{avg_return:.2f}%")
+                     avg_arrow = "↗️" if avg_return > 0 else "↘️" if avg_return < 0 else "➡️"
+                     avg_color = "normal" if avg_return > 0 else "inverse"
+                     st.metric("Average Return", f"{avg_arrow} {avg_return:.2f}%", delta_color=avg_color)
                  
                  with col4:
                      best_stock = stock_performance.iloc[0]
-                     st.metric("Best Performer", best_stock['ticker'], delta=f"{best_stock['pnl_percentage']:.2f}%")
+                     best_return = best_stock['pnl_percentage']
+                     best_arrow = "↗️" if best_return > 0 else "↘️" if best_return < 0 else "➡️"
+                     best_color = "normal" if best_return > 0 else "inverse"
+                     st.metric("Best Performer", f"{best_arrow} {best_stock['ticker']}", delta=f"{best_return:.2f}%", delta_color=best_color)
                  
                  # Rating distribution
                  st.subheader("📊 Performance Rating Distribution")
@@ -1533,10 +1538,26 @@ class PortfolioAnalytics:
             col1, col2, col3 = st.columns(3)
             with col1:
                 best_sector = pnl_by_sector.loc[pnl_by_sector['unrealized_pnl'].idxmax()]
-                st.metric("Best Sector", best_sector['sector'], delta=f"₹{best_sector['unrealized_pnl']:,.2f}")
+                best_pnl = best_sector['unrealized_pnl']
+                best_arrow = "↗️" if best_pnl > 0 else "↘️" if best_pnl < 0 else "➡️"
+                best_color = "normal" if best_pnl > 0 else "inverse"
+                st.metric(
+                    "Best Sector", 
+                    f"{best_arrow} {best_sector['sector']}", 
+                    delta=f"₹{best_pnl:,.2f}",
+                    delta_color=best_color
+                )
             with col2:
                 worst_sector = pnl_by_sector.loc[pnl_by_sector['unrealized_pnl'].idxmin()]
-                st.metric("Worst Sector", worst_sector['sector'], delta=f"₹{worst_sector['unrealized_pnl']:,.2f}")
+                worst_pnl = worst_sector['unrealized_pnl']
+                worst_arrow = "↗️" if worst_pnl > 0 else "↘️" if worst_pnl < 0 else "➡️"
+                worst_color = "normal" if worst_pnl > 0 else "inverse"
+                st.metric(
+                    "Worst Sector", 
+                    f"{worst_arrow} {worst_sector['sector']}", 
+                    delta=f"₹{worst_pnl:,.2f}",
+                    delta_color=worst_color
+                )
             with col3:
                 total_sectors = len(pnl_by_sector)
                 st.metric("Total Sectors", total_sectors)
@@ -1565,10 +1586,26 @@ class PortfolioAnalytics:
             col1, col2, col3 = st.columns(3)
             with col1:
                 best_channel = pnl_by_channel.loc[pnl_by_channel['unrealized_pnl'].idxmax()]
-                st.metric("Best Channel", best_channel['channel'], delta=f"₹{best_channel['unrealized_pnl']:,.2f}")
+                best_pnl = best_channel['unrealized_pnl']
+                best_arrow = "↗️" if best_pnl > 0 else "↘️" if best_pnl < 0 else "➡️"
+                best_color = "normal" if best_pnl > 0 else "inverse"
+                st.metric(
+                    "Best Channel", 
+                    f"{best_arrow} {best_channel['channel']}", 
+                    delta=f"₹{best_pnl:,.2f}",
+                    delta_color=best_color
+                )
             with col2:
                 worst_channel = pnl_by_channel.loc[pnl_by_channel['unrealized_pnl'].idxmin()]
-                st.metric("Worst Channel", worst_channel['channel'], delta=f"₹{worst_channel['unrealized_pnl']:,.2f}")
+                worst_pnl = worst_channel['unrealized_pnl']
+                worst_arrow = "↗️" if worst_pnl > 0 else "↘️" if worst_pnl < 0 else "➡️"
+                worst_color = "normal" if worst_pnl > 0 else "inverse"
+                st.metric(
+                    "Worst Channel", 
+                    f"{worst_arrow} {worst_channel['channel']}", 
+                    delta=f"₹{worst_pnl:,.2f}",
+                    delta_color=worst_color
+                )
             with col3:
                 total_channels = len(pnl_by_channel)
                 st.metric("Total Channels", total_channels)
