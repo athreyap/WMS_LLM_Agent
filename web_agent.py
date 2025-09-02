@@ -165,6 +165,7 @@ class PortfolioAnalytics:
                 self.initialize_portfolio_data()
                 return True
             return False
+            
         except Exception as e:
             st.error(f"Authentication error: {e}")
             return False
@@ -338,7 +339,7 @@ class PortfolioAnalytics:
                     continue
                 
                 # Fetch historical price
-                if str(ticker).isdigit() or str(ticker).startswith('MF_'):
+                if str(ticker).isdigit() or ticker.startswith('MF_'):
                     # Mutual fund
                     historical_price = get_mutual_fund_price(
                         ticker, 
@@ -358,7 +359,7 @@ class PortfolioAnalytics:
                     df.at[idx, 'price'] = historical_price
                 else:
                     # Use default price if historical price not available
-                    if str(ticker).isdigit() or str(ticker).startswith('MF_'):
+                    if str(ticker).isdigit() or ticker.startswith('MF_'):
                         df.at[idx, 'price'] = 100.0  # Default MF price
                     else:
                         df.at[idx, 'price'] = 1000.0  # Default stock price
@@ -379,7 +380,7 @@ class PortfolioAnalytics:
             status_text.empty()
             
             return df
-            
+                    
         except Exception as e:
             st.error(f"Error fetching historical prices: {e}")
             return df
@@ -537,7 +538,7 @@ class PortfolioAnalytics:
                                 ticker, 
                                 user_id, 
                                 transaction_date.strftime('%Y-%m-%d')
-             )
+                            )
                         else:
                             historical_price = get_stock_price(
                                 ticker, 
@@ -1024,8 +1025,26 @@ class PortfolioAnalytics:
             
             Please wait while we set up your dashboard...
             """)
-            self.show_loading_animation()
-            return
+            
+            # Actually load the portfolio data instead of just showing animation
+            try:
+                with st.spinner("🔄 Loading portfolio data..."):
+                    self.initialize_portfolio_data()
+                    
+                    # Check if data was loaded successfully
+                    if self.session_state.portfolio_data is not None:
+                        st.success("✅ Portfolio data loaded successfully!")
+                        st.rerun()  # Refresh the page to show the dashboard
+                    else:
+                        st.warning("⚠️ No portfolio data found. Please upload some files first.")
+                        self.show_file_upload_page()
+                        return
+                        
+            except Exception as e:
+                st.error(f"❌ Error loading portfolio data: {e}")
+                st.info("💡 You can still upload files to get started.")
+                self.show_file_upload_page()
+                return
         
         # Sidebar navigation
         st.sidebar.title("Navigation")
@@ -1484,343 +1503,9 @@ class PortfolioAnalytics:
                 )
                 fig_stock_performance.update_xaxes(tickangle=45)
                 st.plotly_chart(fig_stock_performance, width='stretch')
-                 
-                # Performance summary metrics
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    total_stocks = len(stock_performance)
-                    st.metric("Total Stocks Analyzed", total_stocks)
-                
-                with col2:
-                    profitable_stocks = len(stock_performance[stock_performance['pnl_percentage'] > 0])
-                    st.metric("Profitable Stocks", profitable_stocks, delta=f"{profitable_stocks}/{total_stocks}")
-                
-                with col3:
-                    avg_return = stock_performance['pnl_percentage'].mean()
-                    avg_arrow = "↗️" if avg_return > 0 else "↘️" if avg_return < 0 else "➡️"
-                    avg_color = "normal" if avg_return > 0 else "inverse"
-                    st.metric("Average Return", f"{avg_arrow} {avg_return:.2f}%", delta_color=avg_color)
-                
-                with col4:
-                    best_stock = stock_performance.iloc[0]
-                    best_return = best_stock['pnl_percentage']
-                    best_arrow = "↗️" if best_return > 0 else "↘️" if best_return < 0 else "➡️"
-                    best_color = "normal" if best_return > 0 else "inverse"
-                    st.metric("Best Performer", f"{best_arrow} {best_stock['ticker']}", delta=f"{best_return:.2f}%", delta_color=best_color)
-                 
-                # Best Performing Sector and Channel for 1-Year Buy Transactions
-                st.subheader("🏆 Best Performing Sector & Channel (1-Year Buy Transactions)")
-                 
-                # Sector Performance for 1-year buy transactions
-                if 'sector' in stock_buys.columns and not stock_buys['sector'].isna().all():
-                    sector_perf_1y = stock_buys.groupby('sector').agg({
-                        'invested_amount': 'sum',
-                        'current_value': 'sum',
-                        'unrealized_pnl': 'sum'
-                    }).reset_index()
-                     
-                    if not sector_perf_1y.empty:
-                        sector_perf_1y['pnl_percentage'] = (sector_perf_1y['unrealized_pnl'] / sector_perf_1y['invested_amount']) * 100
-                        sector_perf_1y = sector_perf_1y.sort_values('pnl_percentage', ascending=False)
-                         
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            best_sector_1y = sector_perf_1y.iloc[0]
-                            best_sector_1y_arrow = "↗️" if best_sector_1y['pnl_percentage'] > 0 else "↘️" if best_sector_1y['pnl_percentage'] < 0 else "➡️"
-                            best_sector_1y_color = "normal" if best_sector_1y['pnl_percentage'] > 0 else "inverse"
-                            st.metric(
-                                "Best Sector (1Y)", 
-                                f"{best_sector_1y_arrow} {best_sector_1y['sector']}", 
-                                delta=f"₹{best_sector_1y['unrealized_pnl']:,.2f} ({best_sector_1y['pnl_percentage']:.2f}%)",
-                                delta_color=best_sector_1y_color
-                            )
-                         
-                        with col2:
-                            if len(sector_perf_1y) > 1:
-                                worst_sector_1y = sector_perf_1y.iloc[-1]
-                                worst_sector_1y_arrow = "↗️" if worst_sector_1y['pnl_percentage'] > 0 else "↘️" if worst_sector_1y['pnl_percentage'] < 0 else "➡️"
-                                worst_sector_1y_color = "normal" if worst_sector_1y['pnl_percentage'] > 0 else "inverse"
-                                st.metric(
-                                    "Worst Sector (1Y)", 
-                                    f"{worst_sector_1y_arrow} {worst_sector_1y['sector']}", 
-                                    delta=f"₹{worst_sector_1y['unrealized_pnl']:,.2f} ({worst_sector_1y['pnl_percentage']:.2f}%)",
-                                    delta_color=worst_sector_1y_color
-                                )
-                 
-                 # Channel Performance for 1-year buy transactions
-                if 'channel' in stock_buys.columns and not stock_buys['channel'].isna().all():
-                     channel_perf_1y = stock_buys.groupby('channel').agg({
-                         'invested_amount': 'sum',
-                         'current_value': 'sum',
-                         'unrealized_pnl': 'sum'
-                     }).reset_index()
-                     
-                     if not channel_perf_1y.empty:
-                         channel_perf_1y['pnl_percentage'] = (channel_perf_1y['unrealized_pnl'] / channel_perf_1y['invested_amount']) * 100
-                         channel_perf_1y = channel_perf_1y.sort_values('pnl_percentage', ascending=False)
-                         
-                         col1, col2 = st.columns(2)
-                         with col1:
-                             best_channel_1y = channel_perf_1y.iloc[0]
-                             best_channel_1y_arrow = "↗️" if best_channel_1y['pnl_percentage'] > 0 else "↘️" if best_channel_1y['pnl_percentage'] < 0 else "➡️"
-                             best_channel_1y_color = "normal" if best_channel_1y['pnl_percentage'] > 0 else "inverse"
-                             st.metric(
-                                 "Best Channel (1Y)", 
-                                 f"{best_channel_1y_arrow} {best_channel_1y['channel']}", 
-                                 delta=f"₹{best_channel_1y['unrealized_pnl']:,.2f} ({best_channel_1y['pnl_percentage']:.2f}%)",
-                                 delta_color=best_channel_1y_color
-                             )
-                         
-                         with col2:
-                             if len(channel_perf_1y) > 1:
-                                 worst_channel_1y = channel_perf_1y.iloc[-1]
-                                 worst_channel_1y_arrow = "↗️" if worst_channel_1y['pnl_percentage'] > 0 else "↘️" if worst_channel_1y['pnl_percentage'] < 0 else "➡️"
-                                 worst_channel_1y_color = "normal" if worst_channel_1y['pnl_percentage'] > 0 else "inverse"
-                                 st.metric(
-                                     "Worst Channel (1Y)", 
-                                     f"{worst_channel_1y_arrow} {worst_channel_1y['channel']}", 
-                                     delta=f"₹{worst_channel_1y['unrealized_pnl']:,.2f} ({worst_channel_1y['pnl_percentage']:.2f}%)",
-                                     delta_color=worst_channel_1y_color
-                                 )
-                 
-                 # Quarterly Performance Analysis
-                st.subheader("📅 Quarterly Performance Analysis")
-                st.info("Shows how each stock has performed over each quarter since purchase until today")
-                 
-                try:
-                     # Create quarterly analysis for each stock
-                     quarterly_performance = []
-                     
-                     for _, stock in stock_performance.iterrows():
-                         ticker = stock['ticker']
-                         
-                         # Get all transactions for this stock
-                         stock_transactions = stock_buys[stock_buys['ticker'] == ticker].copy()
-                         
-                         if not stock_transactions.empty:
-                             # Get the earliest buy date for this stock
-                             earliest_date = stock_transactions['date'].min()
-                             
-                             # Create quarterly periods from earliest date to today
-                             from datetime import datetime, timedelta
-                             today = datetime.now()
-                             
-                             # Generate quarterly periods
-                             quarters = []
-                             current_date = earliest_date
-                             
-                             while current_date <= today:
-                                 quarter_end = current_date + timedelta(days=90)
-                                 if quarter_end > today:
-                                     quarter_end = today
-                                 
-                                 quarters.append({
-                                     'quarter_start': current_date,
-                                     'quarter_end': quarter_end,
-                                     'quarter_name': f"Q{((current_date.month-1)//3)+1} {current_date.year}"
-                                 })
-                                 
-                                 current_date = quarter_end + timedelta(days=1)
-                             
-                             # Calculate performance for each quarter
-                             for quarter in quarters:
-                                 # Get transactions up to this quarter end
-                                 quarter_transactions = stock_transactions[
-                                     stock_transactions['date'] <= quarter['quarter_end']
-                                 ]
-                                 
-                                 if not quarter_transactions.empty:
-                                     # Calculate invested amount and current value for this quarter
-                                     invested_in_quarter = quarter_transactions['invested_amount'].sum()
-                                     
-                                     # Get current value (assuming proportional to quantity)
-                                     total_quantity = quarter_transactions['quantity'].sum()
-                                     if total_quantity > 0:
-                                         # Calculate current value proportionally
-                                         current_value_in_quarter = (invested_in_quarter / stock['invested_amount']) * stock['current_value']
-                                         
-                                         # Calculate P&L for this quarter
-                                         pnl_in_quarter = current_value_in_quarter - invested_in_quarter
-                                         pnl_percentage_quarter = (pnl_in_quarter / invested_in_quarter) * 100 if invested_in_quarter > 0 else 0
-                                         
-                                         quarterly_performance.append({
-                                             'ticker': ticker,
-                                             'quarter_name': quarter['quarter_name'],
-                                             'quarter_start': quarter['quarter_start'],
-                                             'quarter_end': quarter['quarter_end'],
-                                             'invested_amount': invested_in_quarter,
-                                             'current_value': current_value_in_quarter,
-                                             'unrealized_pnl': pnl_in_quarter,
-                                             'pnl_percentage': pnl_percentage_quarter,
-                                             'quantity': total_quantity
-                                         })
-                     
-                     if quarterly_performance:
-                         # Convert to DataFrame
-                         quarterly_df = pd.DataFrame(quarterly_performance)
-                         
-                         # Create quarterly performance chart
-                         st.subheader("📈 Quarterly Performance Trends")
-                         
-                         # Line chart showing performance over quarters for each stock
-                         fig_quarterly = px.line(
-                             quarterly_df,
-                             x='quarter_name',
-                             y='pnl_percentage',
-                             color='ticker',
-                             title="Stock Performance Over Quarters",
-                             labels={'quarter_name': 'Quarter', 'pnl_percentage': 'Return %', 'ticker': 'Stock'},
-                             markers=True
-                         )
-                         fig_quarterly.update_xaxes(tickangle=45)
-                         fig_quarterly.update_layout(
-                             xaxis_title="Quarter",
-                             yaxis_title="Return %",
-                             hovermode='x unified'
-                         )
-                         st.plotly_chart(fig_quarterly, width='stretch')
-                         
-                         # Quarterly performance summary table
-                         st.subheader("📊 Quarterly Performance Summary")
-                         
-                         # Group by quarter and show summary
-                         quarterly_summary = quarterly_df.groupby('quarter_name').agg({
-                             'ticker': 'count',
-            'invested_amount': 'sum',
-            'current_value': 'sum',
-                             'unrealized_pnl': 'sum'
-        }).reset_index()
-        
-                         quarterly_summary['pnl_percentage'] = (quarterly_summary['unrealized_pnl'] / quarterly_summary['invested_amount']) * 100
-                         quarterly_summary = quarterly_summary.sort_values('quarter_name')
-                         
-                         # Format for display
-                         quarterly_summary['invested_amount_formatted'] = quarterly_summary['invested_amount'].apply(lambda x: f"₹{x:,.2f}")
-                         quarterly_summary['current_value_formatted'] = quarterly_summary['current_value'].apply(lambda x: f"₹{x:,.2f}")
-                         quarterly_summary['unrealized_pnl_formatted'] = quarterly_summary['unrealized_pnl'].apply(lambda x: f"₹{x:,.2f}")
-                         quarterly_summary['pnl_percentage_formatted'] = quarterly_summary['pnl_percentage'].apply(lambda x: f"{x:.2f}%")
-                         
-                         st.dataframe(
-                             quarterly_summary[['quarter_name', 'ticker', 'invested_amount_formatted', 'current_value_formatted', 'unrealized_pnl_formatted', 'pnl_percentage_formatted']],
-                             width='stretch',
-                             hide_index=True
-                         )
-                         
-                         # Individual stock quarterly breakdown
-                         st.subheader("🔍 Individual Stock Quarterly Breakdown")
-                         
-                         # Create expandable sections for each stock
-                         for ticker in quarterly_df['ticker'].unique():
-                             stock_quarterly = quarterly_df[quarterly_df['ticker'] == ticker].sort_values('quarter_name')
-                             
-                             with st.expander(f"📊 {ticker} - Quarterly Performance", expanded=False):
-                                col1, col2 = st.columns(2)
-        
-                                with col1:
-                                     # Show quarterly performance metrics
-                                     st.write(f"**Total Invested:** ₹{stock_quarterly['invested_amount'].sum():,.2f}")
-                                     st.write(f"**Current Value:** ₹{stock_quarterly['current_value'].sum():,.2f}")
-                                     st.write(f"**Total P&L:** ₹{stock_quarterly['unrealized_pnl'].sum():,.2f}")
-        
-                                with col2:
-                                     # Show quarterly performance chart
-                                     fig_stock_quarterly = px.line(
-                                         stock_quarterly,
-                                         x='quarter_name',
-                                         y='pnl_percentage',
-                                         title=f"{ticker} - Quarterly Return %",
-                                         markers=True
-                                     )
-                                     fig_stock_quarterly.update_xaxes(tickangle=45)
-                                     fig_stock_quarterly.update_layout(
-                                         xaxis_title="Quarter",
-                                         yaxis_title="Return %"
-                                     )
-                                     st.plotly_chart(fig_stock_quarterly, width='stretch')
-                                 
-                                 # Show quarterly data table
-                         st.dataframe(
-                                     stock_quarterly[['quarter_name', 'invested_amount', 'current_value', 'unrealized_pnl', 'pnl_percentage']],
-                                     width='stretch',
-                                     hide_index=True
-                                 )
-                     
-                     else:
-                         st.info("No quarterly performance data available")
-                         
-                except Exception as e:
-                     st.error(f"Error generating quarterly analysis: {e}")
-                     st.info("This feature requires valid date and transaction data")
-                 
-                 # Rating distribution
-                st.subheader("📊 Performance Rating Distribution")
-                rating_counts = stock_performance['rating'].value_counts()
-                 
-                if not rating_counts.empty:
-                     fig_rating_dist = px.pie(
-                         values=rating_counts.values,
-                         names=rating_counts.index,
-                         title="Stock Performance Rating Distribution",
-                         color_discrete_map={
-                             '⭐⭐⭐ Excellent': '#00FF00',
-                             '⭐⭐ Good': '#90EE90',
-                             '⭐ Fair': '#FFD700',
-                             '⚠️ Poor': '#FFA500',
-                             '❌ Very Poor': '#FF0000'
-                         }
-                     )
-                     st.plotly_chart(fig_rating_dist, width='stretch')
-                 
-                 # Detailed stock performance table
-                st.subheader("📋 Detailed Stock Performance Table")
-                 
-                 # Format the table for display
-                display_performance = stock_performance.copy()
-                display_performance['invested_amount_formatted'] = display_performance['invested_amount'].apply(lambda x: f"₹{x:,.2f}")
-                display_performance['current_value_formatted'] = display_performance['current_value'].apply(lambda x: f"₹{x:,.2f}")
-                display_performance['unrealized_pnl_formatted'] = display_performance['unrealized_pnl'].apply(lambda x: f"₹{x:,.2f}")
-                display_performance['pnl_percentage_formatted'] = display_performance['pnl_percentage'].apply(lambda x: f"{x:.2f}%")
-                display_performance['avg_price_formatted'] = display_performance['avg_price'].apply(lambda x: f"₹{x:.2f}")
-                 
-                 # Select columns for display
-                display_columns = [
-                     'ticker', 'rating', 'pnl_percentage_formatted', 'unrealized_pnl_formatted',
-                     'invested_amount_formatted', 'current_value_formatted', 'avg_price_formatted'
-                 ]
-                 
-                st.dataframe(
-                     display_performance[display_columns],
-                     width='stretch',
-                     hide_index=True
-                 )
-                 
-                 # Performance insights
-                st.subheader("💡 Performance Insights")
-        
-                col1, col2 = st.columns(2)
-        
-                with col1:
-                     st.markdown("**📈 Positive Insights:**")
-                     if len(stock_performance[stock_performance['pnl_percentage'] > 0]) > 0:
-                         st.markdown(f"• {len(stock_performance[stock_performance['pnl_percentage'] > 0])} stocks are profitable")
-                         st.markdown(f"• Best performing stock: {stock_performance.iloc[0]['ticker']} ({stock_performance.iloc[0]['pnl_percentage']:.2f}%)")
-                         st.markdown(f"• Average return: {stock_performance['pnl_percentage'].mean():.2f}%")
-                     else:
-                         st.markdown("• No stocks are currently profitable")
-        
-                with col2:
-                     st.markdown("**📉 Areas of Concern:**")
-                     if len(stock_performance[stock_performance['pnl_percentage'] < 0]) > 0:
-                         st.markdown(f"• {len(stock_performance[stock_performance['pnl_percentage'] < 0])} stocks are at a loss")
-                         worst_stock = stock_performance.iloc[-1]
-                         st.markdown(f"• Worst performing stock: {worst_stock['ticker']} ({worst_stock['pnl_percentage']:.2f}%)")
-                         st.markdown(f"• Total unrealized loss: ₹{stock_performance[stock_performance['pnl_percentage'] < 0]['unrealized_pnl'].sum():,.2f}")
-                     else:
-                         st.markdown("• All stocks are performing well!")
             else:
-                st.info("No stock buy transactions found in the last 1 year for analysis")
-                st.info("This analysis requires stocks (not mutual funds) with buy transactions within the last 365 days")
-            
+                st.info("No stock buy transactions found in the last 1 year")
+                
         except Exception as e:
             st.error(f"Error processing performance data: {e}")
     
@@ -1832,7 +1517,7 @@ class PortfolioAnalytics:
             self.show_page_loading_animation("Asset Allocation Analysis")
             st.info("💡 **Tip:** If this page doesn't load automatically, use the '🔄 Refresh Portfolio Data' button in Settings.")
             return
-            
+        
         df = self.session_state.portfolio_data
         
         # Asset allocation by type
@@ -2383,6 +2068,7 @@ class PortfolioAnalytics:
                         st.error(f"❌ Files page: File processing error: {e}")
                         st.error(f"Error type: {type(e).__name__}")
                         import traceback
+                        st.error(f"Traceback: {traceback.format_exc()}")
                         st.error(f"Traceback: {traceback.format_exc()}")
         
         # File history

@@ -404,21 +404,21 @@ class UserFileReadingAgent:
                 # Check each user's folder
                 for user_id, user_agent_data in list(self.user_agents.items()):
                     try:
-                # Scan for new files
+                        # Scan for new files
                         new_files = self._scan_for_new_files(user_id, user_agent_data)
                 
                         if new_files:
                             print(f"📁 Found {len(new_files)} new/modified files for user {user_id}")
-                    
+                            
                             for file_path in new_files:
                                 self._process_file(file_path, user_id, user_agent_data)
-                    
-                    # Save processed files cache
-                                self._save_user_processed_files(user_id, user_agent_data)
-                        
-                        # Update last check time
-                        user_agent_data['last_check'] = datetime.now()
-                        
+                            
+                            # Save processed files cache
+                            self._save_user_processed_files(user_id, user_agent_data)
+                            
+                            # Update last check time
+                            user_agent_data['last_check'] = datetime.now()
+                            
                     except Exception as e:
                         print(f"❌ Error monitoring folder for user {user_id}: {e}")
                 
@@ -523,7 +523,7 @@ class UserFileReadingAgent:
             return False
     
     def get_user_processing_status(self, user_id: int) -> Dict:
-    #"""Get status of file processing for a specific user"""
+        #"""Get status of file processing for a specific user"""
         try:
             if user_id not in self.user_agents:
                 folder_path = self._get_user_folder_path(user_id)
@@ -531,9 +531,9 @@ class UserFileReadingAgent:
                     return {'error': 'User folder path not found'}
                 self._create_user_agent(user_id, folder_path)
             
-                user_agent_data = self.user_agents[user_id]
-                csv_files = list(user_agent_data['folder_path'].glob("*.csv"))
-
+            user_agent_data = self.user_agents[user_id]
+            csv_files = list(user_agent_data['folder_path'].glob("*.csv"))
+        
             processed_files = []
             unprocessed_files = []
         
@@ -544,13 +544,13 @@ class UserFileReadingAgent:
                     unprocessed_files.append(file_path.name)
         
             return {
-            'user_id': user_id,
-            'total_files': len(csv_files),
-            'processed_files': processed_files,
-            'unprocessed_files': unprocessed_files,
+                'user_id': user_id,
+                'total_files': len(csv_files),
+                'processed_files': processed_files,
+                'unprocessed_files': unprocessed_files,
                 'monitoring_active': self.monitoring,
                 'folder_path': str(user_agent_data['folder_path'])
-        }
+            }
         
         except Exception as e:
             print(f"❌ Error getting processing status for user {user_id}: {e}")

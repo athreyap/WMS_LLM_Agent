@@ -90,45 +90,28 @@ class StockDataAgent:
                         price_data = api_client.get_stock_price(ticker)
                         if price_data and price_data.get('price'):
                             return {
-                            'live_price': float(price_data['price']),
+                                'live_price': float(price_data['price']),
                                 'sector': 'Mutual Funds',
                                 'price_source': 'indstocks_mf',
                                 'stock_name': f"MF-{ticker}"
-                        }
+                            }
                 except Exception as e:
                     print(f"⚠️ INDstocks failed for mutual fund {ticker}: {e}")
                 
-                    return None
+                return None
             else:
                 # Stock - try yfinance first, then INDstocks
                 print(f"🔍 Fetching stock data for {ticker} using yfinance...")
                 
                 # Try yfinance first
-            try:
-                # Add .NS suffix for Indian stocks if not present
-                if not ticker.endswith(('.NS', '.BO')):
-                    ticker_with_suffix = f"{ticker}.NS"
-                else:
-                    ticker_with_suffix = ticker
-                
-                stock = yf.Ticker(ticker_with_suffix)
-                info = stock.info
-                
-                live_price = info.get('regularMarketPrice', 0)
-                sector = info.get('sector', 'Unknown')
-                stock_name = info.get('longName', ticker)
-                
-                if live_price and live_price > 0:
-                    return {
-                        'live_price': float(live_price),
-                        'sector': sector,
-                        'price_source': 'yfinance',
-                        'stock_name': stock_name
-                    }
-                
-                # Try without .NS suffix
-                if ticker_with_suffix.endswith('.NS'):
-                    stock = yf.Ticker(ticker)
+                try:
+                    # Add .NS suffix for Indian stocks if not present
+                    if not ticker.endswith(('.NS', '.BO')):
+                        ticker_with_suffix = f"{ticker}.NS"
+                    else:
+                        ticker_with_suffix = ticker
+                    
+                    stock = yf.Ticker(ticker_with_suffix)
                     info = stock.info
                     
                     live_price = info.get('regularMarketPrice', 0)
@@ -142,28 +125,45 @@ class StockDataAgent:
                             'price_source': 'yfinance',
                             'stock_name': stock_name
                         }
+                    
+                    # Try without .NS suffix
+                    if ticker_with_suffix.endswith('.NS'):
+                        stock = yf.Ticker(ticker)
+                        info = stock.info
                         
-            except Exception as e:
-                print(f"⚠️ YFinance failed for {ticker}: {e}")
-                
-                # Fallback to INDstocks for stocks
-                try:
-                    from indstocks_api import get_indstocks_client
-                    api_client = get_indstocks_client()
-                    if api_client and api_client.available:
-                        price_data = api_client.get_stock_price(ticker)
-                        if price_data and price_data.get('price'):
-                            sector_data = api_client.get_stock_sector(ticker)
+                        live_price = info.get('regularMarketPrice', 0)
+                        sector = info.get('sector', 'Unknown')
+                        stock_name = info.get('longName', ticker)
+                        
+                        if live_price and live_price > 0:
                             return {
-                                'live_price': float(price_data['price']),
-                                'sector': sector_data if sector_data else 'Unknown',
-                                'price_source': 'indstocks',
-                                'stock_name': price_data.get('name', ticker)
+                                'live_price': float(live_price),
+                                'sector': sector,
+                                'price_source': 'yfinance',
+                                'stock_name': stock_name
                             }
+                            
                 except Exception as e:
-                    print(f"⚠️ INDstocks failed for stock {ticker}: {e}")
-            
-            return None
+                    print(f"⚠️ YFinance failed for {ticker}: {e}")
+                    
+                    # Fallback to INDstocks for stocks
+                    try:
+                        from indstocks_api import get_indstocks_client
+                        api_client = get_indstocks_client()
+                        if api_client and api_client.available:
+                            price_data = api_client.get_stock_price(ticker)
+                            if price_data and price_data.get('price'):
+                                sector_data = api_client.get_stock_sector(ticker)
+                                return {
+                                    'live_price': float(price_data['price']),
+                                    'sector': sector_data if sector_data else 'Unknown',
+                                    'price_source': 'indstocks',
+                                    'stock_name': price_data.get('name', ticker)
+                                }
+                    except Exception as e:
+                        print(f"⚠️ INDstocks failed for stock {ticker}: {e}")
+                
+                return None
             
         except Exception as e:
             print(f"❌ Error fetching data for {ticker}: {e}")
