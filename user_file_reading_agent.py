@@ -261,10 +261,13 @@ class UserFileReadingAgent:
             
             # Save file to database using Supabase client
             try:
+                # Get username from user context or use a placeholder
+                username = f"user_{user_id}"  # Placeholder - ideally should be passed from calling context
                 file_record = save_file_record_supabase(
                     filename=file_path.name,
                     file_path=str(file_path),
-                    user_id=user_id
+                    user_id=user_id,
+                    username=username
                 )
                 
                 if file_record is None:
@@ -762,10 +765,13 @@ class UserFileReadingAgent:
             
             # Step 2: Save file record and transactions to database
             try:
+                # Get username from user context or use a placeholder
+                username = f"user_{user_id}"  # Placeholder - ideally should be passed from calling context
                 file_record = save_file_record_supabase(
                     filename=filename,
                     file_path=f"uploaded_{filename}",  # Virtual path for uploaded files
-                    user_id=user_id
+                    user_id=user_id,
+                    username=username
                 )
                 
                 if file_record is None:
@@ -859,10 +865,13 @@ class UserFileReadingAgent:
             
             # Save file to database using Supabase client
             try:
+                # Get username from user context or use a placeholder
+                username = f"user_{user_id}"  # Placeholder - ideally should be passed from calling context
                 file_record = save_file_record_supabase(
                     filename=file_path_obj.name,
                     file_path=str(file_path_obj),
-                    user_id=user_id
+                    user_id=user_id,
+                    username=username
                 )
                 
                 if file_record is None:

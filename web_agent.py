@@ -391,7 +391,8 @@ class PortfolioAnalytics:
             from database_config_supabase import save_transactions_bulk_supabase, save_file_record_supabase
             
             # First save file record (or get existing one)
-            file_record = save_file_record_supabase(filename, f"/uploads/{filename}", user_id)
+            username = self.session_state.username if hasattr(self.session_state, 'username') else None
+            file_record = save_file_record_supabase(filename, f"/uploads/{filename}", user_id, username)
             if not file_record:
                 # Check if this is a duplicate file error
                 st.warning(f"⚠️ File {filename} may have already been processed")
@@ -1503,6 +1504,420 @@ class PortfolioAnalytics:
                 )
                 fig_stock_performance.update_xaxes(tickangle=45)
                 st.plotly_chart(fig_stock_performance, width='stretch')
+                
+                # Add comprehensive table with sector, channel, and ratings
+                st.subheader("📊 Detailed Performance Table (1-Year Buy Transactions)")
+                
+                # Get additional data for the table (sector, channel, stock_name)
+                table_data = []
+                for _, row in stock_performance.iterrows():
+                    ticker = row['ticker']
+                    # Get additional details from original data
+                    ticker_data = stock_buys[stock_buys['ticker'] == ticker].iloc[0]
+                    
+                    table_row = {
+                        'Ticker': ticker,
+                        'Stock Name': ticker_data.get('stock_name', 'N/A'),
+                        'Sector': ticker_data.get('sector', 'Unknown'),
+                        'Channel': ticker_data.get('channel', 'N/A'),
+                        'Quantity': f"{row['quantity']:,.0f}",
+                        'Avg Price': f"₹{row['avg_price']:,.2f}",
+                        'Invested Amount': f"₹{row['invested_amount']:,.2f}",
+                        'Current Value': f"₹{row['current_value']:,.2f}",
+                        'P&L': f"₹{row['unrealized_pnl']:,.2f}",
+                        'Return %': f"{row['pnl_percentage']:.2f}%",
+                        'Rating': row['rating']
+                    }
+                    table_data.append(table_row)
+                
+                # Create a styled table
+                if table_data:
+                    # Convert to DataFrame for better display
+                    table_df = pd.DataFrame(table_data)
+                    
+                    # Apply color coding based on performance
+                    def color_rating(val):
+                        if '⭐⭐⭐' in str(val):
+                            return 'background-color: #d4edda; color: #155724;'  # Green for excellent
+                        elif '⭐⭐' in str(val):
+                            return 'background-color: #fff3cd; color: #856404;'   # Yellow for good
+                        elif '⭐' in str(val):
+                            return 'background-color: #f8d7da; color: #721c24;'  # Red for fair
+                        elif '⚠️' in str(val):
+                            return 'background-color: #f8d7da; color: #721c24;'  # Red for poor
+                        elif '❌' in str(val):
+                            return 'background-color: #f8d7da; color: #721c24;'  # Red for very poor
+                        return ''
+                    
+                    # Apply styling
+                    styled_table = table_df.style.applymap(color_rating, subset=['Rating'])
+                    
+                    # Display the styled table
+                    st.dataframe(
+                        styled_table,
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                    
+                    # Add summary statistics
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric(
+                            "Total Invested",
+                            f"₹{stock_performance['invested_amount'].sum():,.2f}",
+                            f"{stock_performance['pnl_percentage'].mean():.2f}% avg return"
+                        )
+                    with col2:
+                        st.metric(
+                            "Total Current Value",
+                            f"₹{stock_performance['current_value'].sum():,.2f}",
+                            f"₹{stock_performance['unrealized_pnl'].sum():,.2f} total P&L"
+                        )
+                    with col3:
+                        st.metric(
+                            "Best Performer",
+                            stock_performance.iloc[0]['ticker'],
+                            f"{stock_performance.iloc[0]['pnl_percentage']:.2f}% return"
+                        )
+                else:
+                    st.info("No detailed data available for table display")
+                
+                # Add comprehensive charts for sector and channel analysis
+                if not stock_buys.empty:
+                    st.subheader("📊 Sector & Channel Analysis (1-Year Buy Transactions)")
+                    
+                    # Create two columns for charts
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Sector Performance Chart
+                        st.subheader("🏭 Sector Performance Analysis")
+                        
+                        # Group by sector and calculate metrics
+                        sector_performance = stock_buys.groupby('sector').agg({
+                            'invested_amount': 'sum',
+                            'current_value': 'sum',
+                            'unrealized_pnl': 'sum',
+                            'quantity': 'sum'
+                        }).reset_index()
+                        
+                        # Calculate sector P&L percentage
+                        sector_performance['pnl_percentage'] = (sector_performance['unrealized_pnl'] / sector_performance['invested_amount']) * 100
+                        sector_performance = sector_performance.sort_values('pnl_percentage', ascending=False)
+                        
+                        # Create sector performance chart
+                        fig_sector_perf = px.bar(
+                            sector_performance,
+                            x='sector',
+                            y='pnl_percentage',
+                            color='pnl_percentage',
+                            color_continuous_scale='RdYlGn',
+                            title="Sector Performance by Return %",
+                            labels={'pnl_percentage': 'Return %', 'sector': 'Sector'},
+                            hover_data=['invested_amount', 'unrealized_pnl']
+                        )
+                        fig_sector_perf.update_xaxes(tickangle=45)
+                        st.plotly_chart(fig_sector_perf, use_container_width=True)
+                        
+                        # Best performing sector
+                        if not sector_performance.empty:
+                            best_sector = sector_performance.iloc[0]
+                            st.metric(
+                                "🏆 Best Performing Sector",
+                                best_sector['sector'],
+                                f"{best_sector['pnl_percentage']:.2f}% return"
+                            )
+                    
+                    with col2:
+                        # Channel Performance Chart
+                        st.subheader("📡 Channel Performance Analysis")
+                        
+                        # Group by channel and calculate metrics
+                        channel_performance = stock_buys.groupby('channel').agg({
+                            'invested_amount': 'sum',
+                            'current_value': 'sum',
+                            'unrealized_pnl': 'sum',
+                            'quantity': 'sum'
+                        }).reset_index()
+                        
+                        # Calculate channel P&L percentage
+                        channel_performance['pnl_percentage'] = (channel_performance['unrealized_pnl'] / channel_performance['invested_amount']) * 100
+                        channel_performance = channel_performance.sort_values('pnl_percentage', ascending=False)
+                        
+                        # Create channel performance chart
+                        fig_channel_perf = px.bar(
+                            channel_performance,
+                            x='channel',
+                            y='pnl_percentage',
+                            color='pnl_percentage',
+                            color_continuous_scale='RdYlGn',
+                            title="Channel Performance by Return %",
+                            labels={'pnl_percentage': 'Return %', 'channel': 'Channel'},
+                            hover_data=['invested_amount', 'unrealized_pnl']
+                        )
+                        fig_channel_perf.update_xaxes(tickangle=45)
+                        st.plotly_chart(fig_channel_perf, use_container_width=True)
+                        
+                        # Best performing channel
+                        if not channel_performance.empty:
+                            best_channel = channel_performance.iloc[0]
+                            st.metric(
+                                "🏆 Best Performing Channel",
+                                best_channel['channel'],
+                                f"{best_channel['pnl_percentage']:.2f}% return"
+                            )
+                        
+                        # Add detailed channel analysis table
+                        st.subheader("📊 Channel Analysis Details")
+                        
+                        # Create detailed channel table
+                        channel_table_data = []
+                        for channel, value in channel_performance.items():
+                            # Get channel-specific data
+                            channel_stocks = stock_buys[stock_buys['channel'] == channel]
+                            channel_count = len(channel_stocks['ticker'].unique())
+                            channel_pnl = channel_stocks['unrealized_pnl'].sum() if 'unrealized_pnl' in channel_stocks.columns else 0
+                            channel_pnl_pct = (channel_pnl / value * 100) if value > 0 else 0
+                            
+                            channel_table_data.append({
+                                'Channel': channel,
+                                'Current Value': f"₹{value:,.2f}",
+                                'Allocation %': f"{(value / channel_performance['current_value'].sum() * 100):.2f}%",
+                                'Number of Stocks': channel_count,
+                                'Total P&L': f"₹{channel_pnl:,.2f}",
+                                'P&L %': f"{channel_pnl_pct:.2f}%"
+                            })
+                        
+                        # Display channel table
+                        if channel_table_data:
+                            channel_df = pd.DataFrame(channel_table_data)
+                            st.dataframe(
+                                channel_df,
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                            
+                            # Add channel summary metrics
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric(
+                                    "Total Channels",
+                                    len(channel_performance),
+                                    f"{len(channel_performance)} channels used"
+                                )
+                            with col2:
+                                st.metric(
+                                    "Best Channel",
+                                    channel_performance.index[0],
+                                    f"₹{channel_performance.iloc[0]:,.2f}"
+                                )
+                            with col3:
+                                st.metric(
+                                    "Worst Channel",
+                                    channel_performance.index[-1],
+                                    f"₹{channel_performance.iloc[-1]:,.2f}"
+                                )
+                        else:
+                            st.info("No detailed channel data available for table display")
+                    
+                    # Best Stock in Each Sector
+                    st.subheader("⭐ Best Stock in Each Sector (1-Year Buy Transactions)")
+                    
+                    # Find best performing stock in each sector
+                    best_stocks_by_sector = []
+                    
+                    for sector in stock_buys['sector'].unique():
+                        if pd.isna(sector) or sector == 'Unknown':
+                            continue
+                            
+                        sector_stocks = stock_buys[stock_buys['sector'] == sector]
+                        
+                        # Group by ticker within sector
+                        sector_ticker_perf = sector_stocks.groupby('ticker').agg({
+                            'invested_amount': 'sum',
+                            'current_value': 'sum',
+                            'unrealized_pnl': 'sum',
+                            'quantity': 'sum'
+                        }).reset_index()
+                        
+                        # Calculate P&L percentage
+                        sector_ticker_perf['pnl_percentage'] = (sector_ticker_perf['unrealized_pnl'] / sector_ticker_perf['invested_amount']) * 100
+                        
+                        # Get best performing ticker in this sector
+                        if not sector_ticker_perf.empty:
+                            best_ticker = sector_ticker_perf.loc[sector_ticker_perf['pnl_percentage'].idxmax()]
+                            
+                            # Get additional details
+                            ticker_data = sector_stocks[sector_stocks['ticker'] == best_ticker['ticker']].iloc[0]
+                            
+                            best_stocks_by_sector.append({
+                                'Sector': sector,
+                                'Best Stock': best_ticker['ticker'],
+                                'Stock Name': ticker_data.get('stock_name', 'N/A'),
+                                'Channel': ticker_data.get('channel', 'N/A'),
+                                'Return %': f"{best_ticker['pnl_percentage']:.2f}%",
+                                'Invested Amount': f"₹{best_ticker['invested_amount']:,.2f}",
+                                'Current Value': f"₹{best_ticker['current_value']:,.2f}",
+                                'P&L': f"₹{best_ticker['unrealized_pnl']:,.2f}"
+                            })
+                    
+                    # Display best stocks by sector table
+                    if best_stocks_by_sector:
+                        best_stocks_df = pd.DataFrame(best_stocks_by_sector)
+                        
+                        # Apply color coding based on return percentage
+                        def color_return(val):
+                            try:
+                                pct = float(str(val).replace('%', ''))
+                                if pct >= 20:
+                                    return 'background-color: #d4edda; color: #155724;'  # Green for excellent
+                                elif pct >= 10:
+                                    return 'background-color: #fff3cd; color: #856404;'   # Yellow for good
+                                elif pct >= 0:
+                                    return 'background-color: #f8d7da; color: #721c24;'  # Red for fair
+                                else:
+                                    return 'background-color: #f8d7da; color: #721c24;'  # Red for negative
+                            except:
+                                return ''
+                        
+                        styled_best_stocks = best_stocks_df.style.applymap(color_return, subset=['Return %'])
+                        
+                        st.dataframe(
+                            styled_best_stocks,
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        # Create chart showing best stocks by sector
+                        best_stocks_chart_data = []
+                        for row in best_stocks_by_sector:
+                            return_pct = float(row['Return %'].replace('%', ''))
+                            best_stocks_chart_data.append({
+                                'Sector': row['Sector'],
+                                'Best Stock': row['Best Stock'],
+                                'Return %': return_pct
+                            })
+                        
+                        if best_stocks_chart_data:
+                            best_stocks_chart_df = pd.DataFrame(best_stocks_chart_data)
+                            
+                            fig_best_stocks = px.bar(
+                                best_stocks_chart_df,
+                                x='Sector',
+                                y='Return %',
+                                color='Return %',
+                                color_continuous_scale='RdYlGn',
+                                title="Best Stock Performance by Sector",
+                                labels={'Return %': 'Return %', 'Sector': 'Sector'},
+                                hover_data=['Best Stock']
+                            )
+                            fig_best_stocks.update_xaxes(tickangle=45)
+                            st.plotly_chart(fig_best_stocks, use_container_width=True)
+                    else:
+                        st.info("No sector-based stock analysis data available")
+                    
+                    # Best Stock in Each Channel
+                    st.subheader("📡 Best Stock in Each Channel (1-Year Buy Transactions)")
+                    
+                    # Find best performing stock in each channel
+                    best_stocks_by_channel = []
+                    
+                    for channel in stock_buys['channel'].unique():
+                        if pd.isna(channel) or channel == 'Unknown':
+                            continue
+                            
+                        channel_stocks = stock_buys[stock_buys['channel'] == channel]
+                        
+                        # Group by ticker within channel
+                        channel_ticker_perf = channel_stocks.groupby('ticker').agg({
+                            'invested_amount': 'sum',
+                            'current_value': 'sum',
+                            'unrealized_pnl': 'sum',
+                            'quantity': 'sum'
+                        }).reset_index()
+                        
+                        # Calculate P&L percentage
+                        channel_ticker_perf['pnl_percentage'] = (channel_ticker_perf['unrealized_pnl'] / channel_ticker_perf['invested_amount']) * 100
+                        
+                        # Get best performing ticker in this channel
+                        if not channel_ticker_perf.empty:
+                            best_ticker = channel_ticker_perf.loc[channel_ticker_perf['pnl_percentage'].idxmax()]
+                            
+                            # Get additional details
+                            ticker_data = channel_stocks[channel_stocks['ticker'] == best_ticker['ticker']].iloc[0]
+                            
+                            best_stocks_by_channel.append({
+                                'Channel': channel,
+                                'Best Stock': best_ticker['ticker'],
+                                'Stock Name': ticker_data.get('stock_name', 'N/A'),
+                                'Sector': ticker_data.get('sector', 'N/A'),
+                                'Return %': f"{best_ticker['pnl_percentage']:.2f}%",
+                                'Invested Amount': f"₹{best_ticker['invested_amount']:,.2f}",
+                                'Current Value': f"₹{best_ticker['current_value']:,.2f}",
+                                'P&L': f"₹{best_ticker['unrealized_pnl']:,.2f}"
+                            })
+                    
+                    # Display best stocks by channel table
+                    if best_stocks_by_channel:
+                        best_stocks_channel_df = pd.DataFrame(best_stocks_by_channel)
+                        
+                        # Apply color coding based on return percentage
+                        styled_best_stocks_channel = best_stocks_channel_df.style.applymap(color_return, subset=['Return %'])
+                        
+                        st.dataframe(
+                            styled_best_stocks_channel,
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        # Create chart showing best stocks by channel
+                        best_stocks_channel_chart_data = []
+                        for row in best_stocks_by_channel:
+                            return_pct = float(row['Return %'].replace('%', ''))
+                            best_stocks_channel_chart_data.append({
+                                'Channel': row['Channel'],
+                                'Best Stock': row['Best Stock'],
+                                'Return %': return_pct
+                            })
+                        
+                        if best_stocks_channel_chart_data:
+                            best_stocks_channel_chart_df = pd.DataFrame(best_stocks_channel_chart_data)
+                            
+                            fig_best_stocks_channel = px.bar(
+                                best_stocks_channel_chart_df,
+                                x='Channel',
+                                y='Return %',
+                                color='Return %',
+                                color_continuous_scale='RdYlGn',
+                                title="Best Stock Performance by Channel",
+                                labels={'Return %': 'Return %', 'Channel': 'Channel'},
+                                hover_data=['Best Stock']
+                            )
+                            fig_best_stocks_channel.update_xaxes(tickangle=45)
+                            st.plotly_chart(fig_best_stocks_channel, use_container_width=True)
+                    else:
+                        st.info("No channel-based stock analysis data available")
+                        
+                    # Summary metrics for the analysis
+                    st.subheader("📈 Analysis Summary")
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        total_sectors = len(stock_buys['sector'].unique())
+                        st.metric("Total Sectors", total_sectors)
+                    
+                    with col2:
+                        total_channels = len(stock_buys['channel'].unique())
+                        st.metric("Total Channels", total_channels)
+                    
+                    with col3:
+                        avg_return = stock_performance['pnl_percentage'].mean()
+                        st.metric("Average Return", f"{avg_return:.2f}%")
+                    
+                    with col4:
+                        best_overall = stock_performance.iloc[0]['pnl_percentage']
+                        st.metric("Best Return", f"{best_overall:.2f}%")
             else:
                 st.info("No stock buy transactions found in the last 1 year")
                 
@@ -1566,6 +1981,59 @@ class PortfolioAnalytics:
                         labels={'x': 'Current Value (₹)', 'y': 'Sector'}
                     )
                     st.plotly_chart(fig_sector, width='stretch')
+                    
+                    # Add detailed sector allocation table
+                    st.subheader("📊 Sector Allocation Details")
+                    
+                    # Create detailed sector table
+                    sector_table_data = []
+                    for sector, value in sector_allocation.items():
+                        # Get sector-specific data
+                        sector_stocks = sector_data[sector_data['sector'] == sector]
+                        sector_count = len(sector_stocks['ticker'].unique())
+                        sector_pnl = sector_stocks['unrealized_pnl'].sum() if 'unrealized_pnl' in sector_stocks.columns else 0
+                        sector_pnl_pct = (sector_pnl / value * 100) if value > 0 else 0
+                        
+                        sector_table_data.append({
+                            'Sector': sector,
+                            'Current Value': f"₹{value:,.2f}",
+                            'Allocation %': f"{(value / sector_data['current_value'].sum() * 100):.2f}%",
+                            'Number of Stocks': sector_count,
+                            'Total P&L': f"₹{sector_pnl:,.2f}",
+                            'P&L %': f"{sector_pnl_pct:.2f}%"
+                        })
+                    
+                    # Display sector table
+                    if sector_table_data:
+                        sector_df = pd.DataFrame(sector_table_data)
+                        st.dataframe(
+                            sector_df,
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        # Add sector summary metrics
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric(
+                                "Total Sectors",
+                                len(sector_allocation),
+                                f"{len(sector_allocation)} sectors covered"
+                            )
+                        with col2:
+                            st.metric(
+                                "Largest Sector",
+                                sector_allocation.index[0],
+                                f"₹{sector_allocation.iloc[0]:,.2f}"
+                            )
+                        with col3:
+                            st.metric(
+                                "Smallest Sector",
+                                sector_allocation.index[-1],
+                                f"₹{sector_allocation.iloc[-1]:,.2f}"
+                            )
+                    else:
+                        st.info("No detailed sector data available for table display")
                 else:
                     st.info("No sector data available for visualization")
             else:
