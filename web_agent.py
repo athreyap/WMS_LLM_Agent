@@ -15,15 +15,18 @@ from database_config_supabase import (
     save_file_record_supabase,
     save_transactions_bulk_supabase,
     get_transactions_supabase,
-    get_investment_files_supabase,
+    get_file_records_supabase,
     update_stock_data_supabase,
     get_stock_data_supabase,
     update_user_login_supabase
 )
 
+# Password hashing
+from login_system import hash_password, verify_password
+
 # Price fetching imports
 from unified_price_fetcher import get_mutual_fund_price, get_stock_price
-from user_file_reading_agent import process_csv_file
+from user_file_reading_agent import process_user_files_on_login
 
 # Streamlit page configuration
 st.set_page_config(
@@ -87,7 +90,7 @@ class PortfolioAnalytics:
                     st.error("Passwords do not match")
                 elif len(new_password) < 6:
                     st.error("Password must be at least 6 characters")
-                elif self.register_user(new_username, new_password):
+                elif self.register_user(new_username, new_password, "user"):
                     st.success("Registration successful! Please login.")
                 else:
                     st.error("Username already exists or registration failed")
@@ -96,7 +99,7 @@ class PortfolioAnalytics:
         """Authenticate user and initialize session"""
         try:
             user = get_user_by_username_supabase(username)
-            if user and user['password'] == password:  # In production, use proper hashing
+            if user and verify_password(password, user['password_hash'], user['password_salt']):
                 self.session_state.user_authenticated = True
                 self.session_state.user_id = user['id']
                 self.session_state.username = user['username']
@@ -111,10 +114,14 @@ class PortfolioAnalytics:
             st.error(f"Authentication error: {e}")
             return False
     
-    def register_user(self, username, password):
+    def register_user(self, username, password, role="user"):
         """Register new user"""
         try:
-            result = create_user_supabase(username, password, "user")
+            # Hash the password
+            hashed_password, salt = hash_password(password)
+            
+            # Create user with hashed password
+            result = create_user_supabase(username, hashed_password, salt, role=role)
             return result
         except Exception as e:
             st.error(f"Registration error: {e}")
@@ -165,14 +172,15 @@ class PortfolioAnalytics:
                     if ticker.startswith('MF_'):
                         historical_price = get_mutual_fund_price(
                             ticker, 
-                            transaction_date, 
-                            historical=True
+                            ticker, 
+                            user_id, 
+                            transaction_date.strftime('%Y-%m-%d')
                         )
                     else:
                         historical_price = get_stock_price(
                             ticker, 
-                            transaction_date, 
-                            historical=True
+                            ticker, 
+                            transaction_date.strftime('%Y-%m-%d')
                         )
                     
                     if historical_price and historical_price > 0:
@@ -203,10 +211,10 @@ class PortfolioAnalytics:
             for ticker in unique_tickers:
                 try:
                     if ticker.startswith('MF_'):
-                        live_price = get_mutual_fund_price(ticker, datetime.now(), historical=False)
+                        live_price = get_mutual_fund_price(ticker, ticker, user_id, None)
                         sector = "Mutual Fund"  # Default sector for MFs
                     else:
-                        live_price = get_stock_price(ticker, datetime.now(), historical=False)
+                        live_price = get_stock_price(ticker, ticker, None)
                         # Get sector from stock data table
                         stock_data = get_stock_data_supabase(ticker)
                         sector = stock_data.get('sector', 'Unknown') if stock_data else 'Unknown'
@@ -605,7 +613,7 @@ class PortfolioAnalytics:
                 with st.spinner("Processing file..."):
                     try:
                         # Process the uploaded file
-                        result = process_csv_file(uploaded_file, user_id)
+                        result = process_user_files_on_login(user_id)
                         if result:
                             st.success("File processed successfully!")
                             # Refresh portfolio data
@@ -619,7 +627,7 @@ class PortfolioAnalytics:
         st.subheader("📋 File History")
         
         try:
-            files = get_investment_files_supabase(user_id=user_id)
+            files = get_file_records_supabase(user_id=user_id)
             if files:
                 files_df = pd.DataFrame(files)
                 files_df['upload_date'] = pd.to_datetime(files_df['upload_date'])
