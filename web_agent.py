@@ -489,49 +489,83 @@ class PortfolioAnalytics:
         except Exception as e:
             st.error(f"Error in update_missing_historical_prices: {e}")
     
-    def fetch_live_prices_and_sectors(self, user_id):
-        """Fetch live prices and sectors for all user tickers"""
-        try:
-            st.info("🔄 Fetching live prices and sectors...")
-            
-            # Get unique tickers from user transactions
-            transactions = get_transactions_supabase(user_id=user_id)
-            if not transactions:
-                return
-            
-            df = pd.DataFrame(transactions)
-            unique_tickers = df['ticker'].unique()
-            
-            live_prices = {}
-            sectors = {}
-            
-            # Fetch live prices and sectors for each ticker
-            for ticker in unique_tickers:
-                try:
-                    if ticker.startswith('MF_'):
-                        live_price = get_mutual_fund_price(ticker, ticker, user_id, None)
-                        sector = "Mutual Fund"  # Default sector for MFs
-                    else:
-                        live_price = get_stock_price(ticker, ticker, None)
-                        # Get sector from stock data table
-                        stock_data = get_stock_data_supabase(ticker)
-                        sector = stock_data.get('sector', 'Unknown') if stock_data else 'Unknown'
-                    
-                    if live_price and live_price > 0:
-                        live_prices[ticker] = live_price
-                        sectors[ticker] = sector
-                        
-                except Exception as e:
-                    st.warning(f"⚠️ Could not fetch data for {ticker}: {e}")
-                    continue
-            
-            # Store in session state
-            self.session_state.live_prices = live_prices
-            
-            st.success(f"✅ Fetched live prices for {len(live_prices)} tickers")
-            
-        except Exception as e:
-            st.error(f"Error fetching live prices: {e}")
+        def fetch_live_prices_and_sectors(self, user_id):
+         """Fetch live prices and sectors for all user tickers"""
+         try:
+             st.info("🔄 Fetching live prices and sectors...")
+             
+             # Get unique tickers from user transactions
+             transactions = get_transactions_supabase(user_id=user_id)
+             if not transactions:
+                 return
+             
+             df = pd.DataFrame(transactions)
+             unique_tickers = df['ticker'].unique()
+             
+             live_prices = {}
+             sectors = {}
+             
+             # Fetch live prices and sectors for each ticker
+             for ticker in unique_tickers:
+                 try:
+                     if ticker.startswith('MF_'):
+                         live_price = get_mutual_fund_price(ticker, ticker, user_id, None)
+                         sector = "Mutual Fund"  # Default sector for MFs
+                     else:
+                         live_price = get_stock_price(ticker, ticker, None)
+                         
+                         # Try to get sector from stock data table first
+                         stock_data = get_stock_data_supabase(ticker)
+                         sector = stock_data.get('sector', None) if stock_data else None
+                         
+                         # If no sector in database, try to fetch it from live price data
+                         if not sector or sector == 'Unknown':
+                             try:
+                                 # Import stock data agent to get sector information
+                                 from stock_data_agent import get_sector
+                                 sector = get_sector(ticker)
+                                 if sector and sector != 'Unknown':
+                                     # Update the stock_data table with the sector
+                                     try:
+                                         if stock_data:
+                                             update_stock_data_supabase(ticker, sector=sector)
+                                         else:
+                                             # Create new stock data entry
+                                             from stock_data_agent import get_stock_name
+                                             stock_name = get_stock_name(ticker) or ticker
+                                             # This would require a create function - for now just store in session
+                                             pass
+                                     except Exception as e:
+                                         st.debug(f"Could not update sector for {ticker}: {e}")
+                             except Exception as e:
+                                 st.debug(f"Could not fetch sector for {ticker}: {e}")
+                                 sector = 'Unknown'
+                         
+                         # If still no sector, categorize based on ticker pattern
+                         if not sector or sector == 'Unknown':
+                             if '.NS' in ticker:
+                                 sector = 'NSE Stocks'
+                             elif '.BO' in ticker:
+                                 sector = 'BSE Stocks'
+                             else:
+                                 sector = 'Other Stocks'
+                     
+                     if live_price and live_price > 0:
+                         live_prices[ticker] = live_price
+                         sectors[ticker] = sector
+                         
+                 except Exception as e:
+                     st.warning(f"⚠️ Could not fetch data for {ticker}: {e}")
+                     continue
+             
+             # Store in session state
+             self.session_state.live_prices = live_prices
+             self.session_state.sectors = sectors
+             
+             st.success(f"✅ Fetched live prices for {len(live_prices)} tickers and sectors for {len(sectors)} tickers")
+             
+         except Exception as e:
+             st.error(f"Error fetching live prices: {e}")
     
     def load_portfolio_data(self, user_id):
         """Load and process portfolio data"""
@@ -586,20 +620,22 @@ class PortfolioAnalytics:
         )
         
         if uploaded_file is not None:
-            if st.sidebar.button("Process File", key="sidebar_process"):
-                with st.sidebar.spinner("Processing file..."):
-                    try:
-                        # Process the uploaded file
-                        result = process_user_files_on_login(self.session_state.user_id)
-                        if result:
-                            st.sidebar.success("✅ File processed successfully!")
-                            # Refresh portfolio data
-                            self.load_portfolio_data(self.session_state.user_id)
-                            st.rerun()
-                        else:
-                            st.sidebar.error("❌ Error processing file")
-                    except Exception as e:
-                        st.sidebar.error(f"❌ Error: {e}")
+             if st.sidebar.button("Process File", key="sidebar_process"):
+                 try:
+                     # Show processing message
+                     st.sidebar.info("🔄 Processing file...")
+                     
+                     # Process the uploaded file
+                     result = process_user_files_on_login(self.session_state.user_id)
+                     if result:
+                         st.sidebar.success("✅ File processed successfully!")
+                         # Refresh portfolio data
+                         self.load_portfolio_data(self.session_state.user_id)
+                         st.rerun()
+                     else:
+                         st.sidebar.error("❌ Error processing file")
+                 except Exception as e:
+                     st.sidebar.error(f"❌ Error: {e}")
         
         # Logout button
         st.sidebar.markdown("---")
@@ -872,20 +908,158 @@ class PortfolioAnalytics:
                 
                 st.plotly_chart(fig_volatility, use_container_width=True)
             
-            # Performance metrics table
-            st.subheader("📊 Performance Metrics")
+            # Stock Performance Analysis (1-Year Buy Transactions)
+            st.subheader("📈 Stock Performance Analysis (1-Year Buy Transactions)")
+             
+            # Filter for stocks (not mutual funds) with buy transactions in the last 1 year
+            one_year_ago = datetime.now() - timedelta(days=365)
             
-            # Calculate key metrics
-            total_return = ((df['current_value'].sum() - df['invested_amount'].sum()) / df['invested_amount'].sum()) * 100
-            volatility = df.groupby(df['date'].dt.date)['unrealized_pnl'].sum().std()
-            sharpe_ratio = total_return / volatility if volatility > 0 else 0
-            
-            metrics_df = pd.DataFrame({
-                'Metric': ['Total Return (%)', 'Volatility (%)', 'Sharpe Ratio', 'Max Drawdown (%)'],
-                'Value': [f"{total_return:.2f}", f"{total_return:.2f}", f"{sharpe_ratio:.2f}", "N/A"]
-            })
-            
-            st.dataframe(metrics_df, use_container_width=True)
+                        # Filter stocks (exclude mutual funds) with buy transactions in last 1 year
+            stock_buys = df[
+                (~df['ticker'].astype(str).str.startswith('MF_')) & 
+                (df['transaction_type'] == 'buy') & 
+                (df['date'] >= one_year_ago)
+            ].copy()
+             
+            if not stock_buys.empty:
+                 # Group by ticker and calculate performance metrics
+                 stock_performance = stock_buys.groupby('ticker').agg({
+                     'invested_amount': 'sum',
+                     'current_value': 'sum',
+                     'unrealized_pnl': 'sum',
+                     'quantity': 'sum',
+                     'date': 'max'  # Latest buy date
+                 }).reset_index()
+                 
+                 # Calculate additional metrics
+                 stock_performance['pnl_percentage'] = (stock_performance['unrealized_pnl'] / stock_performance['invested_amount']) * 100
+                 stock_performance['avg_price'] = stock_performance['invested_amount'] / stock_performance['quantity']
+                 
+                 # Add stock ratings based on performance
+                 def get_stock_rating(pnl_pct):
+                     if pnl_pct >= 20:
+                         return '⭐⭐⭐ Excellent'
+                     elif pnl_pct >= 10:
+                         return '⭐⭐ Good'
+                     elif pnl_pct >= 0:
+                         return '⭐ Fair'
+                     elif pnl_pct >= -10:
+                         return '⚠️ Poor'
+                     else:
+                         return '❌ Very Poor'
+                 
+                 stock_performance['rating'] = stock_performance['pnl_percentage'].apply(get_stock_rating)
+                 stock_performance['rating_color'] = stock_performance['pnl_percentage'].apply(
+                     lambda x: 'green' if x >= 10 else 'orange' if x >= 0 else 'red'
+                 )
+                 
+                 # Sort by P&L percentage
+                 stock_performance = stock_performance.sort_values('pnl_percentage', ascending=False)
+                 
+                 # Display top performers
+                 st.subheader("🏆 Top Performers (1-Year Buy Transactions)")
+                 
+                 # Create performance chart
+                 fig_stock_performance = px.bar(
+                     stock_performance.head(10),
+                     x='ticker',
+                     y='pnl_percentage',
+                     color='pnl_percentage',
+                     color_continuous_scale='RdYlGn',
+                     title="Top 10 Stock Performers by Return % (1-Year Buy Transactions)",
+                     labels={'pnl_percentage': 'Return %', 'ticker': 'Stock Ticker'},
+                     hover_data=['invested_amount', 'unrealized_pnl', 'rating']
+                 )
+                 fig_stock_performance.update_xaxes(tickangle=45)
+                 st.plotly_chart(fig_stock_performance, use_container_width=True)
+                 
+                 # Performance summary metrics
+                 col1, col2, col3, col4 = st.columns(4)
+                 with col1:
+                     total_stocks = len(stock_performance)
+                     st.metric("Total Stocks Analyzed", total_stocks)
+                 
+                 with col2:
+                     profitable_stocks = len(stock_performance[stock_performance['pnl_percentage'] > 0])
+                     st.metric("Profitable Stocks", profitable_stocks, delta=f"{profitable_stocks}/{total_stocks}")
+                 
+                 with col3:
+                     avg_return = stock_performance['pnl_percentage'].mean()
+                     st.metric("Average Return", f"{avg_return:.2f}%")
+                 
+                 with col4:
+                     best_stock = stock_performance.iloc[0]
+                     st.metric("Best Performer", best_stock['ticker'], delta=f"{best_stock['pnl_percentage']:.2f}%")
+                 
+                 # Rating distribution
+                 st.subheader("📊 Performance Rating Distribution")
+                 rating_counts = stock_performance['rating'].value_counts()
+                 
+                 if not rating_counts.empty:
+                     fig_rating_dist = px.pie(
+                         values=rating_counts.values,
+                         names=rating_counts.index,
+                         title="Stock Performance Rating Distribution",
+                         color_discrete_map={
+                             '⭐⭐⭐ Excellent': '#00FF00',
+                             '⭐⭐ Good': '#90EE90',
+                             '⭐ Fair': '#FFD700',
+                             '⚠️ Poor': '#FFA500',
+                             '❌ Very Poor': '#FF0000'
+                         }
+                     )
+                     st.plotly_chart(fig_rating_dist, use_container_width=True)
+                 
+                 # Detailed stock performance table
+                 st.subheader("📋 Detailed Stock Performance Table")
+                 
+                 # Format the table for display
+                 display_performance = stock_performance.copy()
+                 display_performance['invested_amount_formatted'] = display_performance['invested_amount'].apply(lambda x: f"₹{x:,.2f}")
+                 display_performance['current_value_formatted'] = display_performance['current_value'].apply(lambda x: f"₹{x:,.2f}")
+                 display_performance['unrealized_pnl_formatted'] = display_performance['unrealized_pnl'].apply(lambda x: f"₹{x:,.2f}")
+                 display_performance['pnl_percentage_formatted'] = display_performance['pnl_percentage'].apply(lambda x: f"{x:.2f}%")
+                 display_performance['avg_price_formatted'] = display_performance['avg_price'].apply(lambda x: f"₹{x:.2f}")
+                 
+                 # Select columns for display
+                 display_columns = [
+                     'ticker', 'rating', 'pnl_percentage_formatted', 'unrealized_pnl_formatted',
+                     'invested_amount_formatted', 'current_value_formatted', 'avg_price_formatted'
+                 ]
+                 
+                 st.dataframe(
+                     display_performance[display_columns],
+                     use_container_width=True,
+                     hide_index=True
+                 )
+                 
+                 # Performance insights
+                 st.subheader("💡 Performance Insights")
+                 
+                 col1, col2 = st.columns(2)
+                 
+                 with col1:
+                     st.markdown("**📈 Positive Insights:**")
+                     if len(stock_performance[stock_performance['pnl_percentage'] > 0]) > 0:
+                         st.markdown(f"• {len(stock_performance[stock_performance['pnl_percentage'] > 0])} stocks are profitable")
+                         st.markdown(f"• Best performing stock: {stock_performance.iloc[0]['ticker']} ({stock_performance.iloc[0]['pnl_percentage']:.2f}%)")
+                         st.markdown(f"• Average return: {stock_performance['pnl_percentage'].mean():.2f}%")
+                     else:
+                         st.markdown("• No stocks are currently profitable")
+                 
+                 with col2:
+                     st.markdown("**📉 Areas of Concern:**")
+                     if len(stock_performance[stock_performance['pnl_percentage'] < 0]) > 0:
+                         st.markdown(f"• {len(stock_performance[stock_performance['pnl_percentage'] < 0])} stocks are at a loss")
+                         worst_stock = stock_performance.iloc[-1]
+                         st.markdown(f"• Worst performing stock: {worst_stock['ticker']} ({worst_stock['pnl_percentage']:.2f}%)")
+                         st.markdown(f"• Total unrealized loss: ₹{stock_performance[stock_performance['pnl_percentage'] < 0]['unrealized_pnl'].sum():,.2f}")
+                     else:
+                         st.markdown("• All stocks are performing well!")
+             
+            else:
+                 st.info("No stock buy transactions found in the last 1 year for analysis")
+                 st.info("This analysis requires stocks (not mutual funds) with buy transactions within the last 365 days")
             
         except Exception as e:
             st.error(f"Error processing performance data: {e}")
