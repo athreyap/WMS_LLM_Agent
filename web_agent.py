@@ -1661,10 +1661,15 @@ class PortfolioAnalytics:
                             f"{stock_performance['pnl_percentage'].mean():.2f}% avg return"
                         )
                     with col2:
+                        total_pnl = stock_performance['unrealized_pnl'].sum()
+                        pnl_delta = f"₹{total_pnl:,.2f} total P&L"
+                        pnl_color = "normal" if total_pnl >= 0 else "inverse"
+                        
                         st.metric(
                             "Total Current Value",
                             f"₹{stock_performance['current_value'].sum():,.2f}",
-                            f"₹{stock_performance['unrealized_pnl'].sum():,.2f} total P&L"
+                            delta=pnl_delta,
+                            delta_color=pnl_color
                         )
                     with col3:
                         st.metric(
@@ -1776,41 +1781,53 @@ class PortfolioAnalytics:
                         quarterly_summary['sort_key'] = quarterly_summary['quarter_label'].apply(create_sort_key)
                         quarterly_summary = quarterly_summary.sort_values('sort_key')
                         
-                        quarterly_summary.columns = ['Quarter', 'Total Gain (₹)', 'Total Invested (₹)', 'Total Current Value (₹)', 'Number of Stocks']
-                        quarterly_summary['Return %'] = (quarterly_summary['Total Gain (₹)'] / quarterly_summary['Total Invested (₹)'] * 100).round(2)
+                        # Ensure we have the expected columns before renaming
+                        expected_columns = ['quarter_label', 'unrealized_pnl', 'invested_amount', 'current_value', 'ticker']
+                        if list(quarterly_summary.columns) == expected_columns:
+                            quarterly_summary.columns = ['Quarter', 'Total Gain (₹)', 'Total Invested (₹)', 'Total Current Value (₹)', 'Number of Stocks']
+                            quarterly_summary['Return %'] = (quarterly_summary['Total Gain (₹)'] / quarterly_summary['Total Invested (₹)'] * 100).round(2)
+                        else:
+                            st.warning(f"Unexpected quarterly summary columns: {list(quarterly_summary.columns)}")
+                            st.info("Expected: quarter_label, unrealized_pnl, invested_amount, current_value, ticker")
+                            # Skip this quarter's processing
+                            st.info("Skipping quarterly analysis due to column mismatch")
+                            quarterly_summary = None
                         
-                        # Display quarterly summary
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            st.dataframe(
-                                quarterly_summary,
-                                use_container_width=True,
-                                hide_index=True
-                            )
-                        
-                        with col2:
-                            # Best performing quarter
-                            best_quarter = quarterly_summary.loc[quarterly_summary['Total Gain (₹)'].idxmax()]
-                            worst_quarter = quarterly_summary.loc[quarterly_summary['Total Gain (₹)'].idxmin()]
+                        # Display quarterly summary only if data is valid
+                        if quarterly_summary is not None:
+                            col1, col2 = st.columns(2)
                             
-                            st.metric(
-                                "Best Performing Quarter",
-                                best_quarter['Quarter'],
-                                f"₹{best_quarter['Total Gain (₹)']:,.2f} gain"
-                            )
+                            with col1:
+                                st.dataframe(
+                                    quarterly_summary,
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
                             
-                            st.metric(
-                                "Worst Performing Quarter",
-                                worst_quarter['Quarter'],
-                                f"₹{worst_quarter['Total Gain (₹)']:,.2f} gain"
-                            )
-                            
-                            st.metric(
-                                "Average Quarterly Return",
-                                f"{quarterly_summary['Return %'].mean():.2f}%",
-                                f"Across {len(quarterly_summary)} quarters"
-                            )
+                            with col2:
+                                # Best performing quarter
+                                best_quarter = quarterly_summary.loc[quarterly_summary['Total Gain (₹)'].idxmax()]
+                                worst_quarter = quarterly_summary.loc[quarterly_summary['Total Gain (₹)'].idxmin()]
+                                
+                                st.metric(
+                                    "Best Performing Quarter",
+                                    best_quarter['Quarter'],
+                                    f"₹{best_quarter['Total Gain (₹)']:,.2f} gain"
+                                )
+                                
+                                st.metric(
+                                    "Worst Performing Quarter",
+                                    worst_quarter['Quarter'],
+                                    f"₹{worst_quarter['Total Gain (₹)']:,.2f} gain"
+                                )
+                                
+                                st.metric(
+                                    "Average Quarterly Return",
+                                    f"{quarterly_summary['Return %'].mean():.2f}%",
+                                    f"Across {len(quarterly_summary)} quarters"
+                                )
+                        else:
+                            st.warning("Quarterly summary could not be generated due to data format issues")
                     else:
                         st.info("No quarterly data available for analysis")
                         
