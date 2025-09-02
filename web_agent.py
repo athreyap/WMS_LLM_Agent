@@ -1038,13 +1038,13 @@ class PortfolioAnalytics:
                         st.rerun()  # Refresh the page to show the dashboard
                     else:
                         st.warning("⚠️ No portfolio data found. Please upload some files first.")
-                        self.show_file_upload_page()
+                        self.render_files_page()
                         return
                         
             except Exception as e:
                 st.error(f"❌ Error loading portfolio data: {e}")
                 st.info("💡 You can still upload files to get started.")
-                self.show_file_upload_page()
+                self.render_files_page()
                 return
         
         # Sidebar navigation
@@ -1672,7 +1672,9 @@ class PortfolioAnalytics:
                         
                         # Create detailed channel table
                         channel_table_data = []
-                        for channel, value in channel_performance.items():
+                        for _, row in channel_performance.iterrows():
+                            channel = row['channel']
+                            value = row['current_value']
                             # Get channel-specific data
                             channel_stocks = stock_buys[stock_buys['channel'] == channel]
                             channel_count = len(channel_stocks['ticker'].unique())
@@ -1708,14 +1710,14 @@ class PortfolioAnalytics:
                             with col2:
                                 st.metric(
                                     "Best Channel",
-                                    channel_performance.index[0],
-                                    f"₹{channel_performance.iloc[0]:,.2f}"
+                                    channel_performance.iloc[0]['channel'],
+                                    f"₹{channel_performance.iloc[0]['current_value']:,.2f}"
                                 )
                             with col3:
                                 st.metric(
                                     "Worst Channel",
-                                    channel_performance.index[-1],
-                                    f"₹{channel_performance.iloc[-1]:,.2f}"
+                                    channel_performance.iloc[-1]['channel'],
+                                    f"₹{channel_performance.iloc[-1]['current_value']:,.2f}"
                                 )
                         else:
                             st.info("No detailed channel data available for table display")

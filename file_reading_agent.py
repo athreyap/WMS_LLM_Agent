@@ -199,13 +199,15 @@ class FileReadingAgent:
             if df is None:
                 return False
             
-            # Save file to database using Supabase
+                            # Save file to database using Supabase
             try:
+                # Get username from user context or use a placeholder
+                username = f"user_{user_id}"  # Placeholder - ideally should be passed from calling context
                 file_record = save_file_record_supabase(
                     filename=file_path.name,
-                    original_filename=file_path.name,
-                    file_hash=self._get_file_hash(file_path),
-                    customer_name=None
+                    file_path=str(file_path),
+                    user_id=user_id,
+                    username=username
                 )
                 
                 if file_record is None:
