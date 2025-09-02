@@ -202,13 +202,13 @@ class UserFileReadingAgent:
             
             # Convert price to numeric if it exists, otherwise keep as None
             if 'price' in df.columns and not df['price'].isna().all():
-            df['price'] = pd.to_numeric(df['price'], errors='coerce')
+                df['price'] = pd.to_numeric(df['price'], errors='coerce')
             
             # Remove rows with invalid data
             df = df[df['quantity'] > 0]
             # Only filter by price if price column has valid values
             if 'price' in df.columns and not df['price'].isna().all():
-            df = df[df['price'] > 0]
+                df = df[df['price'] > 0]
             
             # Convert date to datetime
             df['date'] = pd.to_datetime(df['date'], errors='coerce')
@@ -403,18 +403,18 @@ class UserFileReadingAgent:
             try:
                 # Check each user's folder
                 for user_id, user_agent_data in list(self.user_agents.items()):
-            try:
+                    try:
                 # Scan for new files
                         new_files = self._scan_for_new_files(user_id, user_agent_data)
                 
-                if new_files:
-                    print(f"📁 Found {len(new_files)} new/modified files for user {user_id}")
+                        if new_files:
+                            print(f"📁 Found {len(new_files)} new/modified files for user {user_id}")
                     
-                    for file_path in new_files:
+                            for file_path in new_files:
                                 self._process_file(file_path, user_id, user_agent_data)
                     
                     # Save processed files cache
-                            self._save_user_processed_files(user_id, user_agent_data)
+                                self._save_user_processed_files(user_id, user_agent_data)
                         
                         # Update last check time
                         user_agent_data['last_check'] = datetime.now()
@@ -523,27 +523,27 @@ class UserFileReadingAgent:
             return False
     
     def get_user_processing_status(self, user_id: int) -> Dict:
-    """Get status of file processing for a specific user"""
-    try:
+    #"""Get status of file processing for a specific user"""
+        try:
             if user_id not in self.user_agents:
                 folder_path = self._get_user_folder_path(user_id)
                 if not folder_path:
                     return {'error': 'User folder path not found'}
                 self._create_user_agent(user_id, folder_path)
             
-            user_agent_data = self.user_agents[user_id]
-            csv_files = list(user_agent_data['folder_path'].glob("*.csv"))
+                user_agent_data = self.user_agents[user_id]
+                csv_files = list(user_agent_data['folder_path'].glob("*.csv"))
+
+            processed_files = []
+            unprocessed_files = []
         
-        processed_files = []
-        unprocessed_files = []
-        
-        for file_path in csv_files:
+            for file_path in csv_files:
                 if str(file_path) in user_agent_data['processed_files']:
-                processed_files.append(file_path.name)
-            else:
-                unprocessed_files.append(file_path.name)
+                    processed_files.append(file_path.name)
+                else:
+                    unprocessed_files.append(file_path.name)
         
-        return {
+            return {
             'user_id': user_id,
             'total_files': len(csv_files),
             'processed_files': processed_files,
@@ -552,8 +552,8 @@ class UserFileReadingAgent:
                 'folder_path': str(user_agent_data['folder_path'])
         }
         
-    except Exception as e:
-        print(f"❌ Error getting processing status for user {user_id}: {e}")
+        except Exception as e:
+            print(f"❌ Error getting processing status for user {user_id}: {e}")
             return {'error': str(e)}
     
     def cleanup_user_old_files(self, user_id: int, days: int = 30):
