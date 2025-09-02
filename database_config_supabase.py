@@ -409,7 +409,7 @@ def save_transaction_supabase(user_id: int, stock_name: str, ticker: str, quanti
             print(f"❌ Failed to save transaction for {ticker}")
             return None
             
-    except Exception as e:
+        except Exception as e:
         print(f"❌ Error saving transaction: {e}")
         return None
 
@@ -428,10 +428,10 @@ def get_transactions_supabase(user_id: int = None, file_id: int = None) -> List[
         
         if result.data:
             return result.data
-        else:
+            else:
             return []
             
-    except Exception as e:
+        except Exception as e:
         print(f"❌ Error getting transactions: {e}")
         return []
 
@@ -457,21 +457,37 @@ def get_transactions_with_historical_prices(user_id: int = None) -> List[Dict]:
 def save_file_record_supabase(filename: str, file_path: str, user_id: int) -> Optional[Dict]:
     """Save file record using Supabase client"""
     try:
-        # Generate file hash from file path
+        # Generate file hash from file path (this was already correct - unique per user due to different paths)
         import hashlib
         file_hash = hashlib.md5(file_path.encode()).hexdigest()
         
         # First, check if a file with the same name already exists for this user
         try:
-            existing_files = supabase.table("investment_files").select("id, filename").eq("user_id", user_id).execute()
+            existing_files = supabase.table("investment_files").select("id, filename, file_hash").eq("user_id", user_id).execute()
             if existing_files.data:
                 for existing_file in existing_files.data:
                     if existing_file.get('filename') == filename:
                         print(f"⚠️ File {filename} already exists for user {user_id}, skipping duplicate")
+                        print(f"💡 Existing file ID: {existing_file.get('id')}, Hash: {existing_file.get('file_hash')}")
                         # Return the existing file record instead of creating a new one
                         return existing_file
         except Exception as check_error:
             print(f"⚠️ Could not check for existing files: {check_error}")
+        
+        # Also check if a file with the same hash already exists (global check)
+        try:
+            hash_check = supabase.table("investment_files").select("id, filename, user_id").eq("file_hash", file_hash).execute()
+            if hash_check.data:
+                for hash_file in hash_check.data:
+                    if hash_file.get('user_id') == user_id and hash_file.get('filename') == filename:
+                        print(f"⚠️ File {filename} with hash {file_hash} already exists for user {user_id}")
+                        print(f"💡 This is a duplicate upload - returning existing record")
+                        return hash_file
+                    elif hash_file.get('user_id') != user_id:
+                        print(f"💡 Hash {file_hash} exists for different user {hash_file.get('user_id')} (file: {hash_file.get('filename')})")
+                        print(f"💡 This is normal - different users can have files with same content")
+        except Exception as hash_check_error:
+            print(f"⚠️ Could not check for hash conflicts: {hash_check_error}")
         
         # First, check if the table structure supports user_id
         try:
@@ -567,7 +583,7 @@ def get_file_records_supabase(user_id: int = None) -> List[Dict]:
             else:
                 return []
             
-    except Exception as e:
+                    except Exception as e:
         print(f"❌ Error getting file records: {e}")
         # Run diagnostics to help identify the issue
         print("🔍 Running database diagnostics...")
@@ -683,7 +699,7 @@ def update_transaction_sector_supabase(ticker: str, sector: str):
         else:
             print(f"⚠️ No transactions found with ticker {ticker}")
             return False
-            
+        
     except Exception as e:
         print(f"❌ Error updating transaction sector: {e}")
         return False
@@ -696,8 +712,8 @@ def get_transactions_by_ticker_supabase(ticker: str) -> List[Dict]:
         if result.data:
             return result.data
         else:
-            return []
-            
+        return []
+
     except Exception as e:
         print(f"❌ Error getting transactions by ticker: {e}")
         return []
@@ -817,10 +833,10 @@ def save_transactions_bulk_supabase(df: pd.DataFrame, file_id: int, user_id: int
                 verify_result = supabase.table("investment_transactions").select("*").eq("file_id", file_id).execute()
                 if verify_result.data:
                     print(f"✅ Data verification successful: {len(verify_result.data)} transactions found in database")
-                    return True
+            return True
                 else:
                     print(f"❌ Data verification failed: No transactions found after insert")
-                    return False
+        return False
             except Exception as verify_error:
                 print(f"⚠️ Data verification error: {verify_error}")
                 # Still return True if insert was successful
@@ -1052,7 +1068,7 @@ def fix_password_salt_issue():
                     supabase.table("users").update(update_data).eq("id", user_id).execute()
                     print(f"✅ Fixed user: {username}")
                     fixed_count += 1
-                except Exception as e:
+    except Exception as e:
                     print(f"❌ Failed to fix user {username}: {e}")
             else:
                 print(f"✅ User {username} already has password_salt")
@@ -1135,8 +1151,8 @@ def check_table_structure(table_name: str) -> Dict:
                 "columns": [],
                 "sample_record": None
             }
-            
-    except Exception as e:
+                
+            except Exception as e:
         print(f"❌ Error accessing table '{table_name}': {e}")
         return {
             "accessible": False,
@@ -1184,3 +1200,5 @@ def diagnose_database_issues():
             print(f"💡 You may need to disable RLS for testing or configure proper policies")
     
     print("\n🔍 Database diagnosis complete!")
+
+

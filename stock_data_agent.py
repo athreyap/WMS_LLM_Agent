@@ -83,19 +83,19 @@ class StockDataAgent:
                     print(f"⚠️ MFTool failed for {ticker}: {e}")
                 
                 # Fallback to INDstocks for mutual funds
-                try:
-                    from indstocks_api import get_indstocks_client
-                    api_client = get_indstocks_client()
+            try:
+                from indstocks_api import get_indstocks_client
+                api_client = get_indstocks_client()
                     if api_client and api_client.available:
-                        price_data = api_client.get_stock_price(ticker)
-                        if price_data and price_data.get('price'):
-                            return {
-                                'live_price': float(price_data['price']),
+                    price_data = api_client.get_stock_price(ticker)
+                    if price_data and price_data.get('price'):
+                        return {
+                            'live_price': float(price_data['price']),
                                 'sector': 'Mutual Funds',
                                 'price_source': 'indstocks_mf',
                                 'stock_name': f"MF-{ticker}"
-                            }
-                except Exception as e:
+                        }
+            except Exception as e:
                     print(f"⚠️ INDstocks failed for mutual fund {ticker}: {e}")
                 
                 return None
@@ -104,14 +104,31 @@ class StockDataAgent:
                 print(f"🔍 Fetching stock data for {ticker} using yfinance...")
                 
                 # Try yfinance first
-                try:
-                    # Add .NS suffix for Indian stocks if not present
-                    if not ticker.endswith(('.NS', '.BO')):
-                        ticker_with_suffix = f"{ticker}.NS"
-                    else:
-                        ticker_with_suffix = ticker
-                    
-                    stock = yf.Ticker(ticker_with_suffix)
+            try:
+                # Add .NS suffix for Indian stocks if not present
+                if not ticker.endswith(('.NS', '.BO')):
+                    ticker_with_suffix = f"{ticker}.NS"
+                else:
+                    ticker_with_suffix = ticker
+                
+                stock = yf.Ticker(ticker_with_suffix)
+                info = stock.info
+                
+                live_price = info.get('regularMarketPrice', 0)
+                sector = info.get('sector', 'Unknown')
+                stock_name = info.get('longName', ticker)
+                
+                if live_price and live_price > 0:
+                    return {
+                        'live_price': float(live_price),
+                        'sector': sector,
+                        'price_source': 'yfinance',
+                        'stock_name': stock_name
+                    }
+                
+                # Try without .NS suffix
+                if ticker_with_suffix.endswith('.NS'):
+                    stock = yf.Ticker(ticker)
                     info = stock.info
                     
                     live_price = info.get('regularMarketPrice', 0)
@@ -125,25 +142,8 @@ class StockDataAgent:
                             'price_source': 'yfinance',
                             'stock_name': stock_name
                         }
-                    
-                    # Try without .NS suffix
-                    if ticker_with_suffix.endswith('.NS'):
-                        stock = yf.Ticker(ticker)
-                        info = stock.info
                         
-                        live_price = info.get('regularMarketPrice', 0)
-                        sector = info.get('sector', 'Unknown')
-                        stock_name = info.get('longName', ticker)
-                        
-                        if live_price and live_price > 0:
-                            return {
-                                'live_price': float(live_price),
-                                'sector': sector,
-                                'price_source': 'yfinance',
-                                'stock_name': stock_name
-                            }
-                            
-                except Exception as e:
+            except Exception as e:
                     print(f"⚠️ YFinance failed for {ticker}: {e}")
                 
                 # Fallback to INDstocks for stocks
@@ -162,8 +162,8 @@ class StockDataAgent:
                             }
                 except Exception as e:
                     print(f"⚠️ INDstocks failed for stock {ticker}: {e}")
-                
-                return None
+            
+            return None
             
         except Exception as e:
             print(f"❌ Error fetching data for {ticker}: {e}")
@@ -178,9 +178,9 @@ class StockDataAgent:
             if new_data:
                 # Update stock data using Supabase
                 update_stock_data_supabase(
-                    ticker=ticker,
-                    stock_name=new_data['stock_name'],
-                    sector=new_data['sector'],
+                        ticker=ticker,
+                        stock_name=new_data['stock_name'],
+                        sector=new_data['sector'],
                     current_price=new_data['live_price']
                 )
                 
@@ -193,7 +193,7 @@ class StockDataAgent:
                 except Exception as e:
                     print(f"⚠️ Could not update transaction sectors for {ticker}: {e}")
                 
-                return True
+                    return True
             else:
                 print(f"❌ Failed to fetch live data for {ticker}")
                 return False
@@ -416,7 +416,7 @@ class StockDataAgent:
         except Exception as e:
             print(f"❌ Error in bulk stock update: {e}")
             return {'updated': 0, 'failed': len(stocks), 'sector_updates': {}}
-
+    
     def get_stock_data(self, ticker: str) -> Optional[Dict]:
         """Get stock data from cache or database using Supabase"""
         # Check cache first
@@ -496,7 +496,7 @@ class StockDataAgent:
                         'live_price': record.get('live_price'),  # Use live_price instead of current_price
                         'price_source': 'supabase',
                         'last_updated': record.get('last_updated')
-                    }
+                }
             
             return stock_data
             

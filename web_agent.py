@@ -75,7 +75,7 @@ class PortfolioAnalytics:
                 if self.authenticate_user(username, password):
                     st.success("Login successful!")
                     st.rerun()
-            else:
+                else:
                     st.error("Invalid username or password")
         
         with tab2:
@@ -375,7 +375,7 @@ class PortfolioAnalytics:
             # Clear progress elements after a short delay
             import time
             time.sleep(1)
-            progress_bar.empty()
+            progress_bar.progress(1.0)
             status_text.empty()
             
             return df
@@ -392,8 +392,28 @@ class PortfolioAnalytics:
             # First save file record (or get existing one)
             file_record = save_file_record_supabase(filename, f"/uploads/{filename}", user_id)
             if not file_record:
-                st.error("Failed to save file record")
-                return False
+                # Check if this is a duplicate file error
+                st.warning(f"⚠️ File {filename} may have already been processed")
+                st.info("💡 This could be due to:")
+                st.info("   • File was uploaded before")
+                st.info("   • File content is identical to an existing file")
+                st.info("   • File hash already exists in database")
+                
+                # Try to get existing file record
+                try:
+                    from database_config_supabase import get_file_records_supabase
+                    existing_files = get_file_records_supabase(user_id)
+                    for existing_file in existing_files:
+                        if existing_file.get('filename') == filename:
+                            st.info(f"✅ Found existing file record for {filename}")
+                            file_record = existing_file
+                            break
+                except Exception as e:
+                    st.warning(f"⚠️ Could not retrieve existing file record: {e}")
+                
+                if not file_record:
+                    st.error("❌ Failed to save file record and could not find existing record")
+                    return False
             
             file_id = file_record['id']
             
@@ -478,7 +498,7 @@ class PortfolioAnalytics:
             
             # Load portfolio data
             self.load_portfolio_data(user_id)
-                
+            
         except Exception as e:
             st.error(f"Error initializing portfolio data: {e}")
     
@@ -517,7 +537,7 @@ class PortfolioAnalytics:
                                 ticker, 
                                 user_id, 
                                 transaction_date.strftime('%Y-%m-%d')
-                            )
+             )
                         else:
                             historical_price = get_stock_price(
                                 ticker, 
@@ -1331,11 +1351,11 @@ class PortfolioAnalytics:
             # Sector Performance
             if 'sector' in df.columns and not df['sector'].isna().all():
                 sector_performance = df.groupby('sector').agg({
-                    'invested_amount': 'sum',
-                    'current_value': 'sum',
+                'invested_amount': 'sum',
+                'current_value': 'sum',
                     'unrealized_pnl': 'sum'
-                }).reset_index()
-                
+            }).reset_index()
+            
                 if not sector_performance.empty:
                     sector_performance['pnl_percentage'] = (sector_performance['unrealized_pnl'] / sector_performance['invested_amount']) * 100
                     sector_performance = sector_performance.sort_values('pnl_percentage', ascending=False)
@@ -1427,41 +1447,41 @@ class PortfolioAnalytics:
                 stock_performance['pnl_percentage'] = (stock_performance['unrealized_pnl'] / stock_performance['invested_amount']) * 100
                 stock_performance['avg_price'] = stock_performance['invested_amount'] / stock_performance['quantity']
                  
-                 # Add stock ratings based on performance
+                # Add stock ratings based on performance
                 def get_stock_rating(pnl_pct):
-                     if pnl_pct >= 20:
-                         return '⭐⭐⭐ Excellent'
-                     elif pnl_pct >= 10:
-                         return '⭐⭐ Good'
-                     elif pnl_pct >= 0:
-                         return '⭐ Fair'
-                     elif pnl_pct >= -10:
-                         return '⚠️ Poor'
-                     else:
-                         return '❌ Very Poor'
+                    if pnl_pct >= 20:
+                        return '⭐⭐⭐ Excellent'
+                    elif pnl_pct >= 10:
+                        return '⭐⭐ Good'
+                    elif pnl_pct >= 0:
+                        return '⭐ Fair'
+                    elif pnl_pct >= -10:
+                        return '⚠️ Poor'
+                    else:
+                        return '❌ Very Poor'
                  
                 stock_performance['rating'] = stock_performance['pnl_percentage'].apply(get_stock_rating)
                 stock_performance['rating_color'] = stock_performance['pnl_percentage'].apply(
-                     lambda x: 'green' if x >= 10 else 'orange' if x >= 0 else 'red'
-                 )
+                    lambda x: 'green' if x >= 10 else 'orange' if x >= 0 else 'red'
+                )
                  
-                 # Sort by P&L percentage
+                # Sort by P&L percentage
                 stock_performance = stock_performance.sort_values('pnl_percentage', ascending=False)
-                 
-                 # Display top performers
+                
+                # Display top performers
                 st.subheader("🏆 Top Performers (1-Year Buy Transactions)")
                  
-                 # Create performance chart
+                # Create performance chart
                 fig_stock_performance = px.bar(
-                     stock_performance.head(10),
-                     x='ticker',
-                     y='pnl_percentage',
-                     color='pnl_percentage',
-                     color_continuous_scale='RdYlGn',
-                     title="Top 10 Stock Performers by Return % (1-Year Buy Transactions)",
-                     labels={'pnl_percentage': 'Return %', 'ticker': 'Stock Ticker'},
-                     hover_data=['invested_amount', 'unrealized_pnl', 'rating']
-                 )
+                    stock_performance.head(10),
+                    x='ticker',
+                    y='pnl_percentage',
+                    color='pnl_percentage',
+                    color_continuous_scale='RdYlGn',
+                    title="Top 10 Stock Performers by Return % (1-Year Buy Transactions)",
+                    labels={'pnl_percentage': 'Return %', 'ticker': 'Stock Ticker'},
+                    hover_data=['invested_amount', 'unrealized_pnl', 'rating']
+                )
                 fig_stock_performance.update_xaxes(tickangle=45)
                 st.plotly_chart(fig_stock_performance, width='stretch')
                  
@@ -1488,44 +1508,44 @@ class PortfolioAnalytics:
                     best_color = "normal" if best_return > 0 else "inverse"
                     st.metric("Best Performer", f"{best_arrow} {best_stock['ticker']}", delta=f"{best_return:.2f}%", delta_color=best_color)
                  
-                 # Best Performing Sector and Channel for 1-Year Buy Transactions
+                # Best Performing Sector and Channel for 1-Year Buy Transactions
                 st.subheader("🏆 Best Performing Sector & Channel (1-Year Buy Transactions)")
                  
-                 # Sector Performance for 1-year buy transactions
+                # Sector Performance for 1-year buy transactions
                 if 'sector' in stock_buys.columns and not stock_buys['sector'].isna().all():
-                     sector_perf_1y = stock_buys.groupby('sector').agg({
-                         'invested_amount': 'sum',
-                         'current_value': 'sum',
-                         'unrealized_pnl': 'sum'
-                     }).reset_index()
+                    sector_perf_1y = stock_buys.groupby('sector').agg({
+                        'invested_amount': 'sum',
+                        'current_value': 'sum',
+                        'unrealized_pnl': 'sum'
+                    }).reset_index()
                      
-                     if not sector_perf_1y.empty:
-                         sector_perf_1y['pnl_percentage'] = (sector_perf_1y['unrealized_pnl'] / sector_perf_1y['invested_amount']) * 100
-                         sector_perf_1y = sector_perf_1y.sort_values('pnl_percentage', ascending=False)
+                    if not sector_perf_1y.empty:
+                        sector_perf_1y['pnl_percentage'] = (sector_perf_1y['unrealized_pnl'] / sector_perf_1y['invested_amount']) * 100
+                        sector_perf_1y = sector_perf_1y.sort_values('pnl_percentage', ascending=False)
                          
-                         col1, col2 = st.columns(2)
-                         with col1:
-                             best_sector_1y = sector_perf_1y.iloc[0]
-                             best_sector_1y_arrow = "↗️" if best_sector_1y['pnl_percentage'] > 0 else "↘️" if best_sector_1y['pnl_percentage'] < 0 else "➡️"
-                             best_sector_1y_color = "normal" if best_sector_1y['pnl_percentage'] > 0 else "inverse"
-                             st.metric(
-                                 "Best Sector (1Y)", 
-                                 f"{best_sector_1y_arrow} {best_sector_1y['sector']}", 
-                                 delta=f"₹{best_sector_1y['unrealized_pnl']:,.2f} ({best_sector_1y['pnl_percentage']:.2f}%)",
-                                 delta_color=best_sector_1y_color
-                             )
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            best_sector_1y = sector_perf_1y.iloc[0]
+                            best_sector_1y_arrow = "↗️" if best_sector_1y['pnl_percentage'] > 0 else "↘️" if best_sector_1y['pnl_percentage'] < 0 else "➡️"
+                            best_sector_1y_color = "normal" if best_sector_1y['pnl_percentage'] > 0 else "inverse"
+                            st.metric(
+                                "Best Sector (1Y)", 
+                                f"{best_sector_1y_arrow} {best_sector_1y['sector']}", 
+                                delta=f"₹{best_sector_1y['unrealized_pnl']:,.2f} ({best_sector_1y['pnl_percentage']:.2f}%)",
+                                delta_color=best_sector_1y_color
+                            )
                          
-                         with col2:
-                             if len(sector_perf_1y) > 1:
-                                 worst_sector_1y = sector_perf_1y.iloc[-1]
-                                 worst_sector_1y_arrow = "↗️" if worst_sector_1y['pnl_percentage'] > 0 else "↘️" if worst_sector_1y['pnl_percentage'] < 0 else "➡️"
-                                 worst_sector_1y_color = "normal" if worst_sector_1y['pnl_percentage'] > 0 else "inverse"
-                                 st.metric(
-                                     "Worst Sector (1Y)", 
-                                     f"{worst_sector_1y_arrow} {worst_sector_1y['sector']}", 
-                                     delta=f"₹{worst_sector_1y['unrealized_pnl']:,.2f} ({worst_sector_1y['pnl_percentage']:.2f}%)",
-                                     delta_color=worst_sector_1y_color
-                                 )
+                        with col2:
+                            if len(sector_perf_1y) > 1:
+                                worst_sector_1y = sector_perf_1y.iloc[-1]
+                                worst_sector_1y_arrow = "↗️" if worst_sector_1y['pnl_percentage'] > 0 else "↘️" if worst_sector_1y['pnl_percentage'] < 0 else "➡️"
+                                worst_sector_1y_color = "normal" if worst_sector_1y['pnl_percentage'] > 0 else "inverse"
+                                st.metric(
+                                    "Worst Sector (1Y)", 
+                                    f"{worst_sector_1y_arrow} {worst_sector_1y['sector']}", 
+                                    delta=f"₹{worst_sector_1y['unrealized_pnl']:,.2f} ({worst_sector_1y['pnl_percentage']:.2f}%)",
+                                    delta_color=worst_sector_1y_color
+                                )
                  
                  # Channel Performance for 1-year buy transactions
                 if 'channel' in stock_buys.columns and not stock_buys['channel'].isna().all():
@@ -1694,15 +1714,15 @@ class PortfolioAnalytics:
                              stock_quarterly = quarterly_df[quarterly_df['ticker'] == ticker].sort_values('quarter_name')
                              
                              with st.expander(f"📊 {ticker} - Quarterly Performance", expanded=False):
-                                 col1, col2 = st.columns(2)
-                                 
-                                 with col1:
+                                col1, col2 = st.columns(2)
+        
+                                with col1:
                                      # Show quarterly performance metrics
                                      st.write(f"**Total Invested:** ₹{stock_quarterly['invested_amount'].sum():,.2f}")
                                      st.write(f"**Current Value:** ₹{stock_quarterly['current_value'].sum():,.2f}")
                                      st.write(f"**Total P&L:** ₹{stock_quarterly['unrealized_pnl'].sum():,.2f}")
-                                 
-                                 with col2:
+        
+                                with col2:
                                      # Show quarterly performance chart
                                      fig_stock_quarterly = px.line(
                                          stock_quarterly,
@@ -1719,7 +1739,7 @@ class PortfolioAnalytics:
                                      st.plotly_chart(fig_stock_quarterly, width='stretch')
                                  
                                  # Show quarterly data table
-                                 st.dataframe(
+                         st.dataframe(
                                      stock_quarterly[['quarter_name', 'invested_amount', 'current_value', 'unrealized_pnl', 'pnl_percentage']],
                                      width='stretch',
                                      hide_index=True
@@ -2086,7 +2106,7 @@ class PortfolioAnalytics:
             self.show_page_loading_animation("P&L Analysis")
             st.info("💡 **Tip:** If this page doesn't load automatically, use the '🔄 Refresh Portfolio Data' button in Settings.")
             return
-            
+        
         df = self.session_state.portfolio_data
         
         # P&L summary by ticker
