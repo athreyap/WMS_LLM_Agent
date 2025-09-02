@@ -2795,29 +2795,7 @@ class WebAgent:
                 # Mutual fund - use reliable methods for Streamlit Cloud
                 price = None
                 
-                        # Method 1: Try mftool for current NAV (live price) with Streamlit Cloud compatibility
-                        try:
-                            from mf_price_fetcher import fetch_mutual_fund_price
-                            live_price = fetch_mutual_fund_price(clean_ticker)
-                            if live_price and live_price > 0:
-                                print(f"✅ MF {ticker}: Live price ₹{live_price} from mftool")
-                                return float(live_price)
-                        except Exception as e:
-                            print(f"⚠️ MFTool failed for {ticker}: {e}")
-                            # Try alternative mftool approach for Streamlit Cloud
-                            try:
-                                import mftool
-                                mf = mftool.Mftool()
-                                # Get scheme details
-                                scheme_details = mf.get_scheme_details(clean_ticker)
-                                if scheme_details and 'nav' in scheme_details:
-                                    live_price = float(scheme_details['nav'])
-                                    print(f"✅ MF {ticker}: Live price ₹{live_price} from mftool direct")
-                                    return float(live_price)
-                            except Exception as mf_error:
-                                print(f"⚠️ Direct mftool also failed for {ticker}: {mf_error}")
-                
-                # Method 2: Try mftool for historical NAV on transaction date with Streamlit Cloud compatibility
+                # Method 1: Try mftool for historical NAV on transaction date with Streamlit Cloud compatibility
                 if not price:
                     try:
                         from mf_price_fetcher import fetch_mutual_fund_historical_price
