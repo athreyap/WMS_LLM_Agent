@@ -1712,7 +1712,13 @@ class PortfolioAnalytics:
                         # Combine all quarterly data
                         all_quarterly = pd.concat(quarterly_data, ignore_index=True)
                         
-                        # Create quarterly chart
+                        # Sort quarters chronologically for proper x-axis ordering
+                        # Create a sortable quarter key for chronological ordering
+                        all_quarterly['sort_key'] = all_quarterly['quarter_label'].str.extract(r'(\d{4}) Q(\d)')
+                        all_quarterly['sort_key'] = all_quarterly['sort_key'].apply(lambda x: int(x[0]) * 10 + int(x[1]) if len(x) == 2 else 0)
+                        all_quarterly = all_quarterly.sort_values('sort_key')
+                        
+                        # Create quarterly chart with chronologically ordered x-axis
                         fig_quarterly = px.bar(
                             all_quarterly,
                             x='quarter_label',
@@ -1735,19 +1741,30 @@ class PortfolioAnalytics:
                             height=500
                         )
                         
-                        fig_quarterly.update_xaxes(tickangle=45)
+                        # Ensure x-axis is ordered chronologically
+                        fig_quarterly.update_xaxes(
+                            tickangle=45,
+                            categoryorder='array',
+                            categoryarray=all_quarterly['quarter_label'].unique()
+                        )
+                        
                         st.plotly_chart(fig_quarterly, width='stretch')
                         
                         # Add quarterly summary table
                         st.subheader("📊 Quarterly Summary Table")
                         
-                        # Create summary by quarter
+                        # Create summary by quarter (also sorted chronologically)
                         quarterly_summary = all_quarterly.groupby('quarter_label').agg({
                             'unrealized_pnl': 'sum',
                             'invested_amount': 'sum',
                             'current_value': 'sum',
                             'ticker': 'count'
                         }).reset_index()
+                        
+                        # Sort summary chronologically
+                        quarterly_summary['sort_key'] = quarterly_summary['quarter_label'].str.extract(r'(\d{4}) Q(\d)')
+                        quarterly_summary['sort_key'] = quarterly_summary['sort_key'].apply(lambda x: int(x[0]) * 10 + int(x[1]) if len(x) == 2 else 0)
+                        quarterly_summary = quarterly_summary.sort_values('sort_key')
                         
                         quarterly_summary.columns = ['Quarter', 'Total Gain (₹)', 'Total Invested (₹)', 'Total Current Value (₹)', 'Number of Stocks']
                         quarterly_summary['Return %'] = (quarterly_summary['Total Gain (₹)'] / quarterly_summary['Total Invested (₹)'] * 100).round(2)
