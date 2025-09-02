@@ -100,35 +100,14 @@ class PortfolioAnalytics:
             if uploaded_files:
                 st.success(f"✅ Selected {len(uploaded_files)} file(s) for processing")
                 
-                # Show sample CSV format
-                with st.expander("📋 Sample CSV Format", expanded=False):
-                    st.markdown("""
-                    **Required Columns:**
-                    - `date` - Transaction date (YYYY-MM-DD format)
-                    - `ticker` - Stock/Mutual Fund symbol (e.g., RELIANCE, 120828)
-                    - `quantity` - Number of shares/units
-                    - `transaction_type` - Buy or Sell
-                    
-                    **Optional Columns:**
-                    - `price` - Transaction price per share/unit
-                    - `stock_name` - Company/Fund name
-                    - `sector` - Industry sector
-                    - `channel` - Investment platform (e.g., Direct, Broker, Online)
-                    
-                    **Example:**
-                    ```csv
-                    date,ticker,quantity,transaction_type,price,stock_name,sector,channel
-                    2024-01-15,RELIANCE,100,buy,2500.50,Reliance Industries,Oil & Gas,Direct
-                    2024-01-20,120828,500,buy,45.25,ICICI Prudential Technology Fund,Technology,Online
-                    2024-02-01,TCS,50,sell,3800.00,Tata Consultancy Services,Technology,Broker
-                    ```
-                    
-                    **Notes:**
-                    - For mutual funds, use the numerical scheme code (e.g., 120828)
-                    - For stocks, you can include exchange suffix (.NS, .BO) or leave without
-                    - Transaction types: buy, sell, purchase, bought, sold, sale
-                    - If price is missing, the system will fetch historical prices automatically
-                    """)
+                # Notes about CSV format
+                st.info("""
+                **Notes:**
+                - For mutual funds, use the numerical scheme code (e.g., 120828)
+                - For stocks, you can include exchange suffix (.NS, .BO) or leave without
+                - Transaction types: buy, sell, purchase, bought, sold, sale
+                - If price is missing, the system will fetch historical prices automatically
+                """)
             
             if st.button("Create Account & Process Files", type="primary"):
                 if new_password != confirm_password:
@@ -2532,11 +2511,13 @@ class PortfolioAnalytics:
             st.error("No user ID found")
             return
         
-        # File upload section
-        st.subheader("📤 Upload Investment File")
+        # Show sample CSV format prominently at the top
+        st.subheader("📋 Sample CSV Format")
+        st.info("💡 **Prepare your CSV file with the following format before uploading:**")
         
-        # Show sample CSV format
-        with st.expander("📋 Sample CSV Format", expanded=False):
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
             st.markdown("""
             **Required Columns:**
             - `date` - Transaction date (YYYY-MM-DD format)
@@ -2549,7 +2530,10 @@ class PortfolioAnalytics:
             - `stock_name` - Company/Fund name
             - `sector` - Industry sector
             - `channel` - Investment platform (e.g., Direct, Broker, Online)
-            
+            """)
+        
+        with col2:
+            st.markdown("""
             **Example:**
             ```csv
             date,ticker,quantity,transaction_type,price,stock_name,sector,channel
@@ -2557,13 +2541,41 @@ class PortfolioAnalytics:
             2024-01-20,120828,500,buy,45.25,ICICI Prudential Technology Fund,Technology,Online
             2024-02-01,TCS,50,sell,3800.00,Tata Consultancy Services,Technology,Broker
             ```
-            
-            **Notes:**
-            - For mutual funds, use the numerical scheme code (e.g., 120828)
-            - For stocks, you can include exchange suffix (.NS, .BO) or leave without
-            - Transaction types: buy, sell, purchase, bought, sold, sale
-            - If price is missing, the system will fetch historical prices automatically
             """)
+        
+        st.markdown("---")
+        
+        # File upload section
+        st.subheader("📤 Upload Investment File")
+        
+        # Show CSV format requirements
+        st.markdown("""
+        **Required Columns:**
+        - `date` - Transaction date (YYYY-MM-DD format)
+        - `ticker` - Stock/Mutual Fund symbol (e.g., RELIANCE, 120828)
+        - `quantity` - Number of shares/units
+        - `transaction_type` - Buy or Sell
+        
+        **Optional Columns:**
+        - `price` - Transaction price per share/unit
+        - `stock_name` - Company/Fund name
+        - `sector` - Industry sector
+        - `channel` - Investment platform (e.g., Direct, Broker, Online)
+        
+        **Example:**
+        ```csv
+        date,ticker,quantity,transaction_type,price,stock_name,sector,channel
+        2024-01-15,RELIANCE,100,buy,2500.50,Reliance Industries,Oil & Gas,Direct
+        2024-01-20,120828,500,buy,45.25,ICICI Prudential Technology Fund,Technology,Online
+        2024-02-01,TCS,50,sell,3800.00,Tata Consultancy Services,Technology,Broker
+        ```
+        
+        **Notes:**
+        - For mutual funds, use the numerical scheme code (e.g., 120828)
+        - For stocks, you can include exchange suffix (.NS, .BO) or leave without
+        - Transaction types: buy, sell, purchase, bought, sold, sale
+        - If price is missing, the system will fetch historical prices automatically
+        """)
         
         uploaded_file = st.file_uploader(
             "Choose a CSV file",
