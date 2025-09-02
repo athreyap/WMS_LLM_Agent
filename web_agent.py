@@ -10,15 +10,9 @@ import os
 import sys
 from pathlib import Path
 
-# Handle matplotlib import issues gracefully
-try:
-    import matplotlib
-    matplotlib.use('Agg')  # Use non-interactive backend
-    print("✅ Matplotlib imported successfully")
-except ImportError as e:
-    print(f"⚠️ Matplotlib not available: {e}")
-    print("💡 This won't affect Plotly charts, but some features may be limited")
-    matplotlib = None
+# Handle matplotlib import issues gracefully - matplotlib not needed for this app
+matplotlib = None
+print("💡 Matplotlib not imported - using Plotly for all charts")
 
 # Import other modules with error handling
 try:
@@ -612,16 +606,16 @@ class WebAgent:
             
             for i, (ticker, transaction_date) in enumerate(ticker_date_pairs):
                 try:
-                    # Check if it's a mutual fund (numeric ticker)
+                    # Check if it's a mutual fund (numeric ticker or MF_ prefixed)
                     clean_ticker = str(ticker).strip().upper()
-                    clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
+                    is_mf = clean_ticker.isdigit() or clean_ticker.startswith('MF_')
                     
-                    if clean_ticker.isdigit():
+                    if is_mf:
                         # Mutual fund - use mftool
                         print(f"🔍 Fetching mutual fund historical price for {ticker} using mftool...")
                         try:
-                            from mf_price_fetcher import fetch_mutual_fund_historical_price
-                            price = fetch_mutual_fund_historical_price(ticker, transaction_date)
+                            from mf_price_fetcher import fetch_mutual_fund_price
+                            price = fetch_mutual_fund_price(ticker)
                             if price and price > 0:
                                 idx = price_indices[i]
                                 df.at[idx, 'price'] = price
@@ -630,53 +624,60 @@ class WebAgent:
                                 df.at[idx, 'stock_name'] = f"MF-{ticker}"
                                 prices_found += 1
                                 print(f"✅ MF {ticker}: ₹{price} for {transaction_date} - Mutual Funds")
+                            else:
+                                print(f"❌ MF {ticker}: No price available from mftool")
                         except Exception as e:
                             print(f"⚠️ MFTool failed for {ticker}: {e}")
                     else:
-                        # Regular stock - try multiple price sources
+                        # Regular stock - try multiple price sources with proper ticker formatting
                         price = None
                         
-                        # Method 1: Try file_manager
-                        try:
-                            from file_manager import fetch_historical_price
-                            price = fetch_historical_price(ticker, transaction_date)
-                        except:
-                            pass
+                        # Clean ticker for yfinance (add .NS suffix for Indian stocks)
+                        yf_ticker = clean_ticker
+                        if not yf_ticker.endswith(('.NS', '.BO', '.NSE', '.BSE')):
+                            yf_ticker = f"{clean_ticker}.NS"  # Default to NSE
                         
-                        # Method 2: Try yfinance
+                        # Method 1: Try yfinance first (most reliable)
+                        try:
+                            import yfinance as yf
+                            stock = yf.Ticker(yf_ticker)
+                            hist = stock.history(start=transaction_date, end=transaction_date + pd.Timedelta(days=1))
+                            if not hist.empty:
+                                price = hist['Close'].iloc[0]
+                                print(f"✅ {ticker} (yfinance): ₹{price} for {transaction_date}")
+                        except Exception as e:
+                            print(f"⚠️ yfinance failed for {yf_ticker}: {e}")
+                        
+                        # Method 2: Try file_manager if yfinance failed
                         if not price:
                             try:
-                                import yfinance as yf
-                                stock = yf.Ticker(ticker)
-                                hist = stock.history(start=transaction_date, end=transaction_date + pd.Timedelta(days=1))
-                                if not hist.empty:
-                                    price = hist['Close'].iloc[0]
-                            except:
-                                pass
+                                from file_manager import fetch_historical_price
+                                price = fetch_historical_price(clean_ticker, transaction_date)
+                                if price:
+                                    print(f"✅ {ticker} (file_manager): ₹{price} for {transaction_date}")
+                            except Exception as e:
+                                print(f"⚠️ file_manager failed for {ticker}: {e}")
                         
-                                                        # Method 3: Try indstocks API (if available)
-                                if not price:
-                                    try:
-                                        from indstocks_api import get_indstocks_client
-                                        api_client = get_indstocks_client()
-                                        if api_client and api_client.available:
-                                            price_data = api_client.get_historical_price(ticker, transaction_date)
-                                            if price_data and isinstance(price_data, dict) and price_data.get('price'):
-                                                price = price_data['price']
-                                                df.at[idx, 'price'] = price
-                                                historical_prices[ticker] = price
-                                                print(f"✅ {ticker} (indstocks): ₹{price} for {transaction_date}")
-                                    except ImportError:
-                                        print(f"⚠️ Indstocks API not available for {ticker}")
-                                    except Exception as e:
-                                        print(f"⚠️ Indstocks API failed for {ticker}: {e}")
+                        # Method 3: Try indstocks API if other methods failed
+                        if not price:
+                            try:
+                                from indstocks_api import get_indstocks_client
+                                api_client = get_indstocks_client()
+                                if api_client and api_client.available:
+                                    price_data = api_client.get_historical_price(clean_ticker, transaction_date)
+                                    if price_data and isinstance(price_data, dict) and price_data.get('price'):
+                                        price = price_data['price']
+                                        print(f"✅ {ticker} (indstocks): ₹{price} for {transaction_date}")
+                            except ImportError:
+                                print(f"⚠️ Indstocks API not available for {ticker}")
+                            except Exception as e:
+                                print(f"⚠️ Indstocks API failed for {ticker}: {e}")
                         
                         # Update DataFrame if price found
                         if price and price > 0:
                             idx = price_indices[i]
                             df.at[idx, 'price'] = price
                             prices_found += 1
-                            print(f"✅ {ticker}: ₹{price} for {transaction_date}")
                         else:
                             print(f"❌ {ticker}: No historical price found for {transaction_date}")
                     
@@ -1877,8 +1878,8 @@ class WebAgent:
                             self.session_state['folder_path'] = folder_path
                         
                         if folder_path:
+                            # Process the files
                             self._process_uploaded_files(uploaded_files, folder_path)
-                            st.sidebar.success("✅ Files processed! Click 'Refresh Data' below to update your portfolio.")
                             
                             # Immediately verify data was saved and force reload
                             st.sidebar.info("🔍 Verifying data was saved...")
@@ -1887,9 +1888,28 @@ class WebAgent:
                                 saved_transactions = get_transactions_supabase(user_id)
                                 if saved_transactions:
                                     st.sidebar.success(f"✅ Data verified: {len(saved_transactions)} transactions found in database")
-                                    # Force immediate data reload
-                                    st.sidebar.info("🔄 Forcing immediate data reload...")
+                                    
+                                    # Clear uploaded files from session state
+                                    if 'uploaded_files' in st.session_state:
+                                        del st.session_state['uploaded_files']
+                                    
+                                    # Force immediate data reload and recalculation
+                                    st.sidebar.info("🔄 Automatically refreshing data and recalculating P&L...")
                                     self.session_state['force_immediate_reload'] = True
+                                    self.session_state['force_recalculate'] = True
+                                    
+                                    # Clear any cached data
+                                    if 'current_df' in self.session_state:
+                                        del self.session_state['current_df']
+                                    if 'data_processing_complete' in self.session_state:
+                                        del self.session_state['data_processing_complete']
+                                    
+                                    # Show success message and auto-refresh
+                                    st.sidebar.success("✅ Files processed successfully! Data is being refreshed automatically...")
+                                    
+                                    # Small delay to show the message, then refresh
+                                    import time
+                                    time.sleep(1)
                                     st.rerun()
                                 else:
                                     st.sidebar.warning("⚠️ No transactions found in database after processing")
@@ -1897,7 +1917,15 @@ class WebAgent:
                                 st.sidebar.error(f"❌ Data verification failed: {e}")
                         else:
                             st.error("❌ Could not determine folder path for file processing")
+                    
+                    # Show selected files count
                     st.sidebar.info(f"Selected {len(uploaded_files)} file(s)")
+                    
+                    # Add a clear selection button
+                    if st.sidebar.button("🗑️ Clear Selection", type="secondary"):
+                        if 'uploaded_files' in st.session_state:
+                            del st.session_state['uploaded_files']
+                        st.rerun()
                 
                 # Processed Files Section
                 st.sidebar.markdown("---")
@@ -1905,6 +1933,7 @@ class WebAgent:
                 
                 if user_id and user_id != 1:
                     try:
+                        # Import the function locally to avoid reference errors
                         from database_config_supabase import get_file_records_supabase
                         processed_files = get_file_records_supabase(user_id)
                         
@@ -1951,6 +1980,54 @@ class WebAgent:
                         st.sidebar.info("💡 This might be due to database connection issues")
                 else:
                     st.sidebar.info("📁 Login to see your processed files")
+                
+                # File History Section
+                st.sidebar.markdown("---")
+                st.sidebar.markdown("### 📋 File History")
+                
+                if user_id and user_id != 1:
+                    try:
+                        # Import the function locally to avoid reference errors
+                        from database_config_supabase import get_file_records_supabase
+                        file_history = get_file_records_supabase(user_id)
+                        
+                        if file_history:
+                            st.sidebar.success(f"📁 {len(file_history)} files in history")
+                            
+                            # Show recent files (last 5)
+                            recent_files = file_history[-5:] if len(file_history) > 5 else file_history
+                            
+                            for file_record in recent_files:
+                                filename = file_record.get('filename', 'Unknown')
+                                processed_at = file_record.get('processed_at', 'Unknown')
+                                status = file_record.get('status', 'Unknown')
+                                
+                                # Format the date
+                                try:
+                                    if isinstance(processed_at, str):
+                                        from datetime import datetime
+                                        date_obj = datetime.fromisoformat(processed_at.replace('Z', '+00:00'))
+                                        formatted_date = date_obj.strftime('%Y-%m-%d %H:%M')
+                                    else:
+                                        formatted_date = str(processed_at)
+                                except:
+                                    formatted_date = str(processed_at)
+                                
+                                # Show file info
+                                status_color = "🟢" if status == "processed" else "🟡"
+                                st.sidebar.text(f"{status_color} {filename}")
+                                st.sidebar.caption(f"📅 {formatted_date}")
+                            
+                            if len(file_history) > 5:
+                                st.sidebar.caption(f"... and {len(file_history) - 5} more files")
+                        else:
+                            st.sidebar.info("📁 No files in history yet")
+                            
+                    except Exception as e:
+                        st.sidebar.error(f"❌ Error loading file history: {e}")
+                        st.sidebar.info("💡 This might be due to database connection issues")
+                else:
+                    st.sidebar.info("📁 Login to see your file history")
                 
                 # Manual refresh button for data recalculation
                 st.sidebar.markdown("---")
@@ -2001,157 +2078,101 @@ class WebAgent:
                             for t in all_transactions:
                                 uid = t.get('user_id', 'unknown')
                                 user_counts[uid] = user_counts.get(uid, 0) + 1
-                            st.sidebar.info(f"🔍 By User: {user_counts}")
+                            
+                            for uid, count in user_counts.items():
+                                st.sidebar.info(f"🔍 User {uid}: {count} transactions")
+                        else:
+                            st.sidebar.warning("⚠️ No transactions found in system")
                     except Exception as e:
-                        st.sidebar.error(f"❌ All transactions query failed: {e}")
+                        st.sidebar.error(f"❌ Error checking all transactions: {e}")
                 
-                # Check archive file specifically
-                if st.sidebar.button("🔍 Check Archive File", type="secondary", help="Check the specific archive file"):
-                    st.sidebar.info("🔍 Checking archive file...")
+                # Check investment_files table
+                if st.sidebar.button("🔍 Check Investment Files", type="secondary", help="Check investment_files table"):
+                    st.sidebar.info("🔍 Checking investment_files table...")
                     try:
-                        from database_config_supabase import get_file_records_supabase, get_transactions_supabase
-                        # Check file records
-                        file_records = get_file_records_supabase(user_id)
-                        archive_files = [f for f in file_records if 'archive' in f.get('file_path', '').lower()]
-                        st.sidebar.success(f"🔍 Archive Files: {len(archive_files)} found")
-                        for f in archive_files:
-                            st.sidebar.info(f"🔍 Archive: {f.get('filename')} - {f.get('file_path')}")
-                        
-                        # Check transactions from archive files
-                        if archive_files:
-                            transactions = get_transactions_supabase(user_id)
-                            archive_transactions = [t for t in transactions if t.get('file_id') in [f.get('id') for f in archive_files]]
-                            st.sidebar.success(f"🔍 Archive Transactions: {len(archive_transactions)} found")
+                        from database_config_supabase import get_file_records_supabase
+                        all_files = get_file_records_supabase()
+                        st.sidebar.success(f"🔍 Investment Files: {len(all_files)} total")
+                        if all_files:
+                            # Group by user_id
+                            user_file_counts = {}
+                            for f in all_files:
+                                uid = f.get('user_id', 'unknown')
+                                user_file_counts[uid] = user_file_counts.get(uid, 0) + 1
+                            
+                            for uid, count in user_file_counts.items():
+                                st.sidebar.info(f"🔍 User {uid}: {count} files")
+                            
+                            # Show sample file details
+                            if all_files:
+                                sample_file = all_files[0]
+                                st.sidebar.info(f"🔍 Sample file: {sample_file.get('filename', 'N/A')}")
+                                st.sidebar.info(f"🔍 Sample user_id: {sample_file.get('user_id', 'N/A')}")
+                                st.sidebar.info(f"🔍 Sample status: {sample_file.get('status', 'N/A')}")
+                        else:
+                            st.sidebar.warning("⚠️ No files found in investment_files table")
                     except Exception as e:
-                        st.sidebar.error(f"❌ Archive check failed: {e}")
+                        st.sidebar.error(f"❌ Error checking investment_files: {e}")
                 
-                # Database diagnosis button
-                if st.sidebar.button("🔍 Database Diagnosis", type="secondary", help="Run comprehensive database diagnostics"):
-                    st.sidebar.info("🔍 Running database diagnosis...")
-                    try:
-                        from database_config_supabase import diagnose_database_issues
-                        # Run diagnosis in a try-catch to handle any errors
-                        diagnose_database_issues()
-                        st.sidebar.success("✅ Database diagnosis complete! Check console for details.")
-                    except Exception as e:
-                        st.sidebar.error(f"❌ Database diagnosis failed: {e}")
+                # Check archive file button
+                if st.sidebar.button("🔍 Check Archive File", type="secondary", help="Check archive file for debugging"):
+                    if user_id and user_id != 1:
+                        st.sidebar.info("🔍 Checking archive file...")
+                        try:
+                            folder_path = self.session_state.get('folder_path', '')
+                            if folder_path:
+                                archive_path = os.path.join(folder_path, 'archive')
+                                if os.path.exists(archive_path):
+                                    files = os.listdir(archive_path)
+                                    st.sidebar.success(f"🔍 Archive files: {len(files)} found")
+                                    for file in files[:5]:  # Show first 5
+                                        st.sidebar.info(f"🔍 {file}")
+                                else:
+                                    st.sidebar.warning("⚠️ Archive folder not found")
+                            else:
+                                st.sidebar.warning("⚠️ No folder path set")
+                        except Exception as e:
+                            st.sidebar.error(f"❌ Error checking archive: {e}")
                 
                 # Check session state button
-                if st.sidebar.button("🔍 Check Session State", type="secondary", help="Check current session state values"):
-                    st.sidebar.info("🔍 Checking session state...")
-                    st.sidebar.info(f"🔍 Current user_id: {self.session_state.get('user_id', 'Not Set')}")
-                    st.sidebar.info(f"🔍 Current username: {self.session_state.get('username', 'Not Set')}")
-                    st.sidebar.info(f"🔍 Session keys: {list(self.session_state.keys())}")
+                if st.sidebar.button("🔍 Check Session State", type="secondary", help="Check current session state"):
+                    st.sidebar.info("🔍 Current session state:")
+                    session_keys = list(self.session_state.keys())
+                    st.sidebar.info(f"🔍 Keys: {len(session_keys)}")
+                    for key in session_keys[:10]:  # Show first 10
+                        value = self.session_state.get(key)
+                        if isinstance(value, (str, int, float, bool)):
+                            st.sidebar.info(f"🔍 {key}: {value}")
+                        else:
+                            st.sidebar.info(f"🔍 {key}: {type(value).__name__}")
                 
-                # Fix user_id mismatch button
-                if st.sidebar.button("🔧 Fix User ID Mismatch", type="secondary", help="Fix transactions with wrong user_id"):
+                # Fix User ID Mismatch button
+                if st.sidebar.button("🔧 Fix User ID Mismatch", type="secondary", help="Fix user ID mismatch in database"):
                     if user_id and user_id != 1:
-                        st.sidebar.info("🔧 Fixing user_id mismatch...")
+                        st.sidebar.info("🔧 Attempting to fix user ID mismatch...")
                         try:
-                            from database_config_supabase import supabase
-                            # Update transactions with wrong user_id to current user_id
-                            result = supabase.table("investment_transactions").update({"user_id": user_id}).eq("user_id", 5).execute()
-                            st.sidebar.success(f"✅ Updated {len(result.data) if result.data else 0} transactions to user_id {user_id}")
-                            
-                            # Also update file records
-                            file_result = supabase.table("investment_files").update({"user_id": user_id}).eq("user_id", 5).execute()
-                            st.sidebar.success(f"✅ Updated {len(file_result.data) if file_result.data else 0} file records to user_id {user_id}")
-                            
-                        except Exception as e:
-                            st.sidebar.error(f"❌ Fix failed: {e}")
-                
-                # Force immediate data reload button
-                if st.sidebar.button("🚀 Force Immediate Reload", type="secondary", help="Force reload data immediately"):
-                    if user_id and user_id != 1:
-                        st.sidebar.info("🚀 Forcing immediate data reload...")
-                        try:
-                            # Clear session state
-                            if 'current_df' in self.session_state:
-                                del self.session_state['current_df']
-                            if 'data_processing_complete' in self.session_state:
-                                del self.session_state['data_processing_complete']
-                            
-                            # Force reload
+                            # This will force a reload and potentially fix the issue
+                            self.session_state['force_recalculate'] = True
                             self.session_state['force_immediate_reload'] = True
-                            st.rerun()
+                            st.sidebar.success("🔧 User ID fix initiated - please refresh the page")
                         except Exception as e:
-                            st.sidebar.error(f"❌ Force reload failed: {e}")
+                            st.sidebar.error(f"❌ Error fixing user ID: {e}")
                 
-                # Direct database inspection button
-                if st.sidebar.button("🔍 Inspect Database Directly", type="secondary", help="Check database tables directly"):
-                    if user_id and user_id != 1:
-                        st.sidebar.info("🔍 Inspecting database directly...")
-                        try:
-                            from database_config_supabase import supabase
-                            
-                            # Check investment_transactions table
-                            transactions_result = supabase.table("investment_transactions").select("*").limit(5).execute()
-                            st.sidebar.success(f"🔍 Transactions table: {len(transactions_result.data) if transactions_result.data else 0} records")
-                            if transactions_result.data:
-                                st.sidebar.info(f"🔍 Sample transaction: {transactions_result.data[0]}")
-                            
-                            # Check investment_files table
-                            files_result = supabase.table("investment_files").select("*").limit(5).execute()
-                            st.sidebar.success(f"🔍 Files table: {len(files_result.data) if files_result.data else 0} records")
-                            if files_result.data:
-                                st.sidebar.info(f"🔍 Sample file: {files_result.data[0]}")
-                            
-                            # Check specific user data
-                            user_transactions = supabase.table("investment_transactions").select("*").eq("user_id", user_id).execute()
-                            st.sidebar.success(f"🔍 User {user_id} transactions: {len(user_transactions.data) if user_transactions.data else 0}")
-                            
-                        except Exception as e:
-                            st.sidebar.error(f"❌ Database inspection failed: {e}")
-                
-                # Show file history
-                st.sidebar.markdown("---")
-                st.sidebar.markdown("### 📋 File History")
-                
-                try:
-                    # Get user's file records
-                    file_records = get_file_records_supabase(user_id)
-                    
-                    if file_records:
-                        st.sidebar.success(f"📁 {len(file_records)} file(s) uploaded")
-                        
-                        # Show recent files (last 5)
-                        recent_files = file_records[-5:] if len(file_records) > 5 else file_records
-                        
-                        for file_record in recent_files:
-                            filename = file_record.get('filename', 'Unknown')
-                            processed_at = file_record.get('processed_at', 'Unknown')
-                            status = file_record.get('status', 'Unknown')
-                            
-                            # Format the date
-                            try:
-                                if isinstance(processed_at, str):
-                                    from datetime import datetime
-                                    date_obj = datetime.fromisoformat(processed_at.replace('Z', '+00:00'))
-                                    formatted_date = date_obj.strftime('%Y-%m-%d %H:%M')
-                                else:
-                                    formatted_date = str(processed_at)
-                            except:
-                                formatted_date = str(processed_at)
-                            
-                            # Show file info
-                            status_color = "🟢" if status == "processed" else "🟡"
-                            st.sidebar.text(f"{status_color} {filename}")
-                            st.sidebar.caption(f"📅 {formatted_date}")
-                        
-                        if len(file_records) > 5:
-                            st.sidebar.caption(f"... and {len(file_records) - 5} more files")
-                    else:
-                        st.sidebar.info("📁 No files uploaded yet")
-                        
-                except Exception as e:
-                    st.sidebar.warning("⚠️ Could not load file history")
-                    # Show more specific error information
-                    if "400" in str(e) or "bad request" in str(e).lower():
-                        st.sidebar.error("❌ Database schema issue detected")
-                        st.sidebar.info("💡 This might be due to missing columns in the database tables")
-                        st.sidebar.info("💡 Please check the console for detailed diagnostics")
-                    else:
-                        st.sidebar.error(f"❌ Error: {str(e)}")
+                # Check stock_data table
+                if st.sidebar.button("🔍 Check Stock Data", type="secondary", help="Check stock_data table"):
+                    st.sidebar.info("🔍 Checking stock_data table...")
+                    try:
+                        from database_config_supabase import get_stock_data_supabase
+                        stock_data = get_stock_data_supabase()
+                        st.sidebar.success(f"🔍 Stock Data: {len(stock_data)} records")
+                        if stock_data:
+                            # Show sample stock data
+                            sample_stock = stock_data[0]
+                            st.sidebar.info(f"🔍 Sample ticker: {sample_stock.get('ticker', 'N/A')}")
+                            st.sidebar.info(f"🔍 Sample live_price: {sample_stock.get('live_price', 'N/A')}")
+                            st.sidebar.info(f"🔍 Sample sector: {sample_stock.get('sector', 'N/A')}")
+                    except Exception as e:
+                        st.sidebar.error(f"❌ Error checking stock_data: {e}")
                 
                 # Show admin panel if requested
                 if st.session_state.get('show_admin_panel', False):
