@@ -26,7 +26,6 @@ from database_config_supabase import (
 
 # Price fetching imports
 from unified_price_fetcher import get_mutual_fund_price, get_stock_price
-from user_file_reading_agent import process_user_files_on_login
 
 # Streamlit page configuration
 st.set_page_config(
@@ -102,17 +101,33 @@ class PortfolioAnalytics:
                 st.success(f"✅ Selected {len(uploaded_files)} file(s) for processing")
                 
                 # Show sample CSV format
-                with st.expander("📋 Sample CSV Format"):
+                with st.expander("📋 Sample CSV Format", expanded=False):
                     st.markdown("""
-                    Your CSV file should have these columns:
-                    - **date**: Transaction date (YYYY-MM-DD)
-                    - **ticker**: Stock symbol (e.g., AAPL, MSFT) or MF scheme code
-                    - **quantity**: Number of shares/units
-                    - **price**: Price per share/unit (optional - will be fetched automatically)
-                    - **transaction_type**: 'buy' or 'sell'
-                    - **stock_name**: Company name (optional)
-                    - **channel**: Investment channel (optional - auto-generated from filename)
-                    - **sector**: Stock sector (optional)
+                    **Required Columns:**
+                    - `date` - Transaction date (YYYY-MM-DD format)
+                    - `ticker` - Stock/Mutual Fund symbol (e.g., RELIANCE, 120828)
+                    - `quantity` - Number of shares/units
+                    - `transaction_type` - Buy or Sell
+                    
+                    **Optional Columns:**
+                    - `price` - Transaction price per share/unit
+                    - `stock_name` - Company/Fund name
+                    - `sector` - Industry sector
+                    - `channel` - Investment platform (e.g., Direct, Broker, Online)
+                    
+                    **Example:**
+                    ```csv
+                    date,ticker,quantity,transaction_type,price,stock_name,sector,channel
+                    2024-01-15,RELIANCE,100,buy,2500.50,Reliance Industries,Oil & Gas,Direct
+                    2024-01-20,120828,500,buy,45.25,ICICI Prudential Technology Fund,Technology,Online
+                    2024-02-01,TCS,50,sell,3800.00,Tata Consultancy Services,Technology,Broker
+                    ```
+                    
+                    **Notes:**
+                    - For mutual funds, use the numerical scheme code (e.g., 120828)
+                    - For stocks, you can include exchange suffix (.NS, .BO) or leave without
+                    - Transaction types: buy, sell, purchase, bought, sold, sale
+                    - If price is missing, the system will fetch historical prices automatically
                     """)
             
             if st.button("Create Account & Process Files", type="primary"):
@@ -128,12 +143,21 @@ class PortfolioAnalytics:
     def authenticate_user(self, username, password):
         """Authenticate user and initialize session"""
         try:
-            user = get_user_by_username_supabase(username)
+            # Convert username to lowercase for case-insensitive comparison
+            username_lower = username.lower().strip()
+            
+            # Try to find user with case-insensitive username
+            user = get_user_by_username_supabase(username_lower)
+            
+            # If not found, try with original username (for backward compatibility)
+            if not user:
+                user = get_user_by_username_supabase(username)
+            
             # Temporary simple password handling - will be updated when login_system is fixed
             if user and user['password_hash'] == password:  # In production, use proper verification
                 self.session_state.user_authenticated = True
                 self.session_state.user_id = user['id']
-                self.session_state.username = user['username']
+                self.session_state.username = user['username']  # Store original username from database
                 self.session_state.user_role = user['role']
                 self.session_state.login_time = datetime.now()
                 
@@ -182,8 +206,11 @@ class PortfolioAnalytics:
         try:
             import pandas as pd
             
+            st.info(f"🔄 Processing file: {uploaded_file.name}")
+            
             # Read the CSV file
             df = pd.read_csv(uploaded_file)
+            st.info(f"📊 File loaded with {len(df)} rows and columns: {list(df.columns)}")
             
             # Standardize column names
             column_mapping = {
@@ -209,11 +236,13 @@ class PortfolioAnalytics:
             
             # Rename columns
             df = df.rename(columns=column_mapping)
+            st.info(f"🔄 Columns standardized: {list(df.columns)}")
             
             # Extract channel from filename if not present
             if 'channel' not in df.columns:
                 channel_name = uploaded_file.name.replace('.csv', '').replace('_', ' ')
                 df['channel'] = channel_name
+                st.info(f"📁 Channel extracted from filename: {channel_name}")
             
             # Ensure required columns exist
             required_columns = ['ticker', 'quantity', 'transaction_type', 'date']
@@ -228,10 +257,12 @@ class PortfolioAnalytics:
             # Clean and validate data
             df = df.dropna(subset=['ticker', 'quantity'])
             df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce')
+            st.info(f"📊 Data cleaned: {len(df)} valid rows remaining")
             
             # Convert date to datetime
             df['date'] = pd.to_datetime(df['date'], errors='coerce')
             df = df.dropna(subset=['date'])
+            st.info(f"📅 Dates processed: {len(df)} rows with valid dates")
             
             # Standardize transaction types
             df['transaction_type'] = df['transaction_type'].str.lower().str.strip()
@@ -246,6 +277,7 @@ class PortfolioAnalytics:
             
             # Filter valid transaction types
             df = df[df['transaction_type'].isin(['buy', 'sell'])]
+            st.info(f"💼 Transaction types filtered: {len(df)} valid transactions")
             
             if df.empty:
                 st.warning(f"⚠️ No valid transactions found in {uploaded_file.name}")
@@ -260,6 +292,7 @@ class PortfolioAnalytics:
                 df = self.fetch_historical_prices_for_transactions(df)
             
             # Save transactions to database
+            st.info(f"💾 Saving {len(df)} transactions to database...")
             success = self.save_transactions_to_database(df, user_id, uploaded_file.name)
             
             if success:
@@ -271,6 +304,10 @@ class PortfolioAnalytics:
                 
         except Exception as e:
             st.error(f"❌ Error processing {uploaded_file.name}: {e}")
+            st.error(f"Error type: {type(e).__name__}")
+            st.error(f"Error details: {str(e)}")
+            import traceback
+            st.error(f"Traceback: {traceback.format_exc()}")
             return False
     
     def fetch_historical_prices_for_transactions(self, df):
@@ -516,20 +553,28 @@ class PortfolioAnalytics:
             st.error(f"Error in update_missing_historical_prices: {e}")
     
     def fetch_live_prices_and_sectors(self, user_id):
-        """Fetch live prices and sectors for all user tickers"""
+        """Fetch live prices and sectors for all tickers"""
         try:
             st.info("🔄 Fetching live prices and sectors...")
             
-            # Get unique tickers from user transactions
+            # Show data fetching animation
+            self.show_data_fetching_animation()
+            
+            # Get all transactions for the user
             transactions = get_transactions_supabase(user_id=user_id)
             if not transactions:
+                st.warning("No transactions found for user")
                 return
             
             df = pd.DataFrame(transactions)
             unique_tickers = df['ticker'].unique()
             
+            st.info(f"🔍 Found {len(unique_tickers)} unique tickers to fetch data for...")
+            
+            # Initialize storage
             live_prices = {}
             sectors = {}
+            market_caps = {}
             
             # Fetch live prices and sectors for each ticker
             for ticker in unique_tickers:
@@ -678,9 +723,237 @@ class PortfolioAnalytics:
         except Exception as e:
             st.error(f"Error loading portfolio data: {e}")
     
+    def show_loading_animation(self):
+        """Show an engaging stock growth loading animation"""
+        st.markdown("""
+        <style>
+        .loading-container {
+            text-align: center;
+            padding: 50px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 15px;
+            margin: 20px 0;
+            color: white;
+        }
+        .stock-animation {
+            font-size: 48px;
+            margin: 20px 0;
+            animation: pulse 2s infinite;
+        }
+        .loading-text {
+            font-size: 24px;
+            margin: 20px 0;
+            font-weight: bold;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: rgba(255,255,255,0.3);
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00ff88, #00ccff);
+            border-radius: 10px;
+            animation: progress 3s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.8; }
+        }
+        @keyframes progress {
+            0% { width: 0%; }
+            50% { width: 70%; }
+            100% { width: 100%; }
+        }
+        .ticker-symbols {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin: 30px 0;
+            flex-wrap: wrap;
+        }
+        .ticker {
+            background: rgba(255,255,255,0.2);
+            padding: 10px 15px;
+            border-radius: 25px;
+            font-weight: bold;
+            animation: float 3s ease-in-out infinite;
+        }
+        .ticker:nth-child(1) { animation-delay: 0s; }
+        .ticker:nth-child(2) { animation-delay: 0.5s; }
+        .ticker:nth-child(3) { animation-delay: 1s; }
+        .ticker:nth-child(4) { animation-delay: 1.5s; }
+        .ticker:nth-child(5) { animation-delay: 2s; }
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+        .chart-animation {
+            font-size: 36px;
+            margin: 20px 0;
+            animation: grow 2s ease-in-out infinite;
+        }
+        @keyframes grow {
+            0% { transform: scaleY(0.3); }
+            50% { transform: scaleY(1); }
+            100% { transform: scaleY(0.3); }
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Main loading container
+        st.markdown("""
+        <div class="loading-container">
+            <div class="stock-animation">📈</div>
+            <div class="loading-text">🚀 Loading Your Portfolio Analytics...</div>
+            <div class="loading-text">📊 Fetching Market Data & Calculating Performance</div>
+            
+            <div class="ticker-symbols">
+                <div class="ticker">RELIANCE</div>
+                <div class="ticker">TCS</div>
+                <div class="ticker">HDFC</div>
+                <div class="ticker">INFY</div>
+                <div class="ticker">ITC</div>
+            </div>
+            
+            <div class="chart-animation">📊</div>
+            <div class="loading-text">💹 Analyzing Stock Performance...</div>
+            
+            <div class="progress-bar">
+                <div class="progress-fill"></div>
+            </div>
+            
+            <div class="loading-text">⏳ Please wait while we prepare your financial insights...</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Add a Streamlit spinner below the HTML animation
+        with st.spinner("🔄 Initializing portfolio data..."):
+            # Simulate some loading time
+            import time
+            time.sleep(0.5)
+        
+        # Show loading steps
+        st.markdown("### 🔄 Loading Steps:")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.info("📊 **Step 1:** Fetching transaction data...")
+            st.info("📈 **Step 2:** Calculating current values...")
+            st.info("🏭 **Step 3:** Analyzing sector allocation...")
+        
+        with col2:
+            st.info("💰 **Step 4:** Computing P&L metrics...")
+            st.info("📅 **Step 5:** Generating performance charts...")
+            st.info("✅ **Step 6:** Finalizing dashboard...")
+        
+        # Add a manual refresh button
+        st.markdown("---")
+        if st.button("🔄 Refresh Portfolio Data", type="primary"):
+            try:
+                st.info("🔄 Refreshing portfolio data...")
+                self.initialize_portfolio_data()
+                st.success("✅ Portfolio data loaded successfully!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error refreshing data: {e}")
+    
+    def show_data_fetching_animation(self):
+        """Show an animation for data fetching operations"""
+        st.markdown("""
+        <style>
+        .data-fetching {
+            text-align: center;
+            padding: 20px;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            border-radius: 10px;
+            margin: 15px 0;
+            color: white;
+        }
+        .fetch-icon {
+            font-size: 32px;
+            margin: 10px 0;
+            animation: rotate 2s linear infinite;
+        }
+        .fetch-text {
+            font-size: 16px;
+            margin: 8px 0;
+            font-weight: bold;
+        }
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .pulse-dots {
+            display: inline-block;
+            animation: pulse-dots 1.5s infinite;
+        }
+        @keyframes pulse-dots {
+            0%, 20% { opacity: 0; }
+            50% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="data-fetching">
+            <div class="fetch-icon">🔄</div>
+            <div class="fetch-text">📡 Fetching Live Market Data</div>
+            <div class="fetch-text">💹 Connecting to Market APIs</div>
+            <div class="fetch-text">⏳ Please wait<span class="pulse-dots">...</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    def show_page_loading_animation(self, page_name):
+        """Show a simple loading animation for individual pages"""
+        st.markdown("""
+        <style>
+        .page-loading {
+            text-align: center;
+            padding: 30px 20px;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            border-radius: 10px;
+            margin: 20px 0;
+            color: white;
+        }
+        .page-icon {
+            font-size: 36px;
+            margin: 15px 0;
+            animation: bounce 1.5s infinite;
+        }
+        .page-text {
+            font-size: 18px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-10px); }
+            60% { transform: translateY(-5px); }
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div class="page-loading">
+            <div class="page-icon">📊</div>
+            <div class="page-text">🔄 Loading {page_name}...</div>
+            <div class="page-text">⏳ Please wait...</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
     def render_main_dashboard(self):
         """Render the main dashboard with comprehensive analytics"""
         st.title("📊 Portfolio Analytics Dashboard")
+        
+        # Show loading animation if portfolio data is not loaded
+        if self.session_state.portfolio_data is None:
+            self.show_loading_animation()
+            return
         
         # Sidebar navigation
         st.sidebar.title("Navigation")
@@ -711,20 +984,32 @@ class PortfolioAnalytics:
                 try:
                     # Show processing message
                     st.sidebar.info("🔄 Processing file...")
+                    st.info(f"🔄 Starting to process file: {uploaded_file.name}")
                     
                     # Process the uploaded file with spinner
                     with st.spinner("Processing file..."):
-                        # Process the uploaded file directly
-                        success = self.process_uploaded_files_during_registration([uploaded_file], self.session_state.user_id)
+                        st.info(f"🔄 Calling process_csv_file for {uploaded_file.name}")
+                        # Process the uploaded file directly using the same method as files page
+                        success = self.process_csv_file(uploaded_file, self.session_state.user_id)
+                        st.info(f"🔄 process_csv_file returned: {success}")
+                        
                         if success:
                             st.sidebar.success("✅ File processed successfully!")
+                            st.info("🔄 File processed successfully, refreshing portfolio data...")
                             # Refresh portfolio data
                             self.load_portfolio_data(self.session_state.user_id)
+                            st.info("🔄 Portfolio data refreshed, calling rerun...")
                             st.rerun()
                         else:
                             st.sidebar.error("❌ Error processing file")
+                            st.error("❌ File processing returned False")
                 except Exception as e:
                     st.sidebar.error(f"❌ Error: {e}")
+                    st.sidebar.error(f"Error details: {str(e)}")
+                    st.error(f"❌ Sidebar file processing error: {e}")
+                    st.error(f"Error type: {type(e).__name__}")
+                    import traceback
+                    st.error(f"Traceback: {traceback.format_exc()}")
         
         # Logout button
         st.sidebar.markdown("---")
@@ -759,7 +1044,8 @@ class PortfolioAnalytics:
             st.info("ℹ️ Use the '🔄 Refresh Portfolio Data' button in Settings to get the latest portfolio data.")
         
         if self.session_state.portfolio_data is None:
-            st.warning("No portfolio data available")
+            self.show_page_loading_animation("Portfolio Overview")
+            st.info("💡 **Tip:** If this page doesn't load automatically, use the '🔄 Refresh Portfolio Data' button in Settings.")
             return
         
         df = self.session_state.portfolio_data
@@ -802,9 +1088,11 @@ class PortfolioAnalytics:
                             y=top_performers.index,
                             orientation='h',
                             title="Top 5 Performers by Return %",
-                            labels={'x': 'Return %', 'y': 'Ticker'}
+                            labels={'x': 'Return %', 'y': 'Ticker'},
+                            color=top_performers.values,
+                            color_continuous_scale='Greens'
                         )
-                        st.plotly_chart(fig_top, use_container_width=True)
+                        st.plotly_chart(fig_top, width='stretch')
                     else:
                         st.info("No performance data available")
                 else:
@@ -824,9 +1112,11 @@ class PortfolioAnalytics:
                             y=underperformers.index,
                             orientation='h',
                             title="Bottom 5 Performers by Return %",
-                            labels={'x': 'Return %', 'y': 'Ticker'}
+                            labels={'x': 'Return %', 'y': 'Ticker'},
+                            color=underperformers.values,
+                            color_continuous_scale='Reds'
                         )
-                        st.plotly_chart(fig_bottom, use_container_width=True)
+                        st.plotly_chart(fig_bottom, width='stretch')
                     else:
                         st.info("No performance data available")
                 else:
@@ -896,7 +1186,7 @@ class PortfolioAnalytics:
                         )
                     )
                     
-                    st.plotly_chart(fig_timeline, use_container_width=True)
+                    st.plotly_chart(fig_timeline, width='stretch')
                     
                     # Show summary statistics
                     col1, col2, col3 = st.columns(3)
@@ -918,7 +1208,7 @@ class PortfolioAnalytics:
         recent_transactions = df.sort_values('date', ascending=False).head(10)
         st.dataframe(
             recent_transactions[['date', 'ticker', 'quantity', 'price', 'live_price', 'unrealized_pnl']],
-            use_container_width=True
+            width='stretch'
         )
     
     def render_performance_page(self):
@@ -926,7 +1216,8 @@ class PortfolioAnalytics:
         st.header("📈 Performance Analysis")
         
         if self.session_state.portfolio_data is None:
-            st.warning("No portfolio data available")
+            self.show_page_loading_animation("Performance Analysis")
+            st.info("💡 **Tip:** If this page doesn't load automatically, use the '🔄 Refresh Portfolio Data' button in Settings.")
             return
         
         df = self.session_state.portfolio_data
@@ -980,30 +1271,82 @@ class PortfolioAnalytics:
                 hovermode='x unified'
             )
             
-            st.plotly_chart(fig_performance, use_container_width=True)
+            st.plotly_chart(fig_performance, width='stretch')
             
-            # Rolling volatility
-            st.subheader("📈 Rolling Volatility (30-day)")
-            if len(daily_performance) > 30:
-                daily_performance['rolling_volatility'] = daily_performance['cumulative_return'].rolling(30).std()
+            # Best Performing Sector and Channel Analysis
+            st.subheader("🏆 Best Performing Sector & Channel")
+            
+            # Sector Performance
+            if 'sector' in df.columns and not df['sector'].isna().all():
+                sector_performance = df.groupby('sector').agg({
+                    'invested_amount': 'sum',
+                    'current_value': 'sum',
+                    'unrealized_pnl': 'sum'
+                }).reset_index()
                 
-                fig_volatility = go.Figure()
-                fig_volatility.add_trace(go.Scatter(
-                    x=daily_performance['date'],
-                    y=daily_performance['rolling_volatility'],
-                    mode='lines',
-                    name='30-day Rolling Volatility',
-                    line=dict(color='red', width=2)
-                ))
+                if not sector_performance.empty:
+                    sector_performance['pnl_percentage'] = (sector_performance['unrealized_pnl'] / sector_performance['invested_amount']) * 100
+                    sector_performance = sector_performance.sort_values('pnl_percentage', ascending=False)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        best_sector = sector_performance.iloc[0]
+                        best_sector_arrow = "↗️" if best_sector['pnl_percentage'] > 0 else "↘️" if best_sector['pnl_percentage'] < 0 else "➡️"
+                        best_sector_color = "normal" if best_sector['pnl_percentage'] > 0 else "inverse"
+                        st.metric(
+                            "Best Performing Sector", 
+                            f"{best_sector_arrow} {best_sector['sector']}", 
+                            delta=f"₹{best_sector['unrealized_pnl']:,.2f} ({best_sector['pnl_percentage']:.2f}%)",
+                            delta_color=best_sector_color
+                        )
+                    
+                    with col2:
+                        if len(sector_performance) > 1:
+                            worst_sector = sector_performance.iloc[-1]
+                            worst_sector_arrow = "↗️" if worst_sector['pnl_percentage'] > 0 else "↘️" if worst_sector['pnl_percentage'] < 0 else "➡️"
+                            worst_sector_color = "normal" if worst_sector['pnl_percentage'] > 0 else "inverse"
+                            st.metric(
+                                "Worst Performing Sector", 
+                                f"{worst_sector_arrow} {worst_sector['sector']}", 
+                                delta=f"₹{worst_sector['unrealized_pnl']:,.2f} ({worst_sector['pnl_percentage']:.2f}%)",
+                                delta_color=worst_sector_color
+                            )
+            
+            # Channel Performance
+            if 'channel' in df.columns and not df['channel'].isna().all():
+                channel_performance = df.groupby('channel').agg({
+                    'invested_amount': 'sum',
+                    'current_value': 'sum',
+                    'unrealized_pnl': 'sum'
+                }).reset_index()
                 
-                fig_volatility.update_layout(
-                    title="Portfolio Volatility Over Time",
-                    xaxis_title="Date",
-                    yaxis_title="Volatility (%)",
-                    hovermode='x unified'
-                )
-                
-                st.plotly_chart(fig_volatility, use_container_width=True)
+                if not channel_performance.empty:
+                    channel_performance['pnl_percentage'] = (channel_performance['unrealized_pnl'] / channel_performance['invested_amount']) * 100
+                    channel_performance = channel_performance.sort_values('pnl_percentage', ascending=False)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        best_channel = channel_performance.iloc[0]
+                        best_channel_arrow = "↗️" if best_channel['pnl_percentage'] > 0 else "↘️" if best_channel['pnl_percentage'] < 0 else "➡️"
+                        best_channel_color = "normal" if best_channel['pnl_percentage'] > 0 else "inverse"
+                        st.metric(
+                            "Best Performing Channel", 
+                            f"{best_channel_arrow} {best_channel['channel']}", 
+                            delta=f"₹{best_channel['unrealized_pnl']:,.2f} ({best_channel['pnl_percentage']:.2f}%)",
+                            delta_color=best_channel_color
+                        )
+                    
+                    with col2:
+                        if len(channel_performance) > 1:
+                            worst_channel = channel_performance.iloc[-1]
+                            worst_channel_arrow = "↗️" if worst_channel['pnl_percentage'] > 0 else "↘️" if worst_channel['pnl_percentage'] < 0 else "➡️"
+                            worst_channel_color = "normal" if worst_channel['pnl_percentage'] > 0 else "inverse"
+                            st.metric(
+                                "Worst Performing Channel", 
+                                f"{worst_channel_arrow} {worst_channel['channel']}", 
+                                delta=f"₹{worst_channel['unrealized_pnl']:,.2f} ({worst_channel['pnl_percentage']:.2f}%)",
+                                delta_color=worst_channel_color
+                            )
             
             # Stock Performance Analysis (1-Year Buy Transactions)
             st.subheader("📈 Stock Performance Analysis (1-Year Buy Transactions)")
@@ -1068,7 +1411,7 @@ class PortfolioAnalytics:
                      hover_data=['invested_amount', 'unrealized_pnl', 'rating']
                  )
                  fig_stock_performance.update_xaxes(tickangle=45)
-                 st.plotly_chart(fig_stock_performance, use_container_width=True)
+                 st.plotly_chart(fig_stock_performance, width='stretch')
                  
                  # Performance summary metrics
                  col1, col2, col3, col4 = st.columns(4)
@@ -1093,6 +1436,250 @@ class PortfolioAnalytics:
                      best_color = "normal" if best_return > 0 else "inverse"
                      st.metric("Best Performer", f"{best_arrow} {best_stock['ticker']}", delta=f"{best_return:.2f}%", delta_color=best_color)
                  
+                 # Best Performing Sector and Channel for 1-Year Buy Transactions
+                 st.subheader("🏆 Best Performing Sector & Channel (1-Year Buy Transactions)")
+                 
+                 # Sector Performance for 1-year buy transactions
+                 if 'sector' in stock_buys.columns and not stock_buys['sector'].isna().all():
+                     sector_perf_1y = stock_buys.groupby('sector').agg({
+                         'invested_amount': 'sum',
+                         'current_value': 'sum',
+                         'unrealized_pnl': 'sum'
+                     }).reset_index()
+                     
+                     if not sector_perf_1y.empty:
+                         sector_perf_1y['pnl_percentage'] = (sector_perf_1y['unrealized_pnl'] / sector_perf_1y['invested_amount']) * 100
+                         sector_perf_1y = sector_perf_1y.sort_values('pnl_percentage', ascending=False)
+                         
+                         col1, col2 = st.columns(2)
+                         with col1:
+                             best_sector_1y = sector_perf_1y.iloc[0]
+                             best_sector_1y_arrow = "↗️" if best_sector_1y['pnl_percentage'] > 0 else "↘️" if best_sector_1y['pnl_percentage'] < 0 else "➡️"
+                             best_sector_1y_color = "normal" if best_sector_1y['pnl_percentage'] > 0 else "inverse"
+                             st.metric(
+                                 "Best Sector (1Y)", 
+                                 f"{best_sector_1y_arrow} {best_sector_1y['sector']}", 
+                                 delta=f"₹{best_sector_1y['unrealized_pnl']:,.2f} ({best_sector_1y['pnl_percentage']:.2f}%)",
+                                 delta_color=best_sector_1y_color
+                             )
+                         
+                         with col2:
+                             if len(sector_perf_1y) > 1:
+                                 worst_sector_1y = sector_perf_1y.iloc[-1]
+                                 worst_sector_1y_arrow = "↗️" if worst_sector_1y['pnl_percentage'] > 0 else "↘️" if worst_sector_1y['pnl_percentage'] < 0 else "➡️"
+                                 worst_sector_1y_color = "normal" if worst_sector_1y['pnl_percentage'] > 0 else "inverse"
+                                 st.metric(
+                                     "Worst Sector (1Y)", 
+                                     f"{worst_sector_1y_arrow} {worst_sector_1y['sector']}", 
+                                     delta=f"₹{worst_sector_1y['unrealized_pnl']:,.2f} ({worst_sector_1y['pnl_percentage']:.2f}%)",
+                                     delta_color=worst_sector_1y_color
+                                 )
+                 
+                 # Channel Performance for 1-year buy transactions
+                 if 'channel' in stock_buys.columns and not stock_buys['channel'].isna().all():
+                     channel_perf_1y = stock_buys.groupby('channel').agg({
+                         'invested_amount': 'sum',
+                         'current_value': 'sum',
+                         'unrealized_pnl': 'sum'
+                     }).reset_index()
+                     
+                     if not channel_perf_1y.empty:
+                         channel_perf_1y['pnl_percentage'] = (channel_perf_1y['unrealized_pnl'] / channel_perf_1y['invested_amount']) * 100
+                         channel_perf_1y = channel_perf_1y.sort_values('pnl_percentage', ascending=False)
+                         
+                         col1, col2 = st.columns(2)
+                         with col1:
+                             best_channel_1y = channel_perf_1y.iloc[0]
+                             best_channel_1y_arrow = "↗️" if best_channel_1y['pnl_percentage'] > 0 else "↘️" if best_channel_1y['pnl_percentage'] < 0 else "➡️"
+                             best_channel_1y_color = "normal" if best_channel_1y['pnl_percentage'] > 0 else "inverse"
+                             st.metric(
+                                 "Best Channel (1Y)", 
+                                 f"{best_channel_1y_arrow} {best_channel_1y['channel']}", 
+                                 delta=f"₹{best_channel_1y['unrealized_pnl']:,.2f} ({best_channel_1y['pnl_percentage']:.2f}%)",
+                                 delta_color=best_channel_1y_color
+                             )
+                         
+                         with col2:
+                             if len(channel_perf_1y) > 1:
+                                 worst_channel_1y = channel_perf_1y.iloc[-1]
+                                 worst_channel_1y_arrow = "↗️" if worst_channel_1y['pnl_percentage'] > 0 else "↘️" if worst_channel_1y['pnl_percentage'] < 0 else "➡️"
+                                 worst_channel_1y_color = "normal" if worst_channel_1y['pnl_percentage'] > 0 else "inverse"
+                                 st.metric(
+                                     "Worst Channel (1Y)", 
+                                     f"{worst_channel_1y_arrow} {worst_channel_1y['channel']}", 
+                                     delta=f"₹{worst_channel_1y['unrealized_pnl']:,.2f} ({worst_channel_1y['pnl_percentage']:.2f}%)",
+                                     delta_color=worst_channel_1y_color
+                                 )
+                 
+                 # Quarterly Performance Analysis
+                 st.subheader("📅 Quarterly Performance Analysis")
+                 st.info("Shows how each stock has performed over each quarter since purchase until today")
+                 
+                 try:
+                     # Create quarterly analysis for each stock
+                     quarterly_performance = []
+                     
+                     for _, stock in stock_performance.iterrows():
+                         ticker = stock['ticker']
+                         
+                         # Get all transactions for this stock
+                         stock_transactions = stock_buys[stock_buys['ticker'] == ticker].copy()
+                         
+                         if not stock_transactions.empty:
+                             # Get the earliest buy date for this stock
+                             earliest_date = stock_transactions['date'].min()
+                             
+                             # Create quarterly periods from earliest date to today
+                             from datetime import datetime, timedelta
+                             today = datetime.now()
+                             
+                             # Generate quarterly periods
+                             quarters = []
+                             current_date = earliest_date
+                             
+                             while current_date <= today:
+                                 quarter_end = current_date + timedelta(days=90)
+                                 if quarter_end > today:
+                                     quarter_end = today
+                                 
+                                 quarters.append({
+                                     'quarter_start': current_date,
+                                     'quarter_end': quarter_end,
+                                     'quarter_name': f"Q{((current_date.month-1)//3)+1} {current_date.year}"
+                                 })
+                                 
+                                 current_date = quarter_end + timedelta(days=1)
+                             
+                             # Calculate performance for each quarter
+                             for quarter in quarters:
+                                 # Get transactions up to this quarter end
+                                 quarter_transactions = stock_transactions[
+                                     stock_transactions['date'] <= quarter['quarter_end']
+                                 ]
+                                 
+                                 if not quarter_transactions.empty:
+                                     # Calculate invested amount and current value for this quarter
+                                     invested_in_quarter = quarter_transactions['invested_amount'].sum()
+                                     
+                                     # Get current value (assuming proportional to quantity)
+                                     total_quantity = quarter_transactions['quantity'].sum()
+                                     if total_quantity > 0:
+                                         # Calculate current value proportionally
+                                         current_value_in_quarter = (invested_in_quarter / stock['invested_amount']) * stock['current_value']
+                                         
+                                         # Calculate P&L for this quarter
+                                         pnl_in_quarter = current_value_in_quarter - invested_in_quarter
+                                         pnl_percentage_quarter = (pnl_in_quarter / invested_in_quarter) * 100 if invested_in_quarter > 0 else 0
+                                         
+                                         quarterly_performance.append({
+                                             'ticker': ticker,
+                                             'quarter_name': quarter['quarter_name'],
+                                             'quarter_start': quarter['quarter_start'],
+                                             'quarter_end': quarter['quarter_end'],
+                                             'invested_amount': invested_in_quarter,
+                                             'current_value': current_value_in_quarter,
+                                             'unrealized_pnl': pnl_in_quarter,
+                                             'pnl_percentage': pnl_percentage_quarter,
+                                             'quantity': total_quantity
+                                         })
+                     
+                     if quarterly_performance:
+                         # Convert to DataFrame
+                         quarterly_df = pd.DataFrame(quarterly_performance)
+                         
+                         # Create quarterly performance chart
+                         st.subheader("📈 Quarterly Performance Trends")
+                         
+                         # Line chart showing performance over quarters for each stock
+                         fig_quarterly = px.line(
+                             quarterly_df,
+                             x='quarter_name',
+                             y='pnl_percentage',
+                             color='ticker',
+                             title="Stock Performance Over Quarters",
+                             labels={'quarter_name': 'Quarter', 'pnl_percentage': 'Return %', 'ticker': 'Stock'},
+                             markers=True
+                         )
+                         fig_quarterly.update_xaxes(tickangle=45)
+                         fig_quarterly.update_layout(
+                             xaxis_title="Quarter",
+                             yaxis_title="Return %",
+                             hovermode='x unified'
+                         )
+                         st.plotly_chart(fig_quarterly, width='stretch')
+                         
+                         # Quarterly performance summary table
+                         st.subheader("📊 Quarterly Performance Summary")
+                         
+                         # Group by quarter and show summary
+                         quarterly_summary = quarterly_df.groupby('quarter_name').agg({
+                             'ticker': 'count',
+                             'invested_amount': 'sum',
+                             'current_value': 'sum',
+                             'unrealized_pnl': 'sum'
+                         }).reset_index()
+                         
+                         quarterly_summary['pnl_percentage'] = (quarterly_summary['unrealized_pnl'] / quarterly_summary['invested_amount']) * 100
+                         quarterly_summary = quarterly_summary.sort_values('quarter_name')
+                         
+                         # Format for display
+                         quarterly_summary['invested_amount_formatted'] = quarterly_summary['invested_amount'].apply(lambda x: f"₹{x:,.2f}")
+                         quarterly_summary['current_value_formatted'] = quarterly_summary['current_value'].apply(lambda x: f"₹{x:,.2f}")
+                         quarterly_summary['unrealized_pnl_formatted'] = quarterly_summary['unrealized_pnl'].apply(lambda x: f"₹{x:,.2f}")
+                         quarterly_summary['pnl_percentage_formatted'] = quarterly_summary['pnl_percentage'].apply(lambda x: f"{x:.2f}%")
+                         
+                         st.dataframe(
+                             quarterly_summary[['quarter_name', 'ticker', 'invested_amount_formatted', 'current_value_formatted', 'unrealized_pnl_formatted', 'pnl_percentage_formatted']],
+                             width='stretch',
+                             hide_index=True
+                         )
+                         
+                         # Individual stock quarterly breakdown
+                         st.subheader("🔍 Individual Stock Quarterly Breakdown")
+                         
+                         # Create expandable sections for each stock
+                         for ticker in quarterly_df['ticker'].unique():
+                             stock_quarterly = quarterly_df[quarterly_df['ticker'] == ticker].sort_values('quarter_name')
+                             
+                             with st.expander(f"📊 {ticker} - Quarterly Performance", expanded=False):
+                                 col1, col2 = st.columns(2)
+                                 
+                                 with col1:
+                                     # Show quarterly performance metrics
+                                     st.write(f"**Total Invested:** ₹{stock_quarterly['invested_amount'].sum():,.2f}")
+                                     st.write(f"**Current Value:** ₹{stock_quarterly['current_value'].sum():,.2f}")
+                                     st.write(f"**Total P&L:** ₹{stock_quarterly['unrealized_pnl'].sum():,.2f}")
+                                 
+                                 with col2:
+                                     # Show quarterly performance chart
+                                     fig_stock_quarterly = px.line(
+                                         stock_quarterly,
+                                         x='quarter_name',
+                                         y='pnl_percentage',
+                                         title=f"{ticker} - Quarterly Return %",
+                                         markers=True
+                                     )
+                                     fig_stock_quarterly.update_xaxes(tickangle=45)
+                                     fig_stock_quarterly.update_layout(
+                                         xaxis_title="Quarter",
+                                         yaxis_title="Return %"
+                                     )
+                                     st.plotly_chart(fig_stock_quarterly, width='stretch')
+                                 
+                                 # Show quarterly data table
+                                 st.dataframe(
+                                     stock_quarterly[['quarter_name', 'invested_amount', 'current_value', 'unrealized_pnl', 'pnl_percentage']],
+                                     width='stretch',
+                                     hide_index=True
+                                 )
+                     
+                     else:
+                         st.info("No quarterly performance data available")
+                         
+                 except Exception as e:
+                     st.error(f"Error generating quarterly analysis: {e}")
+                     st.info("This feature requires valid date and transaction data")
+                 
                  # Rating distribution
                  st.subheader("📊 Performance Rating Distribution")
                  rating_counts = stock_performance['rating'].value_counts()
@@ -1110,7 +1697,7 @@ class PortfolioAnalytics:
                              '❌ Very Poor': '#FF0000'
                          }
                      )
-                     st.plotly_chart(fig_rating_dist, use_container_width=True)
+                     st.plotly_chart(fig_rating_dist, width='stretch')
                  
                  # Detailed stock performance table
                  st.subheader("📋 Detailed Stock Performance Table")
@@ -1131,7 +1718,7 @@ class PortfolioAnalytics:
                  
                  st.dataframe(
                      display_performance[display_columns],
-                     use_container_width=True,
+                     width='stretch',
                      hide_index=True
                  )
                  
@@ -1171,7 +1758,8 @@ class PortfolioAnalytics:
         st.header("📊 Asset Allocation Analysis")
         
         if self.session_state.portfolio_data is None:
-            st.warning("No portfolio data available")
+            self.show_page_loading_animation("Asset Allocation Analysis")
+            st.info("💡 **Tip:** If this page doesn't load automatically, use the '🔄 Refresh Portfolio Data' button in Settings.")
             return
             
         df = self.session_state.portfolio_data
@@ -1196,7 +1784,7 @@ class PortfolioAnalytics:
                         names=allocation_by_type.index,
                         title="Allocation by Asset Type"
                     )
-                    st.plotly_chart(fig_type, use_container_width=True)
+                    st.plotly_chart(fig_type, width='stretch')
                 else:
                     st.info("No asset type allocation data available")
             else:
@@ -1221,7 +1809,7 @@ class PortfolioAnalytics:
                         title="Allocation by Sector",
                         labels={'x': 'Current Value (₹)', 'y': 'Sector'}
                     )
-                    st.plotly_chart(fig_sector, use_container_width=True)
+                    st.plotly_chart(fig_sector, width='stretch')
                 else:
                     st.info("No sector data available for visualization")
             else:
@@ -1250,7 +1838,7 @@ class PortfolioAnalytics:
                         labels={'x': 'Ticker', 'y': 'Current Value (₹)'}
                     )
                     fig_holdings.update_xaxes(tickangle=45)
-                    st.plotly_chart(fig_holdings, use_container_width=True)
+                    st.plotly_chart(fig_holdings, width='stretch')
                 else:
                     st.info("No holdings data available for visualization")
             else:
@@ -1389,7 +1977,7 @@ class PortfolioAnalytics:
                             color_discrete_sequence=px.colors.qualitative.Set3
                         )
                         fig_market_cap.update_traces(textposition='inside', textinfo='percent+label')
-                        st.plotly_chart(fig_market_cap, use_container_width=True)
+                        st.plotly_chart(fig_market_cap, width='stretch')
                         
                         # Show summary metrics
                         col1, col2, col3, col4 = st.columns(4)
@@ -1428,7 +2016,7 @@ class PortfolioAnalytics:
                         display_df['Invested Amount'] = display_df['Invested Amount'].apply(lambda x: f"₹{x:,.0f}")
                         display_df['Total Quantity'] = display_df['Total Quantity'].apply(lambda x: f"{x:,.0f}")
                         
-                        st.dataframe(display_df, use_container_width=True)
+                        st.dataframe(display_df, width='stretch')
                         
                     else:
                         st.info("No market cap distribution data available")
@@ -1440,13 +2028,14 @@ class PortfolioAnalytics:
             st.info("Market cap data not available. Run 'Fetch Live Prices' to get market cap information.")
     
     def render_pnl_analysis_page(self):
-        """Render detailed P&L analysis"""
+        """Render P&L analysis"""
         st.header("💰 P&L Analysis")
         
         if self.session_state.portfolio_data is None:
-            st.warning("No portfolio data available")
+            self.show_page_loading_animation("P&L Analysis")
+            st.info("💡 **Tip:** If this page doesn't load automatically, use the '🔄 Refresh Portfolio Data' button in Settings.")
             return
-        
+            
         df = self.session_state.portfolio_data
         
         # P&L summary by ticker
@@ -1479,7 +2068,7 @@ class PortfolioAnalytics:
             }
         )
         
-        st.plotly_chart(fig_pnl, use_container_width=True)
+        st.plotly_chart(fig_pnl, width='stretch')
         
 
         
@@ -1532,7 +2121,7 @@ class PortfolioAnalytics:
                 color_continuous_scale='RdYlGn'
             )
             fig_sector_pnl.update_xaxes(tickangle=45)
-            st.plotly_chart(fig_sector_pnl, use_container_width=True)
+            st.plotly_chart(fig_sector_pnl, width='stretch')
             
             # Sector P&L summary
             col1, col2, col3 = st.columns(3)
@@ -1580,7 +2169,7 @@ class PortfolioAnalytics:
                 color_continuous_scale='RdYlGn'
             )
             fig_channel_pnl.update_xaxes(tickangle=45)
-            st.plotly_chart(fig_channel_pnl, use_container_width=True)
+            st.plotly_chart(fig_channel_pnl, width='stretch')
             
             # Channel P&L summary
             col1, col2, col3 = st.columns(3)
@@ -1629,7 +2218,7 @@ class PortfolioAnalytics:
                 barmode='group'
             )
             fig_combined.update_xaxes(tickangle=45)
-            st.plotly_chart(fig_combined, use_container_width=True)
+            st.plotly_chart(fig_combined, width='stretch')
             
             # Combined summary table
             combined_pnl['pnl_formatted'] = combined_pnl['unrealized_pnl'].apply(lambda x: f"₹{x:,.2f}")
@@ -1637,7 +2226,7 @@ class PortfolioAnalytics:
             
             st.dataframe(
                 combined_pnl[['sector', 'channel', 'pnl_formatted', 'percentage']],
-                use_container_width=True,
+                width='stretch',
                 hide_index=True
             )
         else:
@@ -1647,7 +2236,7 @@ class PortfolioAnalytics:
         st.subheader("📋 Detailed P&L Table")
         st.dataframe(
             pnl_summary.sort_values('unrealized_pnl', ascending=False),
-            use_container_width=True
+            width='stretch'
         )
     
     def render_files_page(self):
@@ -1662,6 +2251,36 @@ class PortfolioAnalytics:
         # File upload section
         st.subheader("📤 Upload Investment File")
         
+        # Show sample CSV format
+        with st.expander("📋 Sample CSV Format", expanded=False):
+            st.markdown("""
+            **Required Columns:**
+            - `date` - Transaction date (YYYY-MM-DD format)
+            - `ticker` - Stock/Mutual Fund symbol (e.g., RELIANCE, 120828)
+            - `quantity` - Number of shares/units
+            - `transaction_type` - Buy or Sell
+            
+            **Optional Columns:**
+            - `price` - Transaction price per share/unit
+            - `stock_name` - Company/Fund name
+            - `sector` - Industry sector
+            - `channel` - Investment platform (e.g., Direct, Broker, Online)
+            
+            **Example:**
+            ```csv
+            date,ticker,quantity,transaction_type,price,stock_name,sector,channel
+            2024-01-15,RELIANCE,100,buy,2500.50,Reliance Industries,Oil & Gas,Direct
+            2024-01-20,120828,500,buy,45.25,ICICI Prudential Technology Fund,Technology,Online
+            2024-02-01,TCS,50,sell,3800.00,Tata Consultancy Services,Technology,Broker
+            ```
+            
+            **Notes:**
+            - For mutual funds, use the numerical scheme code (e.g., 120828)
+            - For stocks, you can include exchange suffix (.NS, .BO) or leave without
+            - Transaction types: buy, sell, purchase, bought, sold, sale
+            - If price is missing, the system will fetch historical prices automatically
+            """)
+        
         uploaded_file = st.file_uploader(
             "Choose a CSV file",
             type=['csv'],
@@ -1672,16 +2291,28 @@ class PortfolioAnalytics:
             if st.button("Process File"):
                 with st.spinner("Processing file..."):
                     try:
-                        # Process the uploaded file
-                        result = process_user_files_on_login(user_id)
+                        st.info(f"🔄 Files page: Starting to process file: {uploaded_file.name}")
+                        # Process the uploaded file using the local method
+                        result = self.process_csv_file(uploaded_file, user_id)
+                        st.info(f"🔄 Files page: process_csv_file returned: {result}")
+                        
                         if result:
                             st.success("File processed successfully!")
+                            st.info("🔄 Files page: File processed successfully, refreshing portfolio data...")
                             # Refresh portfolio data
                             self.load_portfolio_data(user_id)
+                            st.info("🔄 Files page: Portfolio data refreshed, calling rerun...")
+                            st.rerun()  # Refresh the page to show updated data
                         else:
                             st.error("Error processing file")
+                            st.error("❌ Files page: File processing returned False")
                     except Exception as e:
                         st.error(f"Error processing file: {e}")
+                        st.error(f"Error details: {str(e)}")
+                        st.error(f"❌ Files page: File processing error: {e}")
+                        st.error(f"Error type: {type(e).__name__}")
+                        import traceback
+                        st.error(f"Traceback: {traceback.format_exc()}")
         
         # File history
         st.subheader("📋 File History")
@@ -1706,7 +2337,7 @@ class PortfolioAnalytics:
                     display_columns.append('file_path')
                 
                 # Display file records with available columns
-                st.dataframe(files_df[display_columns], use_container_width=True)
+                st.dataframe(files_df[display_columns], width='stretch')
                 
                 # Show file summary
                 col1, col2, col3 = st.columns(3)
@@ -1785,6 +2416,39 @@ class PortfolioAnalytics:
                 if 'live_prices' in self.session_state:
                     del self.session_state['live_prices']
                 st.success("Cache cleared!")
+        
+        # Debug section
+        st.markdown("---")
+        st.subheader("🐛 Debug & Testing")
+        
+        if st.button("🧪 Test Basic Functions"):
+            try:
+                st.info("Testing basic functions...")
+                
+                # Test 1: Check session state
+                st.write(f"✅ Session state: user_id={self.session_state.user_id}, username={self.session_state.username}")
+                
+                # Test 2: Test database connection
+                try:
+                    files = get_file_records_supabase(user_id=self.session_state.user_id)
+                    st.write(f"✅ Database connection: Found {len(files) if files else 0} files")
+                except Exception as e:
+                    st.error(f"❌ Database connection failed: {e}")
+                
+                # Test 3: Test portfolio data loading
+                try:
+                    self.load_portfolio_data(self.session_state.user_id)
+                    portfolio_count = len(self.session_state.portfolio_data) if self.session_state.portfolio_data is not None else 0
+                    st.write(f"✅ Portfolio data loading: {portfolio_count} transactions")
+                except Exception as e:
+                    st.error(f"❌ Portfolio data loading failed: {e}")
+                
+                st.success("✅ Basic function tests completed!")
+                
+            except Exception as e:
+                st.error(f"❌ Test failed: {e}")
+                import traceback
+                st.error(f"Traceback: {traceback.format_exc()}")
         
         st.markdown("---")
         
