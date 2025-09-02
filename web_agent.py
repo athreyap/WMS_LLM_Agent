@@ -2158,8 +2158,7 @@ class PortfolioAnalytics:
                             'Total Invested': f"₹{sector_total_invested:,.2f}",
                             'Total Current Value': f"₹{sector_total_current:,.2f}",
                             'Total P&L': f"₹{sector_total_pnl:,.2f}",
-                            'Rating': sector_rating,
-                            'Rating Color': rating_color
+                            'Rating': sector_rating
                         })
                         
                         # Get best performing ticker in this sector
@@ -2188,7 +2187,15 @@ class PortfolioAnalytics:
                         
                         # Apply color coding based on rating
                         def color_sector_rating(row):
-                            return [row['Rating Color']] * len(row)
+                            rating = row['Rating']
+                            if '🟢' in rating:
+                                return ['background-color: #d4edda; color: #155724;'] * len(row)
+                            elif '🟡' in rating:
+                                return ['background-color: #fff3cd; color: #856404;'] * len(row)
+                            elif '🟠' in rating:
+                                return ['background-color: #f8d7da; color: #721c24;'] * len(row)
+                            else:  # 🔴
+                                return ['background-color: #f8d7da; color: #721c24;'] * len(row)
                         
                         styled_sector_ratings = sector_ratings_df.style.apply(color_sector_rating, axis=1)
                         
@@ -2304,8 +2311,7 @@ class PortfolioAnalytics:
                             'Total Invested': f"₹{channel_total_invested:,.2f}",
                             'Total Current Value': f"₹{channel_total_current:,.2f}",
                             'Total P&L': f"₹{channel_total_pnl:,.2f}",
-                            'Rating': channel_rating,
-                            'Rating Color': rating_color
+                            'Rating': channel_rating
                         })
                         
                         # Get best performing ticker in this channel
@@ -2334,7 +2340,15 @@ class PortfolioAnalytics:
                         
                         # Apply color coding based on rating
                         def color_channel_rating(row):
-                            return [row['Rating Color']] * len(row)
+                            rating = row['Rating']
+                            if '🟢' in rating:
+                                return ['background-color: #d4edda; color: #155724;'] * len(row)
+                            elif '🟡' in rating:
+                                return ['background-color: #fff3cd; color: #856404;'] * len(row)
+                            elif '🟠' in rating:
+                                return ['background-color: #f8d7da; color: #721c24;'] * len(row)
+                            else:  # 🔴
+                                return ['background-color: #f8d7da; color: #721c24;'] * len(row)
                         
                         styled_channel_ratings = channel_ratings_df.style.apply(color_channel_rating, axis=1)
                         
