@@ -413,13 +413,18 @@ def save_transaction_supabase(user_id: int, stock_name: str, ticker: str, quanti
         print(f"❌ Error saving transaction: {e}")
         return None
 
-def get_transactions_supabase(user_id: int = None) -> List[Dict]:
+def get_transactions_supabase(user_id: int = None, file_id: int = None) -> List[Dict]:
     """Get investment transactions using Supabase client"""
     try:
+        query = supabase.table("investment_transactions").select("*")
+        
         if user_id:
-            result = supabase.table("investment_transactions").select("*").eq("user_id", user_id).execute()
-        else:
-            result = supabase.table("investment_transactions").select("*").execute()
+            query = query.eq("user_id", user_id)
+        
+        if file_id:
+            query = query.eq("file_id", file_id)
+        
+        result = query.execute()
         
         if result.data:
             return result.data

@@ -415,8 +415,8 @@ def get_mutual_fund_price(ticker: str, clean_ticker: str, user_id: int, target_d
     
     return price
 
-def get_stock_price_and_sector(ticker: str, clean_ticker: str, target_date: str = None) -> Tuple[Optional[float], Optional[str]]:
-    """Get price and sector for stock using yfinance
+def get_stock_price_and_sector(ticker: str, clean_ticker: str, target_date: str = None) -> Tuple[Optional[float], Optional[str], Optional[float]]:
+    """Get price, sector, and market cap for stock using yfinance
     
     Args:
         ticker: The ticker symbol
@@ -424,10 +424,11 @@ def get_stock_price_and_sector(ticker: str, clean_ticker: str, target_date: str 
         target_date: Target date for historical prices (None for current/live prices)
     
     Returns:
-        Tuple of (price, sector) where either can be None
+        Tuple of (price, sector, market_cap) where any can be None
     """
     price = None
     sector = None
+    market_cap = None
     
     try:
         import yfinance as yf
@@ -439,7 +440,7 @@ def get_stock_price_and_sector(ticker: str, clean_ticker: str, target_date: str 
         
         stock_ns = yf.Ticker(yf_ticker_ns)
         
-        # Try to get sector information from yfinance
+        # Try to get sector and market cap information from yfinance
         try:
             info = stock_ns.info
             if info and 'sector' in info and info['sector']:
@@ -448,8 +449,20 @@ def get_stock_price_and_sector(ticker: str, clean_ticker: str, target_date: str 
             elif info and 'industry' in info and info['industry']:
                 sector = info['industry']
                 print(f"✅ {ticker}: Industry '{sector}' fetched from yfinance (using as sector)")
+            
+            # Get market cap in INR (convert from USD if needed)
+            if info and 'marketCap' in info and info['marketCap']:
+                market_cap_usd = info['marketCap']
+                if market_cap_usd:
+                    # Convert USD to INR (approximate rate 83.5)
+                    market_cap = market_cap_usd * 83.5
+                    print(f"✅ {ticker}: Market Cap ₹{market_cap:,.0f} Cr (${market_cap_usd/1000000000:.2f}B) from yfinance")
+            elif info and 'market_cap' in info and info['market_cap']:
+                market_cap = info['market_cap'] * 83.5  # Convert to INR
+                print(f"✅ {ticker}: Market Cap ₹{market_cap:,.0f} Cr from yfinance")
+                
         except Exception as sector_error:
-            print(f"⚠️ Could not fetch sector for {ticker}: {sector_error}")
+            print(f"⚠️ Could not fetch sector/market cap for {ticker}: {sector_error}")
         
         if target_date:
             # For historical prices, get data for a range around the target date
@@ -483,18 +496,24 @@ def get_stock_price_and_sector(ticker: str, clean_ticker: str, target_date: str 
             yf_ticker_bo = f"{clean_ticker}.BO"
             stock_bo = yf.Ticker(yf_ticker_bo)
             
-            # Try to get sector from .BO if not already got from .NS
-            if not sector:
+            # Try to get sector and market cap from .BO if not already got from .NS
+            if not sector or not market_cap:
                 try:
                     info = stock_bo.info
-                    if info and 'sector' in info and info['sector']:
+                    if not sector and info and 'sector' in info and info['sector']:
                         sector = info['sector']
                         print(f"✅ {ticker}: Sector '{sector}' fetched from yfinance (.BO)")
-                    elif info and 'industry' in info and info['industry']:
+                    elif not sector and info and 'industry' in info and info['industry']:
                         sector = info['industry']
                         print(f"✅ {ticker}: Industry '{sector}' fetched from yfinance (.BO) (using as sector)")
+                    
+                    if not market_cap and info and 'marketCap' in info and info['marketCap']:
+                        market_cap_usd = info['marketCap']
+                        if market_cap_usd:
+                            market_cap = market_cap_usd * 83.5
+                            print(f"✅ {ticker}: Market Cap ₹{market_cap:,.0f} Cr (${market_cap_usd/1000000000:.2f}B) from yfinance (.BO)")
                 except Exception as sector_error:
-                    print(f"⚠️ Could not fetch sector for {ticker} from .BO: {sector_error}")
+                    print(f"⚠️ Could not fetch sector/market cap for {ticker} from .BO: {sector_error}")
             
             if target_date and not price:
                 hist_bo = stock_bo.history(start=start_date, end=end_date)
@@ -520,7 +539,7 @@ def get_stock_price_and_sector(ticker: str, clean_ticker: str, target_date: str 
     except Exception as e:
         print(f"⚠️ yfinance failed for {ticker}: {e}")
     
-    return price, sector
+    return price, sector, market_cap
 
 def get_stock_price(ticker: str, clean_ticker: str, target_date: str = None) -> float:
     """Get price for stock using multiple sources

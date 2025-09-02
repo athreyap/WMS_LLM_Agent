@@ -539,9 +539,15 @@ class PortfolioAnalytics:
                             sector = "Mutual Fund"  # Fallback if no category available
                             print(f"⚠️ MF {ticker}: No fund category available, using default 'Mutual Fund'")
                     else:
-                        # Stock - fetch both price and sector from yfinance
+                        # Stock - fetch price, sector, and market cap from yfinance
                         from unified_price_fetcher import get_stock_price_and_sector
-                        live_price, sector = get_stock_price_and_sector(ticker, ticker, None)
+                        live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
+                        
+                        # Store market cap in session state for later use
+                        if market_cap and market_cap > 0:
+                            if not hasattr(self.session_state, 'market_caps'):
+                                self.session_state.market_caps = {}
+                            self.session_state.market_caps[ticker] = market_cap
                         
                         # If no sector from yfinance, try to get it from stock data table
                         if not sector or sector == 'Unknown':
@@ -1231,8 +1237,87 @@ class PortfolioAnalytics:
         # Market cap distribution (if available)
         st.subheader("📊 Market Cap Distribution")
         
-        # This would require market cap data from external sources
-        st.info("Market cap distribution requires additional market data integration")
+        # Check if we have market cap data
+        if hasattr(self.session_state, 'market_caps') and self.session_state.market_caps:
+            # Filter stocks (exclude mutual funds) and get their market caps
+            stock_data = df[~df['ticker'].astype(str).str.isdigit() & ~df['ticker'].str.startswith('MF_')].copy()
+            
+            if not stock_data.empty:
+                # Add market cap data to stock data
+                stock_data['market_cap'] = stock_data['ticker'].map(self.session_state.market_caps)
+                
+                # Filter stocks with market cap data
+                stocks_with_market_cap = stock_data.dropna(subset=['market_cap'])
+                
+                if not stocks_with_market_cap.empty:
+                    # Categorize stocks by market cap (in Crores)
+                    def categorize_market_cap(market_cap):
+                        if market_cap >= 20000:  # 20,000 Cr and above
+                            return 'Large Cap (₹20,000+ Cr)'
+                        elif market_cap >= 5000:  # 5,000 - 19,999 Cr
+                            return 'Mid Cap (₹5,000-19,999 Cr)'
+                        elif market_cap >= 500:  # 500 - 4,999 Cr
+                            return 'Small Cap (₹500-4,999 Cr)'
+                        else:  # Below 500 Cr
+                            return 'Micro Cap (<₹500 Cr)'
+                    
+                    stocks_with_market_cap['market_cap_category'] = stocks_with_market_cap['market_cap'].apply(categorize_market_cap)
+                    
+                    # Group by market cap category and sum current values
+                    market_cap_distribution = stocks_with_market_cap.groupby('market_cap_category')['current_value'].sum().sort_values(ascending=False)
+                    
+                    if not market_cap_distribution.empty:
+                        # Create pie chart
+                        fig_market_cap = px.pie(
+                            values=market_cap_distribution.values,
+                            names=market_cap_distribution.index,
+                            title="Portfolio Distribution by Market Cap",
+                            color_discrete_sequence=px.colors.qualitative.Set3
+                        )
+                        fig_market_cap.update_traces(textposition='inside', textinfo='percent+label')
+                        st.plotly_chart(fig_market_cap, use_container_width=True)
+                        
+                        # Show summary metrics
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            large_cap_value = market_cap_distribution.get('Large Cap (₹20,000+ Cr)', 0)
+                            st.metric("Large Cap", f"₹{large_cap_value:,.0f}")
+                        
+                        with col2:
+                            mid_cap_value = market_cap_distribution.get('Mid Cap (₹5,000-19,999 Cr)', 0)
+                            st.metric("Mid Cap", f"₹{mid_cap_value:,.0f}")
+                        
+                        with col3:
+                            small_cap_value = market_cap_distribution.get('Small Cap (₹500-4,999 Cr)', 0)
+                            st.metric("Small Cap", f"₹{small_cap_value:,.0f}")
+                        
+                        with col4:
+                            micro_cap_value = market_cap_distribution.get('Micro Cap (<₹500 Cr)', 0)
+                            st.metric("Micro Cap", f"₹{micro_cap_value:,.0f}")
+                        
+                        # Show detailed breakdown
+                        st.subheader("📋 Market Cap Breakdown by Stock")
+                        market_cap_breakdown = stocks_with_market_cap[['ticker', 'market_cap', 'market_cap_category', 'current_value']].copy()
+                        market_cap_breakdown['market_cap_cr'] = market_cap_breakdown['market_cap'] / 100  # Convert to Crores
+                        market_cap_breakdown = market_cap_breakdown.sort_values('market_cap', ascending=False)
+                        
+                        # Format the display
+                        market_cap_breakdown_display = market_cap_breakdown[['ticker', 'market_cap_cr', 'market_cap_category', 'current_value']].copy()
+                        market_cap_breakdown_display.columns = ['Ticker', 'Market Cap (Cr)', 'Category', 'Portfolio Value']
+                        market_cap_breakdown_display['Market Cap (Cr)'] = market_cap_breakdown_display['Market Cap (Cr)'].apply(lambda x: f"₹{x:,.0f}")
+                        market_cap_breakdown_display['Portfolio Value'] = market_cap_breakdown_display['Portfolio Value'].apply(lambda x: f"₹{x:,.0f}")
+                        
+                        st.dataframe(market_cap_breakdown_display, use_container_width=True)
+                        
+                    else:
+                        st.info("No market cap distribution data available")
+                else:
+                    st.info("No stocks with market cap data found")
+            else:
+                st.info("No stock data available for market cap analysis")
+        else:
+            st.info("Market cap data not available. Run 'Fetch Live Prices' to get market cap information.")
     
     def render_pnl_analysis_page(self):
         """Render detailed P&L analysis"""
