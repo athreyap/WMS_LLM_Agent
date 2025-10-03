@@ -1431,15 +1431,15 @@ class PortfolioAnalytics:
             
             # Test API key validity
             try:
-                import openai
-                openai.api_key = st.session_state.openai_api_key
+                from openai import OpenAI
+                client = OpenAI(api_key=st.session_state.openai_api_key)
                 
                 # Show API key info for debugging (first 10 and last 4 characters)
                 api_key_display = st.session_state.openai_api_key[:10] + "..." + st.session_state.openai_api_key[-4:] if len(st.session_state.openai_api_key) > 14 else "***"
                 st.sidebar.text(f"🔑 Key: {api_key_display}")
                 
                 # Quick test call to validate API key
-                test_response = openai.ChatCompletion.create(
+                test_response = client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[{"role": "user", "content": "test"}],
                     max_tokens=1
@@ -4689,8 +4689,6 @@ class PortfolioAnalytics:
             if not api_key:
                 return "❌ OpenAI API key not configured. Please set it in the configuration section or in Streamlit secrets as 'open_ai'."
             
-            openai.api_key = api_key
-            
             # Prepare system prompt
             # Prepare system prompt with current page context
             current_page_info = ""
@@ -4736,7 +4734,9 @@ class PortfolioAnalytics:
             ]
             
             # Generate response
-            response = openai.ChatCompletion.create(
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=messages,
                 max_tokens=1000,
