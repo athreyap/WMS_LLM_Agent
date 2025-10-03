@@ -1421,7 +1421,34 @@ class PortfolioAnalytics:
         
         # API Key Status
         if st.session_state.openai_api_key:
-            st.sidebar.success("✅ AI Ready")
+            # Test API key validity
+            try:
+                import openai
+                openai.api_key = st.session_state.openai_api_key
+                # Quick test call to validate API key
+                test_response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role": "user", "content": "test"}],
+                    max_tokens=1
+                )
+                st.sidebar.success("✅ AI Ready")
+            except Exception as e:
+                error_msg = str(e)
+                if "You tried to access" in error_msg:
+                    st.sidebar.error("❌ API Access Denied")
+                    st.sidebar.info("💡 Check API key permissions")
+                elif "invalid_api_key" in error_msg.lower():
+                    st.sidebar.error("❌ Invalid API Key")
+                    st.sidebar.info("💡 Check your API key")
+                elif "rate limit" in error_msg.lower():
+                    st.sidebar.warning("⚠️ Rate Limited")
+                    st.sidebar.info("💡 Wait a moment")
+                else:
+                    st.sidebar.error("❌ API Error")
+                    st.sidebar.info(f"💡 {error_msg[:50]}...")
+                
+                if st.sidebar.button("🔑 Reconfigure API Key"):
+                    st.session_state.show_api_config = True
         else:
             st.sidebar.warning("⚠️ API Key Needed")
             if st.sidebar.button("🔑 Configure API Key"):
@@ -1518,6 +1545,39 @@ class PortfolioAnalytics:
             if st.sidebar.button("Close Chat", key="sidebar_close_chat"):
                 st.session_state.show_ai_chat = False
                 st.sidebar.rerun()
+        
+        # API Configuration Section (if needed)
+        if st.session_state.get('show_api_config', False):
+            st.sidebar.markdown("---")
+            st.sidebar.subheader("🔑 API Configuration")
+            
+            api_key = st.sidebar.text_input(
+                "OpenAI API Key:",
+                type="password",
+                value=st.session_state.openai_api_key or "",
+                help="Get your API key from https://platform.openai.com/api-keys"
+            )
+            
+            if st.sidebar.button("Save API Key"):
+                if api_key:
+                    st.session_state.openai_api_key = api_key
+                    st.sidebar.success("✅ API Key saved!")
+                    st.session_state.show_api_config = False
+                    st.rerun()
+                else:
+                    st.sidebar.error("❌ Please enter a valid API key")
+            
+            if st.sidebar.button("Cancel"):
+                st.session_state.show_api_config = False
+                st.rerun()
+            
+            st.sidebar.markdown("---")
+            st.sidebar.info("""
+            **Troubleshooting:**
+            - Check API key permissions
+            - Verify billing is active
+            - Ensure key has GPT-3.5 access
+            """)
         
         # Logout button
         st.sidebar.markdown("---")
