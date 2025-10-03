@@ -1405,6 +1405,120 @@ class PortfolioAnalytics:
                     import traceback
                     st.error(f"Traceback: {traceback.format_exc()}")
         
+        # AI Assistant in sidebar (available on all pages)
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🤖 AI Assistant")
+        
+        # Initialize chat history if not exists
+        if 'chat_history' not in st.session_state:
+            st.session_state.chat_history = []
+        if 'openai_api_key' not in st.session_state:
+            # Try to get API key from Streamlit secrets first, then fallback to manual input
+            try:
+                st.session_state.openai_api_key = st.secrets["open_ai"]
+            except:
+                st.session_state.openai_api_key = None
+        
+        # API Key Status
+        if st.session_state.openai_api_key:
+            st.sidebar.success("✅ AI Ready")
+        else:
+            st.sidebar.warning("⚠️ API Key Needed")
+            if st.sidebar.button("🔑 Configure API Key"):
+                st.session_state.show_api_config = True
+        
+        # Quick Actions for current page context
+        st.sidebar.markdown("**⚡ Quick Actions**")
+        
+        # Context-aware quick actions based on current page
+        if page == "🏠 Overview":
+            if st.sidebar.button("📊 Portfolio Summary", key="sidebar_portfolio_summary"):
+                if st.session_state.openai_api_key:
+                    self.quick_analysis("Provide a comprehensive summary of my portfolio including performance, allocation, and key insights", page)
+                else:
+                    st.sidebar.error("❌ Configure API key")
+            
+            if st.sidebar.button("📈 Best Performers", key="sidebar_best_performers"):
+                if st.session_state.openai_api_key:
+                    self.quick_analysis("What are my best performing stocks and why?", page)
+                else:
+                    st.sidebar.error("❌ Configure API key")
+        
+        elif page == "📈 Performance":
+            if st.sidebar.button("📊 Performance Analysis", key="sidebar_performance_analysis"):
+                if st.session_state.openai_api_key:
+                    self.quick_analysis("Analyze my portfolio performance, identify trends, and suggest improvements", page)
+                else:
+                    st.sidebar.error("❌ Configure API key")
+            
+            if st.sidebar.button("📉 Risk Assessment", key="sidebar_risk_assessment"):
+                if st.session_state.openai_api_key:
+                    self.quick_analysis("Analyze the risk in my portfolio and suggest improvements", page)
+                else:
+                    st.sidebar.error("❌ Configure API key")
+        
+        elif page == "📊 Allocation":
+            if st.sidebar.button("🎯 Allocation Review", key="sidebar_allocation_review"):
+                if st.session_state.openai_api_key:
+                    self.quick_analysis("Review my portfolio allocation and suggest rebalancing strategies", page)
+                else:
+                    st.sidebar.error("❌ Configure API key")
+            
+            if st.sidebar.button("📊 Sector Analysis", key="sidebar_sector_analysis"):
+                if st.session_state.openai_api_key:
+                    self.quick_analysis("Analyze my sector allocation and provide diversification insights", page)
+                else:
+                    st.sidebar.error("❌ Configure API key")
+        
+        elif page == "💰 P&L Analysis":
+            if st.sidebar.button("💰 P&L Insights", key="sidebar_pnl_insights"):
+                if st.session_state.openai_api_key:
+                    self.quick_analysis("Provide insights on my profit and loss performance", page)
+                else:
+                    st.sidebar.error("❌ Configure API key")
+            
+            if st.sidebar.button("📈 Trading Analysis", key="sidebar_trading_analysis"):
+                if st.session_state.openai_api_key:
+                    self.quick_analysis("Analyze my trading patterns and suggest improvements", page)
+                else:
+                    st.sidebar.error("❌ Configure API key")
+        
+        # Universal quick actions
+        if st.sidebar.button("🎯 Recommendations", key="sidebar_recommendations"):
+            if st.session_state.openai_api_key:
+                self.quick_analysis("Give me investment recommendations based on my portfolio", page)
+            else:
+                st.sidebar.error("❌ Configure API key")
+        
+        if st.sidebar.button("❓ Ask Anything", key="sidebar_ask_anything"):
+            if st.session_state.openai_api_key:
+                st.session_state.show_ai_chat = True
+            else:
+                st.sidebar.error("❌ Configure API key")
+        
+        # Chat interface in sidebar
+        if st.session_state.get('show_ai_chat', False):
+            st.sidebar.markdown("---")
+            st.sidebar.subheader("💬 Chat")
+            
+            # Display recent chat history (last 3 messages)
+            if st.session_state.chat_history:
+                st.sidebar.markdown("**Recent Messages:**")
+                for msg in st.session_state.chat_history[-3:]:
+                    role_icon = "👤" if msg["role"] == "user" else "🤖"
+                    st.sidebar.markdown(f"{role_icon} {msg['content'][:50]}...")
+            
+            # Chat input
+            user_input = st.sidebar.text_input("Ask me anything:", key="sidebar_chat_input")
+            if st.sidebar.button("Send", key="sidebar_send"):
+                if user_input:
+                    self.quick_analysis(user_input, page)
+                    st.sidebar.rerun()
+            
+            if st.sidebar.button("Close Chat", key="sidebar_close_chat"):
+                st.session_state.show_ai_chat = False
+                st.sidebar.rerun()
+        
         # Logout button
         st.sidebar.markdown("---")
         if st.sidebar.button("Logout"):
@@ -4160,47 +4274,16 @@ class PortfolioAnalytics:
                 else:
                     st.error("❌ Please configure your OpenAI API key first")
         
-        # Quick Action Buttons
-        st.subheader("⚡ Quick Actions")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            if st.button("📈 Best Performers"):
-                if st.session_state.openai_api_key:
-                    self.quick_analysis("What are my best performing stocks and why?")
-                else:
-                    st.error("❌ Configure API key")
-        
-        with col2:
-            if st.button("📉 Risk Analysis"):
-                if st.session_state.openai_api_key:
-                    self.quick_analysis("Analyze the risk in my portfolio and suggest improvements")
-                else:
-                    st.error("❌ Configure API key")
-        
-        with col3:
-            if st.button("💰 P&L Insights"):
-                if st.session_state.openai_api_key:
-                    self.quick_analysis("Provide insights on my profit and loss performance")
-                else:
-                    st.error("❌ Configure API key")
-        
-        with col4:
-            if st.button("🎯 Recommendations"):
-                if st.session_state.openai_api_key:
-                    self.quick_analysis("Give me investment recommendations based on my portfolio")
-                else:
-                    st.error("❌ Configure API key")
+        # Quick Actions are now in the sidebar for better UX
     
-    def process_ai_query(self, user_input, uploaded_files=None):
+    def process_ai_query(self, user_input, uploaded_files=None, current_page=None):
         """Process user query with AI assistant"""
         try:
             # Add user message to chat history
             st.session_state.chat_history.append({"role": "user", "content": user_input})
             
-            # Prepare context data
-            context_data = self.prepare_context_data()
+            # Prepare context data with current page
+            context_data = self.prepare_context_data(current_page)
             
             # Process uploaded files if any
             file_content = ""
@@ -4233,14 +4316,33 @@ class PortfolioAnalytics:
         except Exception as e:
             st.error(f"❌ Error processing query: {e}")
     
-    def prepare_context_data(self):
+    def convert_to_json_serializable(self, obj):
+        """Convert pandas objects and other non-serializable types to JSON-serializable format"""
+        if isinstance(obj, pd.Timestamp):
+            return obj.strftime('%Y-%m-%d %H:%M:%S')
+        elif isinstance(obj, pd.Series):
+            return obj.tolist()
+        elif isinstance(obj, pd.DataFrame):
+            return obj.to_dict('records')
+        elif isinstance(obj, dict):
+            return {k: self.convert_to_json_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self.convert_to_json_serializable(item) for item in obj]
+        elif hasattr(obj, 'item'):  # numpy scalars
+            return obj.item()
+        else:
+            return obj
+
+    def prepare_context_data(self, current_page=None):
         """Prepare portfolio and market data context for AI"""
         try:
             context = {
+                "current_page": current_page,
                 "portfolio_summary": {},
                 "transactions": [],
                 "stock_data": {},
-                "market_insights": {}
+                "market_insights": {},
+                "page_specific_data": {}
             }
             
             # Get portfolio data
@@ -4249,10 +4351,10 @@ class PortfolioAnalytics:
                 
                 # Portfolio summary
                 context["portfolio_summary"] = {
-                    "total_invested": df['invested_amount'].sum() if 'invested_amount' in df.columns else 0,
-                    "total_current_value": df['current_value'].sum() if 'current_value' in df.columns else 0,
-                    "total_pnl": df['unrealized_pnl'].sum() if 'unrealized_pnl' in df.columns else 0,
-                    "total_stocks": len(df['ticker'].unique()) if 'ticker' in df.columns else 0,
+                    "total_invested": float(df['invested_amount'].sum()) if 'invested_amount' in df.columns else 0,
+                    "total_current_value": float(df['current_value'].sum()) if 'current_value' in df.columns else 0,
+                    "total_pnl": float(df['unrealized_pnl'].sum()) if 'unrealized_pnl' in df.columns else 0,
+                    "total_stocks": int(len(df['ticker'].unique())) if 'ticker' in df.columns else 0,
                     "date_range": {
                         "start": df['date'].min().strftime('%Y-%m-%d') if 'date' in df.columns else None,
                         "end": df['date'].max().strftime('%Y-%m-%d') if 'date' in df.columns else None
@@ -4261,21 +4363,86 @@ class PortfolioAnalytics:
                 
                 # Top performers
                 if 'unrealized_pnl' in df.columns:
-                    top_performers = df.nlargest(5, 'unrealized_pnl')[['ticker', 'stock_name', 'unrealized_pnl', 'current_value']].to_dict('records')
+                    top_performers_df = df.nlargest(5, 'unrealized_pnl')[['ticker', 'stock_name', 'unrealized_pnl', 'current_value']]
+                    top_performers = []
+                    for _, row in top_performers_df.iterrows():
+                        top_performers.append({
+                            'ticker': str(row['ticker']),
+                            'stock_name': str(row['stock_name']),
+                            'unrealized_pnl': float(row['unrealized_pnl']),
+                            'current_value': float(row['current_value'])
+                        })
                     context["portfolio_summary"]["top_performers"] = top_performers
                 
                 # Sector allocation
                 if 'sector' in df.columns:
                     sector_allocation = df.groupby('sector')['current_value'].sum().to_dict()
-                    context["portfolio_summary"]["sector_allocation"] = sector_allocation
+                    context["portfolio_summary"]["sector_allocation"] = {k: float(v) for k, v in sector_allocation.items()}
                 
                 # Recent transactions
-                recent_transactions = df.tail(10)[['ticker', 'stock_name', 'transaction_type', 'quantity', 'price', 'date']].to_dict('records')
+                recent_transactions_df = df.tail(10)[['ticker', 'stock_name', 'transaction_type', 'quantity', 'price', 'date']]
+                recent_transactions = []
+                for _, row in recent_transactions_df.iterrows():
+                    recent_transactions.append({
+                        'ticker': str(row['ticker']),
+                        'stock_name': str(row['stock_name']),
+                        'transaction_type': str(row['transaction_type']),
+                        'quantity': float(row['quantity']),
+                        'price': float(row['price']),
+                        'date': row['date'].strftime('%Y-%m-%d') if pd.notna(row['date']) else None
+                    })
                 context["transactions"] = recent_transactions
             
             # Get live stock data
             if hasattr(self.session_state, 'live_prices'):
-                context["stock_data"]["live_prices"] = self.session_state.live_prices
+                context["stock_data"]["live_prices"] = self.convert_to_json_serializable(self.session_state.live_prices)
+            
+            # Add page-specific data based on current page
+            if current_page and self.session_state.portfolio_data is not None:
+                df = self.session_state.portfolio_data
+                
+                if current_page == "🏠 Overview":
+                    context["page_specific_data"] = {
+                        "page_type": "overview",
+                        "description": "Portfolio overview with key metrics and performance indicators",
+                        "key_metrics": {
+                            "total_invested": float(df['invested_amount'].sum()) if 'invested_amount' in df.columns else 0,
+                            "total_current_value": float(df['current_value'].sum()) if 'current_value' in df.columns else 0,
+                            "total_pnl": float(df['unrealized_pnl'].sum()) if 'unrealized_pnl' in df.columns else 0,
+                            "total_stocks": int(len(df['ticker'].unique())) if 'ticker' in df.columns else 0
+                        }
+                    }
+                
+                elif current_page == "📈 Performance":
+                    context["page_specific_data"] = {
+                        "page_type": "performance",
+                        "description": "Portfolio performance analysis with charts and trends",
+                        "performance_metrics": {
+                            "best_performers": df.nlargest(5, 'unrealized_pnl')[['ticker', 'unrealized_pnl']].to_dict('records') if 'unrealized_pnl' in df.columns else [],
+                            "worst_performers": df.nsmallest(5, 'unrealized_pnl')[['ticker', 'unrealized_pnl']].to_dict('records') if 'unrealized_pnl' in df.columns else []
+                        }
+                    }
+                
+                elif current_page == "📊 Allocation":
+                    context["page_specific_data"] = {
+                        "page_type": "allocation",
+                        "description": "Portfolio allocation by sector, asset type, and individual holdings",
+                        "allocation_data": {
+                            "sector_allocation": df.groupby('sector')['current_value'].sum().to_dict() if 'sector' in df.columns else {},
+                            "top_holdings": df.nlargest(10, 'current_value')[['ticker', 'current_value']].to_dict('records') if 'current_value' in df.columns else []
+                        }
+                    }
+                
+                elif current_page == "💰 P&L Analysis":
+                    context["page_specific_data"] = {
+                        "page_type": "pnl_analysis",
+                        "description": "Profit and loss analysis with detailed breakdowns",
+                        "pnl_metrics": {
+                            "total_pnl": float(df['unrealized_pnl'].sum()) if 'unrealized_pnl' in df.columns else 0,
+                            "profitable_stocks": len(df[df['unrealized_pnl'] > 0]) if 'unrealized_pnl' in df.columns else 0,
+                            "losing_stocks": len(df[df['unrealized_pnl'] < 0]) if 'unrealized_pnl' in df.columns else 0
+                        }
+                    }
             
             return context
             
@@ -4391,8 +4558,19 @@ class PortfolioAnalytics:
             openai.api_key = api_key
             
             # Prepare system prompt
-            system_prompt = """You are an expert stock broker and Portfolio Management System (PMS) assistant. 
+            # Prepare system prompt with current page context
+            current_page_info = ""
+            if context_data.get("current_page"):
+                current_page_info = f"\n\nYou are currently helping the user on the '{context_data['current_page']}' page. "
+                if context_data.get("page_specific_data"):
+                    page_data = context_data["page_specific_data"]
+                    current_page_info += f"This page shows {page_data.get('description', 'portfolio data')}. "
+                    if page_data.get('page_type'):
+                        current_page_info += f"Focus your analysis on {page_data['page_type']} related insights. "
+            
+            system_prompt = f"""You are an expert stock broker and Portfolio Management System (PMS) assistant. 
             You have access to the user's complete portfolio data, transaction history, and market information.
+            {current_page_info}
             
             Your role:
             1. Provide intelligent analysis of portfolio performance
@@ -4400,6 +4578,7 @@ class PortfolioAnalytics:
             3. Analyze risk and suggest improvements
             4. Answer questions about stocks, mutual funds, and market trends
             5. Help with financial planning and strategy
+            6. Give context-aware responses based on the current page the user is viewing
             
             Guidelines:
             - Always base your analysis on the provided data
@@ -4407,6 +4586,7 @@ class PortfolioAnalytics:
             - Consider Indian market context for stocks and mutual funds
             - Provide clear explanations for your insights
             - Be professional but conversational
+            - Tailor your response to the current page context when relevant
             - If you don't have specific data, say so clearly
             
             Portfolio Context:
@@ -4434,9 +4614,9 @@ class PortfolioAnalytics:
         except Exception as e:
             return f"❌ Error generating AI response: {e}"
     
-    def quick_analysis(self, query):
+    def quick_analysis(self, query, current_page=None):
         """Perform quick analysis with predefined queries"""
-        self.process_ai_query(query)
+        self.process_ai_query(query, current_page=current_page)
     
     def get_portfolio_summary(self):
         """Get AI-generated portfolio summary"""
