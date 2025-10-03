@@ -1502,76 +1502,76 @@ class PortfolioAnalytics:
                 if st.session_state.get('api_key_source') == "secrets":
                     st.sidebar.info("🔑 OpenAI API Key from Streamlit Secrets")
             
-            # Test API key validity
-            try:
-                from openai import OpenAI
-                client = OpenAI(api_key=st.session_state.openai_api_key)
-                
-                # Show API key info for debugging (first 10 and last 4 characters)
-                api_key_display = st.session_state.openai_api_key[:10] + "..." + st.session_state.openai_api_key[-4:] if len(st.session_state.openai_api_key) > 14 else "***"
-                st.sidebar.text(f"🔑 Key: {api_key_display}")
-                
-                # Quick test call to validate API key (minimal usage)
-                test_response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": "hi"}],
-                    max_tokens=1,
-                    temperature=0
-                )
-                st.sidebar.success("✅ AI Ready")
-            except Exception as e:
-                error_msg = str(e)
-                
-                # Show API key info for debugging
-                api_key_display = st.session_state.openai_api_key[:10] + "..." + st.session_state.openai_api_key[-4:] if len(st.session_state.openai_api_key) > 14 else "***"
-                st.sidebar.text(f"🔑 Key: {api_key_display}")
-                
-                if "You tried to access" in error_msg or "access_denied" in error_msg.lower():
-                    st.sidebar.error("❌ API Access Denied")
-                    st.sidebar.info("💡 Check API key permissions in Streamlit secrets")
+                # Test API key validity
+                try:
+                    from openai import OpenAI
+                    client = OpenAI(api_key=st.session_state.openai_api_key)
                     
-                    # Show detailed troubleshooting
-                    with st.sidebar.expander("🔧 Troubleshooting Steps", expanded=True):
-                        st.markdown("""
-                        **Common Solutions:**
-                        1. **Generate New API Key**: Create a fresh key at [OpenAI Platform](https://platform.openai.com/api-keys)
-                        2. **Check Permissions**: Ensure key has GPT-3.5-turbo access
-                        3. **Verify Billing**: Check your OpenAI account has active billing
-                        4. **Update Secrets**: Replace the key in your Streamlit secrets
-                        5. **Wait & Retry**: Sometimes takes a few minutes to propagate
-                        """)
+                    # Show API key info for debugging (first 10 and last 4 characters)
+                    api_key_display = st.session_state.openai_api_key[:10] + "..." + st.session_state.openai_api_key[-4:] if len(st.session_state.openai_api_key) > 14 else "***"
+                    st.sidebar.text(f"🔑 OpenAI Key: {api_key_display}")
+                    
+                    # Quick test call to validate API key (minimal usage)
+                    test_response = client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": "hi"}],
+                        max_tokens=1,
+                        temperature=0
+                    )
+                    st.sidebar.success("✅ OpenAI Ready")
+                except Exception as e:
+                    error_msg = str(e)
+                    
+                    # Show API key info for debugging
+                    api_key_display = st.session_state.openai_api_key[:10] + "..." + st.session_state.openai_api_key[-4:] if len(st.session_state.openai_api_key) > 14 else "***"
+                    st.sidebar.text(f"🔑 OpenAI Key: {api_key_display}")
+                    
+                    if "You tried to access" in error_msg or "access_denied" in error_msg.lower():
+                        st.sidebar.error("❌ API Access Denied")
+                        st.sidebar.info("💡 Check API key permissions in Streamlit secrets")
                         
-                        st.markdown("**🔍 Debug Info:**")
-                        st.text(f"Error: {error_msg}")
-                        st.text(f"Key starts with: {st.session_state.openai_api_key[:10]}...")
-                        st.text(f"Key length: {len(st.session_state.openai_api_key)}")
-                        
-                        if st.button("🔄 Test API Key Again"):
-                            st.rerun()
-                elif "invalid_api_key" in error_msg.lower():
-                    st.sidebar.error("❌ Invalid API Key")
-                    st.sidebar.info("💡 Check your API key in Streamlit secrets")
-                elif "rate limit" in error_msg.lower():
-                    st.sidebar.warning("⚠️ Rate Limited")
-                    st.sidebar.info("💡 Wait a moment")
-                else:
-                    st.sidebar.error("❌ API Error")
-                    st.sidebar.info(f"💡 {error_msg[:50]}...")
-                
-                if st.sidebar.button("🔑 Reconfigure API Key"):
-                    st.session_state.show_api_config = True
-        else:
-            # Show debugging info for secrets
-            if st.session_state.get('api_key_source') == "none":
-                st.sidebar.warning("⚠️ API Key Not Found")
-                if st.session_state.get('secrets_error'):
-                    st.sidebar.error(f"❌ Secrets Error: {st.session_state.secrets_error}")
-                st.sidebar.info("💡 Check Streamlit secrets configuration")
+                        # Show detailed troubleshooting
+                        with st.sidebar.expander("🔧 Troubleshooting Steps", expanded=True):
+                            st.markdown("""
+                            **Common Solutions:**
+                            1. **Generate New API Key**: Create a fresh key at [OpenAI Platform](https://platform.openai.com/api-keys)
+                            2. **Check Permissions**: Ensure key has GPT-3.5-turbo access
+                            3. **Verify Billing**: Check your OpenAI account has active billing
+                            4. **Update Secrets**: Replace the key in your Streamlit secrets
+                            5. **Wait & Retry**: Sometimes takes a few minutes to propagate
+                            """)
+                            
+                            st.markdown("**🔍 Debug Info:**")
+                            st.text(f"Error: {error_msg}")
+                            st.text(f"Key starts with: {st.session_state.openai_api_key[:10]}...")
+                            st.text(f"Key length: {len(st.session_state.openai_api_key)}")
+                            
+                            if st.button("🔄 Test API Key Again"):
+                                st.rerun()
+                    elif "invalid_api_key" in error_msg.lower():
+                        st.sidebar.error("❌ Invalid API Key")
+                        st.sidebar.info("💡 Check your API key in Streamlit secrets")
+                    elif "rate limit" in error_msg.lower():
+                        st.sidebar.warning("⚠️ Rate Limited")
+                        st.sidebar.info("💡 Wait a moment")
+                    else:
+                        st.sidebar.error("❌ API Error")
+                        st.sidebar.info(f"💡 {error_msg[:50]}...")
+                    
+                    if st.sidebar.button("🔑 Reconfigure API Key"):
+                        st.session_state.show_api_config = True
             else:
-                st.sidebar.warning("⚠️ API Key Needed")
-            
-            if st.sidebar.button("🔑 Configure API Key"):
-                st.session_state.show_api_config = True
+                # Show debugging info for secrets
+                if st.session_state.get('api_key_source') == "none":
+                    st.sidebar.warning("⚠️ OpenAI API Key Not Found")
+                    if st.session_state.get('secrets_error'):
+                        st.sidebar.error(f"❌ Secrets Error: {st.session_state.secrets_error}")
+                    st.sidebar.info("💡 Check Streamlit secrets configuration")
+                else:
+                    st.sidebar.warning("⚠️ API Key Needed")
+                
+                if st.sidebar.button("🔑 Configure API Key"):
+                    st.session_state.show_api_config = True
         
         # Quick Actions for current page context
         st.sidebar.markdown("**⚡ Quick Actions**")
