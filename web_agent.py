@@ -6,6 +6,15 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import warnings
+import openai
+import json
+import base64
+import io
+import PyPDF2
+import pdfplumber
+import pytesseract
+from PIL import Image
+from pdf2image import convert_from_bytes
 warnings.filterwarnings('ignore')
 
 # Database and authentication imports
@@ -737,9 +746,13 @@ class PortfolioAnalytics:
                 
                 # Generate monthly dates from purchase date to current date
                 current_date = datetime.now()
+                # Include current month by going to next month and then back
+                end_date = current_date.replace(day=1) + timedelta(days=32)
+                end_date = end_date.replace(day=1)
+                
                 monthly_dates = pd.date_range(
                     start=purchase_date.replace(day=1),
-                    end=current_date.replace(day=1),
+                    end=end_date,  # Include current month
                     freq='MS'
                 )
                 
@@ -1340,7 +1353,7 @@ class PortfolioAnalytics:
         st.sidebar.title("Navigation")
         page = st.sidebar.selectbox(
             "Choose a page:",
-            ["🏠 Overview", "📈 Performance", "📊 Allocation", "💰 P&L Analysis", "📁 Files", "⚙️ Settings"]
+            ["🏠 Overview", "📈 Performance", "📊 Allocation", "💰 P&L Analysis", "🤖 AI Assistant", "📁 Files", "⚙️ Settings"]
         )
         
         # User info in sidebar
@@ -1407,6 +1420,8 @@ class PortfolioAnalytics:
             self.render_allocation_page()
         elif page == "💰 P&L Analysis":
             self.render_pnl_analysis_page()
+        elif page == "🤖 AI Assistant":
+            self.render_ai_assistant_page()
         elif page == "📁 Files":
             self.render_files_page()
         elif page == "⚙️ Settings":
@@ -2837,6 +2852,7 @@ class PortfolioAnalytics:
             st.subheader("📈 Monthly P&L Analysis (1-Year Buy Stocks)")
             st.markdown("*Tracking monthly performance from purchase date to current date using cached historical prices*")
             st.info("💡 **Note:** This analysis uses cached historical prices for fast performance. Prices are pre-fetched during login and stored in the database.")
+            st.info(f"📅 **Date Range:** Analysis includes data from purchase date to current month ({datetime.now().strftime('%B %Y')})")
             
             # Filter for buy transactions in the last year
             one_year_ago = datetime.now() - timedelta(days=365)
@@ -2882,9 +2898,13 @@ class PortfolioAnalytics:
                     
                     # Generate monthly data points from purchase date to current date
                     current_date = datetime.now()
+                    # Include current month by going to next month and then back
+                    end_date = current_date.replace(day=1) + timedelta(days=32)
+                    end_date = end_date.replace(day=1)
+                    
                     monthly_dates = pd.date_range(
                         start=purchase_date.replace(day=1),  # Start from first day of purchase month
-                        end=current_date.replace(day=1),  # End at first day of current month
+                        end=end_date,  # Include current month
                         freq='MS'  # Month start frequency
                     )
                     
@@ -2895,6 +2915,11 @@ class PortfolioAnalytics:
                             historical_price = self.fetch_historical_price_for_month(ticker, month_date)
                             
                             if historical_price and historical_price > 0:
+                                # Calculate P&L values
+                                current_value = quantity * historical_price
+                                unrealized_pnl = (historical_price - purchase_price) * quantity
+                                pnl_percentage = ((historical_price - purchase_price) / purchase_price) * 100
+                                
                                 monthly_pnl_data.append({
                                     'ticker': ticker,
                                     'stock_name': stock_name,
@@ -2904,14 +2929,19 @@ class PortfolioAnalytics:
                                     'historical_price': historical_price,
                                     'quantity': quantity,
                                     'invested_amount': invested_amount,
-                                    'current_value': quantity * historical_price,
-                                    'unrealized_pnl': (historical_price - purchase_price) * quantity,
-                                    'pnl_percentage': ((historical_price - purchase_price) / purchase_price) * 100
+                                    'current_value': current_value,
+                                    'unrealized_pnl': unrealized_pnl,
+                                    'pnl_percentage': pnl_percentage
                                 })
                             else:
                                 # Fallback to current price if historical price not available
                                 current_price = df[df['ticker'] == ticker]['current_price'].iloc[0] if 'current_price' in df.columns else None
                                 if current_price and current_price > 0:
+                                    # Calculate P&L values for fallback
+                                    current_value = quantity * current_price
+                                    unrealized_pnl = (current_price - purchase_price) * quantity
+                                    pnl_percentage = ((current_price - purchase_price) / purchase_price) * 100
+                                    
                                     monthly_pnl_data.append({
                                         'ticker': ticker,
                                         'stock_name': stock_name,
@@ -2921,9 +2951,9 @@ class PortfolioAnalytics:
                                         'historical_price': current_price,
                                         'quantity': quantity,
                                         'invested_amount': invested_amount,
-                                        'current_value': quantity * current_price,
-                                        'unrealized_pnl': (current_price - purchase_price) * quantity,
-                                        'pnl_percentage': ((current_price - purchase_price) / purchase_price) * 100
+                                        'current_value': current_value,
+                                        'unrealized_pnl': unrealized_pnl,
+                                        'pnl_percentage': pnl_percentage
                                     })
                         except Exception as e:
                             st.warning(f"⚠️ Could not fetch historical price for {ticker} on {month_date}: {e}")
@@ -2994,6 +3024,125 @@ class PortfolioAnalytics:
                     
                     st.plotly_chart(fig_monthly_pnl, config={'displayModeBar': True, 'responsive': True})
                     
+                    # Stock Price Movement Overview
+                    st.subheader("📊 Stock Price Movement Overview")
+                    
+                    # Create a comprehensive price movement chart for all stocks
+                    fig_price_overview = go.Figure()
+                    
+                    # Get unique stocks and their colors
+                    unique_stocks = monthly_pnl_df['ticker'].unique()
+                    colors = px.colors.qualitative.Set3[:len(unique_stocks)]
+                    
+                    for i, ticker in enumerate(unique_stocks):
+                        stock_data = monthly_pnl_df[monthly_pnl_df['ticker'] == ticker]
+                        stock_name = stock_data['stock_name'].iloc[0]
+                        
+                        fig_price_overview.add_trace(go.Scatter(
+                            x=stock_data['month'],
+                            y=stock_data['historical_price'],
+                            mode='lines+markers',
+                            name=f'{ticker} - {stock_name}',
+                            line=dict(color=colors[i], width=2),
+                            marker=dict(size=6),
+                            hovertemplate=f'<b>{ticker}</b><br>Month: %{{x}}<br>Price: ₹%{{y:.2f}}<extra></extra>'
+                        ))
+                    
+                    fig_price_overview.update_layout(
+                        title="Stock Price Movement - All 1-Year Buy Stocks",
+                        xaxis_title="Month",
+                        yaxis_title="Stock Price (₹)",
+                        height=500,
+                        hovermode='x unified',
+                        legend=dict(
+                            orientation="v",
+                            yanchor="top",
+                            y=1,
+                            xanchor="left",
+                            x=1.02
+                        )
+                    )
+                    
+                    st.plotly_chart(fig_price_overview, config={'displayModeBar': True, 'responsive': True})
+                    
+                    # Price Performance Comparison
+                    st.subheader("🏆 Price Performance Comparison")
+                    
+                    # Calculate price performance for each stock
+                    price_performance_data = []
+                    for ticker in unique_stocks:
+                        stock_data = monthly_pnl_df[monthly_pnl_df['ticker'] == ticker]
+                        if len(stock_data) > 1:
+                            initial_price = stock_data['historical_price'].iloc[0]
+                            final_price = stock_data['historical_price'].iloc[-1]
+                            price_change = final_price - initial_price
+                            price_change_pct = (price_change / initial_price) * 100
+                            
+                            price_performance_data.append({
+                                'ticker': ticker,
+                                'stock_name': stock_data['stock_name'].iloc[0],
+                                'initial_price': initial_price,
+                                'final_price': final_price,
+                                'price_change': price_change,
+                                'price_change_pct': price_change_pct
+                            })
+                    
+                    if price_performance_data:
+                        price_perf_df = pd.DataFrame(price_performance_data)
+                        price_perf_df = price_perf_df.sort_values('price_change_pct', ascending=False)
+                        
+                        # Create price performance chart
+                        fig_price_perf = go.Figure()
+                        
+                        colors = ['green' if x >= 0 else 'red' for x in price_perf_df['price_change_pct']]
+                        
+                        fig_price_perf.add_trace(go.Bar(
+                            x=price_perf_df['ticker'],
+                            y=price_perf_df['price_change_pct'],
+                            marker_color=colors,
+                            text=[f"{x:.1f}%" for x in price_perf_df['price_change_pct']],
+                            textposition='auto',
+                            hovertemplate='<b>%{x}</b><br>Price Change: %{y:.2f}%<br>Initial: ₹%{customdata[0]:.2f}<br>Final: ₹%{customdata[1]:.2f}<extra></extra>',
+                            customdata=list(zip(price_perf_df['initial_price'], price_perf_df['final_price']))
+                        ))
+                        
+                        fig_price_perf.update_layout(
+                            title="Stock Price Performance Comparison (1-Year Buy Stocks)",
+                            xaxis_title="Stock Ticker",
+                            yaxis_title="Price Change (%)",
+                            height=400,
+                            showlegend=False
+                        )
+                        
+                        fig_price_perf.update_xaxes(tickangle=45)
+                        
+                        st.plotly_chart(fig_price_perf, config={'displayModeBar': True, 'responsive': True})
+                        
+                        # Price performance summary table
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.subheader("📈 Best Price Performers")
+                            best_performers = price_perf_df.head(3)
+                            for _, stock in best_performers.iterrows():
+                                st.metric(
+                                    f"{stock['ticker']} - {stock['stock_name']}",
+                                    f"₹{stock['final_price']:.2f}",
+                                    delta=f"{stock['price_change_pct']:+.2f}%",
+                                    delta_color="normal"
+                                )
+                        
+                        with col2:
+                            st.subheader("📉 Worst Price Performers")
+                            worst_performers = price_perf_df.tail(3)
+                            for _, stock in worst_performers.iterrows():
+                                st.metric(
+                                    f"{stock['ticker']} - {stock['stock_name']}",
+                                    f"₹{stock['final_price']:.2f}",
+                                    delta=f"{stock['price_change_pct']:+.2f}%",
+                                    delta_color="inverse"
+                                )
+                    
                     # Individual stock performance
                     st.subheader("📈 Individual Stock Performance")
                     
@@ -3008,27 +3157,81 @@ class PortfolioAnalytics:
                     if selected_stock:
                         stock_data = monthly_pnl_df[monthly_pnl_df['ticker'] == selected_stock].copy()
                         
+                        # Debug information
+                        with st.expander("🔍 Debug Information", expanded=False):
+                            st.write("**Stock Data Sample:**")
+                            st.dataframe(stock_data[['month', 'purchase_price', 'historical_price', 'unrealized_pnl', 'pnl_percentage']].head())
+                            
+                            st.write("**Latest Data Point:**")
+                            latest = stock_data.iloc[-1]
+                            st.write(f"Month: {latest['month']}")
+                            st.write(f"Purchase Price: ₹{latest['purchase_price']:.2f}")
+                            st.write(f"Historical Price: ₹{latest['historical_price']:.2f}")
+                            st.write(f"Unrealized P&L: ₹{latest['unrealized_pnl']:.2f}")
+                            st.write(f"P&L %: {latest['pnl_percentage']:.2f}%")
+                        
                         col1, col2 = st.columns(2)
                         
                         with col1:
-                            # Stock performance chart
-                            fig_stock = go.Figure()
+                            # Create subplot with both price and P&L charts
+                            fig_stock = make_subplots(
+                                rows=2, cols=1,
+                                subplot_titles=(f'{selected_stock} - Stock Price Movement', f'{selected_stock} - P&L Progression'),
+                                vertical_spacing=0.1,
+                                row_heights=[0.6, 0.4]
+                            )
                             
-                            fig_stock.add_trace(go.Scatter(
-                                x=stock_data['month'],
-                                y=stock_data['unrealized_pnl'],
-                                mode='lines+markers',
-                                name='Unrealized P&L (₹)',
-                                line=dict(color='blue', width=3),
-                                marker=dict(size=8)
-                            ))
+                            # Stock price chart (top)
+                            fig_stock.add_trace(
+                                go.Scatter(
+                                    x=stock_data['month'],
+                                    y=stock_data['historical_price'],
+                                    mode='lines+markers',
+                                    name='Stock Price (₹)',
+                                    line=dict(color='green', width=3),
+                                    marker=dict(size=8),
+                                    hovertemplate='<b>%{x}</b><br>Price: ₹%{y:.2f}<extra></extra>'
+                                ),
+                                row=1, col=1
+                            )
+                            
+                            # Add purchase price line
+                            purchase_price = stock_data['purchase_price'].iloc[0]
+                            fig_stock.add_hline(
+                                y=purchase_price, 
+                                line_dash="dash", 
+                                line_color="red", 
+                                opacity=0.7,
+                                annotation_text=f"Purchase Price: ₹{purchase_price:.2f}",
+                                row=1, col=1
+                            )
+                            
+                            # P&L chart (bottom)
+                            fig_stock.add_trace(
+                                go.Scatter(
+                                    x=stock_data['month'],
+                                    y=stock_data['unrealized_pnl'],
+                                    mode='lines+markers',
+                                    name='Unrealized P&L (₹)',
+                                    line=dict(color='blue', width=3),
+                                    marker=dict(size=8),
+                                    hovertemplate='<b>%{x}</b><br>P&L: ₹%{y:.2f}<extra></extra>'
+                                ),
+                                row=2, col=1
+                            )
+                            
+                            # Add zero line for P&L
+                            fig_stock.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.5, row=2, col=1)
                             
                             fig_stock.update_layout(
-                                title=f"{selected_stock} - Monthly P&L Progression",
-                                xaxis_title="Month",
-                                yaxis_title="Unrealized P&L (₹)",
-                                height=400
+                                title=f"{selected_stock} - Price & P&L Analysis",
+                                height=600,
+                                showlegend=True
                             )
+                            
+                            fig_stock.update_xaxes(title_text="Month", row=2, col=1)
+                            fig_stock.update_yaxes(title_text="Stock Price (₹)", row=1, col=1)
+                            fig_stock.update_yaxes(title_text="P&L (₹)", row=2, col=1)
                             
                             st.plotly_chart(fig_stock, config={'displayModeBar': True, 'responsive': True})
                         
@@ -3830,6 +4033,394 @@ class PortfolioAnalytics:
             st.error(f"Error loading file history: {e}")
             st.info("This might be due to missing columns in the database schema")
     
+    def render_ai_assistant_page(self):
+        """Render AI Assistant page with ChatGPT integration"""
+        st.header("🤖 AI Portfolio Assistant")
+        st.markdown("*Your intelligent stock broker and PMS assistant powered by ChatGPT*")
+        
+        # Features and Requirements
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            ### 🚀 Features:
+            - **Portfolio Analysis**: Get insights on your investment performance
+            - **Market Research**: Ask about stocks, mutual funds, and market trends
+            - **Document Analysis**: Upload PDFs, reports, or financial documents
+            - **Investment Advice**: Get personalized recommendations based on your portfolio
+            - **Risk Assessment**: Understand your portfolio's risk profile
+            - **PDF OCR Processing**: Extract text from images in PDF documents
+            """)
+        
+        with col2:
+            st.info("""
+            📋 **PDF OCR Requirements:**
+            - Tesseract OCR must be installed on your system
+            - Windows: Download from [GitHub Tesseract releases](https://github.com/UB-Mannheim/tesseract/wiki)
+            - Linux: `sudo apt-get install tesseract-ocr`
+            - macOS: `brew install tesseract`
+            - The system will automatically detect and use OCR for PDF images
+            """)
+        
+        # Initialize session state for chat
+        if 'chat_history' not in st.session_state:
+            st.session_state.chat_history = []
+        if 'openai_api_key' not in st.session_state:
+            st.session_state.openai_api_key = "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"
+        
+        # API Key Status
+        if st.session_state.openai_api_key:
+            st.success("✅ OpenAI API Key is configured and ready to use!")
+        
+        # API Key Configuration
+        with st.expander("🔑 OpenAI API Configuration", expanded=False):
+            api_key = st.text_input(
+                "Enter your OpenAI API Key:",
+                type="password",
+                value=st.session_state.openai_api_key or "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",
+                help="Get your API key from https://platform.openai.com/api-keys"
+            )
+            
+            if st.button("Save API Key"):
+                if api_key:
+                    st.session_state.openai_api_key = api_key
+                    st.success("✅ API Key saved successfully!")
+                else:
+                    st.error("❌ Please enter a valid API key")
+        
+        # File Upload Section
+        with st.expander("📁 Upload Documents for Analysis", expanded=False):
+            uploaded_files = st.file_uploader(
+                "Upload documents (PDF with OCR, TXT, CSV, etc.)",
+                type=['pdf', 'txt', 'csv', 'docx', 'xlsx'],
+                accept_multiple_files=True,
+                help="Upload financial documents, reports, or any files you want the AI to analyze. PDFs will be processed with OCR to extract text from images."
+            )
+            
+            if uploaded_files:
+                st.success(f"✅ {len(uploaded_files)} file(s) uploaded successfully!")
+                for file in uploaded_files:
+                    file_type_icon = "📄" if file.type != "application/pdf" else "📄🔍"
+                    st.write(f"{file_type_icon} {file.name} ({file.size} bytes)")
+                    if file.type == "application/pdf":
+                        st.caption("🔍 PDF will be processed with OCR for image text extraction")
+        
+        # Chat Interface
+        st.subheader("💬 Chat with AI Assistant")
+        
+        # Display chat history
+        chat_container = st.container()
+        with chat_container:
+            for message in st.session_state.chat_history:
+                if message["role"] == "user":
+                    st.markdown(f"**You:** {message['content']}")
+                else:
+                    st.markdown(f"**AI Assistant:** {message['content']}")
+        
+        # Chat input
+        user_input = st.text_input(
+            "Ask me anything about your portfolio, stocks, or investments:",
+            placeholder="e.g., 'What's my best performing stock?' or 'Analyze my portfolio risk'",
+            key="chat_input"
+        )
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        with col1:
+            if st.button("🚀 Send Message", type="primary"):
+                if user_input and st.session_state.openai_api_key:
+                    self.process_ai_query(user_input, uploaded_files)
+                elif not user_input:
+                    st.error("❌ Please enter a message")
+                else:
+                    st.error("❌ Please configure your OpenAI API key first")
+        
+        with col2:
+            if st.button("🗑️ Clear Chat"):
+                st.session_state.chat_history = []
+                st.rerun()
+        
+        with col3:
+            if st.button("📊 Portfolio Summary"):
+                if st.session_state.openai_api_key:
+                    self.get_portfolio_summary()
+                else:
+                    st.error("❌ Please configure your OpenAI API key first")
+        
+        # Quick Action Buttons
+        st.subheader("⚡ Quick Actions")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if st.button("📈 Best Performers"):
+                if st.session_state.openai_api_key:
+                    self.quick_analysis("What are my best performing stocks and why?")
+                else:
+                    st.error("❌ Configure API key")
+        
+        with col2:
+            if st.button("📉 Risk Analysis"):
+                if st.session_state.openai_api_key:
+                    self.quick_analysis("Analyze the risk in my portfolio and suggest improvements")
+                else:
+                    st.error("❌ Configure API key")
+        
+        with col3:
+            if st.button("💰 P&L Insights"):
+                if st.session_state.openai_api_key:
+                    self.quick_analysis("Provide insights on my profit and loss performance")
+                else:
+                    st.error("❌ Configure API key")
+        
+        with col4:
+            if st.button("🎯 Recommendations"):
+                if st.session_state.openai_api_key:
+                    self.quick_analysis("Give me investment recommendations based on my portfolio")
+                else:
+                    st.error("❌ Configure API key")
+    
+    def process_ai_query(self, user_input, uploaded_files=None):
+        """Process user query with AI assistant"""
+        try:
+            # Add user message to chat history
+            st.session_state.chat_history.append({"role": "user", "content": user_input})
+            
+            # Prepare context data
+            context_data = self.prepare_context_data()
+            
+            # Process uploaded files if any
+            file_content = ""
+            if uploaded_files:
+                # Show progress for PDF processing
+                pdf_files = [f for f in uploaded_files if f.type == "application/pdf"]
+                if pdf_files:
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    status_text.text("🔍 Processing PDFs with OCR...")
+                    
+                    file_content = self.process_uploaded_files(uploaded_files)
+                    
+                    progress_bar.progress(1.0)
+                    status_text.text("✅ PDF processing complete!")
+                    progress_bar.empty()
+                    status_text.empty()
+                else:
+                    file_content = self.process_uploaded_files(uploaded_files)
+            
+            # Generate AI response
+            ai_response = self.generate_ai_response(user_input, context_data, file_content)
+            
+            # Add AI response to chat history
+            st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
+            
+            # Rerun to update the chat display
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"❌ Error processing query: {e}")
+    
+    def prepare_context_data(self):
+        """Prepare portfolio and market data context for AI"""
+        try:
+            context = {
+                "portfolio_summary": {},
+                "transactions": [],
+                "stock_data": {},
+                "market_insights": {}
+            }
+            
+            # Get portfolio data
+            if self.session_state.portfolio_data is not None:
+                df = self.session_state.portfolio_data
+                
+                # Portfolio summary
+                context["portfolio_summary"] = {
+                    "total_invested": df['invested_amount'].sum() if 'invested_amount' in df.columns else 0,
+                    "total_current_value": df['current_value'].sum() if 'current_value' in df.columns else 0,
+                    "total_pnl": df['unrealized_pnl'].sum() if 'unrealized_pnl' in df.columns else 0,
+                    "total_stocks": len(df['ticker'].unique()) if 'ticker' in df.columns else 0,
+                    "date_range": {
+                        "start": df['date'].min().strftime('%Y-%m-%d') if 'date' in df.columns else None,
+                        "end": df['date'].max().strftime('%Y-%m-%d') if 'date' in df.columns else None
+                    }
+                }
+                
+                # Top performers
+                if 'unrealized_pnl' in df.columns:
+                    top_performers = df.nlargest(5, 'unrealized_pnl')[['ticker', 'stock_name', 'unrealized_pnl', 'current_value']].to_dict('records')
+                    context["portfolio_summary"]["top_performers"] = top_performers
+                
+                # Sector allocation
+                if 'sector' in df.columns:
+                    sector_allocation = df.groupby('sector')['current_value'].sum().to_dict()
+                    context["portfolio_summary"]["sector_allocation"] = sector_allocation
+                
+                # Recent transactions
+                recent_transactions = df.tail(10)[['ticker', 'stock_name', 'transaction_type', 'quantity', 'price', 'date']].to_dict('records')
+                context["transactions"] = recent_transactions
+            
+            # Get live stock data
+            if hasattr(self.session_state, 'live_prices'):
+                context["stock_data"]["live_prices"] = self.session_state.live_prices
+            
+            return context
+            
+        except Exception as e:
+            st.error(f"❌ Error preparing context: {e}")
+            return {}
+    
+    def extract_text_from_pdf(self, pdf_bytes):
+        """Extract text from PDF using multiple methods including OCR for images"""
+        extracted_text = []
+        
+        try:
+            # Method 1: Try pdfplumber for better text extraction
+            try:
+                with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                    for page_num, page in enumerate(pdf.pages, 1):
+                        text = page.extract_text()
+                        if text and text.strip():
+                            extracted_text.append(f"Page {page_num} (Text):\n{text.strip()}\n")
+                        
+                        # Extract images and perform OCR
+                        images = page.images
+                        if images:
+                            for img_num, img in enumerate(images, 1):
+                                try:
+                                    # Convert PDF page to image
+                                    pdf_images = convert_from_bytes(pdf_bytes, first_page=page_num, last_page=page_num)
+                                    if pdf_images:
+                                        # Crop the image to the specific area if possible
+                                        img_obj = pdf_images[0]
+                                        
+                                        # Perform OCR on the image
+                                        ocr_text = pytesseract.image_to_string(img_obj, lang='eng')
+                                        if ocr_text and ocr_text.strip():
+                                            extracted_text.append(f"Page {page_num} Image {img_num} (OCR):\n{ocr_text.strip()}\n")
+                                except Exception as ocr_error:
+                                    extracted_text.append(f"Page {page_num} Image {img_num}: [OCR failed: {str(ocr_error)}]\n")
+            except Exception as e:
+                st.warning(f"pdfplumber extraction failed: {str(e)}")
+            
+            # Method 2: Fallback to PyPDF2 if pdfplumber fails
+            if not extracted_text:
+                try:
+                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
+                    for page_num, page in enumerate(pdf_reader.pages, 1):
+                        text = page.extract_text()
+                        if text and text.strip():
+                            extracted_text.append(f"Page {page_num} (PyPDF2):\n{text.strip()}\n")
+                except Exception as e:
+                    st.warning(f"PyPDF2 extraction failed: {str(e)}")
+            
+            # Method 3: Convert entire PDF to images and perform OCR
+            if not extracted_text:
+                try:
+                    pdf_images = convert_from_bytes(pdf_bytes, dpi=300)
+                    for page_num, img in enumerate(pdf_images, 1):
+                        ocr_text = pytesseract.image_to_string(img, lang='eng')
+                        if ocr_text and ocr_text.strip():
+                            extracted_text.append(f"Page {page_num} (Full Page OCR):\n{ocr_text.strip()}\n")
+                except Exception as e:
+                    st.warning(f"Full page OCR failed: {str(e)}")
+            
+        except Exception as e:
+            st.error(f"PDF processing error: {str(e)}")
+            return f"[Error processing PDF: {str(e)}]"
+        
+        return "\n".join(extracted_text) if extracted_text else "[No text could be extracted from PDF]"
+
+    def process_uploaded_files(self, uploaded_files):
+        """Process uploaded files and extract text content"""
+        try:
+            file_content = ""
+            
+            for file in uploaded_files:
+                file_content += f"\n\n--- File: {file.name} ---\n"
+                
+                if file.type == "text/plain":
+                    content = str(file.read(), "utf-8")
+                    file_content += content
+                elif file.type == "text/csv":
+                    df = pd.read_csv(file)
+                    file_content += f"CSV Data:\n{df.to_string()}"
+                elif file.type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+                    df = pd.read_excel(file)
+                    file_content += f"Excel Data:\n{df.to_string()}"
+                elif file.type == "application/pdf":
+                    # Enhanced PDF processing with OCR
+                    pdf_bytes = file.read()
+                    extracted_content = self.extract_text_from_pdf(pdf_bytes)
+                    file_content += f"PDF Content (with OCR):\n{extracted_content}"
+                else:
+                    file_content += f"File type {file.type} - content extraction not supported yet"
+            
+            return file_content
+            
+        except Exception as e:
+            st.error(f"❌ Error processing files: {e}")
+            return ""
+    
+    def generate_ai_response(self, user_input, context_data, file_content=""):
+        """Generate AI response using OpenAI API"""
+        try:
+            # Set OpenAI API key
+            openai.api_key = st.session_state.openai_api_key
+            
+            # Prepare system prompt
+            system_prompt = """You are an expert stock broker and Portfolio Management System (PMS) assistant. 
+            You have access to the user's complete portfolio data, transaction history, and market information.
+            
+            Your role:
+            1. Provide intelligent analysis of portfolio performance
+            2. Give investment recommendations based on data
+            3. Analyze risk and suggest improvements
+            4. Answer questions about stocks, mutual funds, and market trends
+            5. Help with financial planning and strategy
+            
+            Guidelines:
+            - Always base your analysis on the provided data
+            - Be specific and actionable in your recommendations
+            - Consider Indian market context for stocks and mutual funds
+            - Provide clear explanations for your insights
+            - Be professional but conversational
+            - If you don't have specific data, say so clearly
+            
+            Portfolio Context:
+            """ + json.dumps(context_data, indent=2)
+            
+            if file_content:
+                system_prompt += f"\n\nUploaded File Content:\n{file_content}"
+            
+            # Prepare messages
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_input}
+            ]
+            
+            # Generate response
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                max_tokens=1000,
+                temperature=0.7
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            return f"❌ Error generating AI response: {e}"
+    
+    def quick_analysis(self, query):
+        """Perform quick analysis with predefined queries"""
+        self.process_ai_query(query)
+    
+    def get_portfolio_summary(self):
+        """Get AI-generated portfolio summary"""
+        query = "Provide a comprehensive summary of my portfolio including performance, allocation, and key insights"
+        self.process_ai_query(query)
+
     def render_settings_page(self):
         """Render settings page"""
         st.header("⚙️ Settings")
