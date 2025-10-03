@@ -1416,11 +1416,19 @@ class PortfolioAnalytics:
             # Try to get API key from Streamlit secrets first, then fallback to manual input
             try:
                 st.session_state.openai_api_key = st.secrets["open_ai"]
-            except:
+                st.session_state.api_key_source = "secrets"
+            except Exception as e:
                 st.session_state.openai_api_key = None
+                st.session_state.api_key_source = "none"
+                # Store the error for debugging
+                st.session_state.secrets_error = str(e)
         
         # API Key Status
         if st.session_state.openai_api_key:
+            # Show source of API key
+            if st.session_state.get('api_key_source') == "secrets":
+                st.sidebar.info("🔑 API Key from Streamlit Secrets")
+            
             # Test API key validity
             try:
                 import openai
@@ -1436,10 +1444,10 @@ class PortfolioAnalytics:
                 error_msg = str(e)
                 if "You tried to access" in error_msg:
                     st.sidebar.error("❌ API Access Denied")
-                    st.sidebar.info("💡 Check API key permissions")
+                    st.sidebar.info("💡 Check API key permissions in Streamlit secrets")
                 elif "invalid_api_key" in error_msg.lower():
                     st.sidebar.error("❌ Invalid API Key")
-                    st.sidebar.info("💡 Check your API key")
+                    st.sidebar.info("💡 Check your API key in Streamlit secrets")
                 elif "rate limit" in error_msg.lower():
                     st.sidebar.warning("⚠️ Rate Limited")
                     st.sidebar.info("💡 Wait a moment")
@@ -1450,7 +1458,15 @@ class PortfolioAnalytics:
                 if st.sidebar.button("🔑 Reconfigure API Key"):
                     st.session_state.show_api_config = True
         else:
-            st.sidebar.warning("⚠️ API Key Needed")
+            # Show debugging info for secrets
+            if st.session_state.get('api_key_source') == "none":
+                st.sidebar.warning("⚠️ API Key Not Found")
+                if st.session_state.get('secrets_error'):
+                    st.sidebar.error(f"❌ Secrets Error: {st.session_state.secrets_error}")
+                st.sidebar.info("💡 Check Streamlit secrets configuration")
+            else:
+                st.sidebar.warning("⚠️ API Key Needed")
+            
             if st.sidebar.button("🔑 Configure API Key"):
                 st.session_state.show_api_config = True
         
