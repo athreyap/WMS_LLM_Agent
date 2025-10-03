@@ -1433,6 +1433,11 @@ class PortfolioAnalytics:
             try:
                 import openai
                 openai.api_key = st.session_state.openai_api_key
+                
+                # Show API key info for debugging (first 10 and last 4 characters)
+                api_key_display = st.session_state.openai_api_key[:10] + "..." + st.session_state.openai_api_key[-4:] if len(st.session_state.openai_api_key) > 14 else "***"
+                st.sidebar.text(f"🔑 Key: {api_key_display}")
+                
                 # Quick test call to validate API key
                 test_response = openai.ChatCompletion.create(
                     model="gpt-3.5-turbo",
@@ -1442,7 +1447,12 @@ class PortfolioAnalytics:
                 st.sidebar.success("✅ AI Ready")
             except Exception as e:
                 error_msg = str(e)
-                if "You tried to access" in error_msg:
+                
+                # Show API key info for debugging
+                api_key_display = st.session_state.openai_api_key[:10] + "..." + st.session_state.openai_api_key[-4:] if len(st.session_state.openai_api_key) > 14 else "***"
+                st.sidebar.text(f"🔑 Key: {api_key_display}")
+                
+                if "You tried to access" in error_msg or "access_denied" in error_msg.lower():
                     st.sidebar.error("❌ API Access Denied")
                     st.sidebar.info("💡 Check API key permissions in Streamlit secrets")
                     
@@ -1456,6 +1466,11 @@ class PortfolioAnalytics:
                         4. **Update Secrets**: Replace the key in your Streamlit secrets
                         5. **Wait & Retry**: Sometimes takes a few minutes to propagate
                         """)
+                        
+                        st.markdown("**🔍 Debug Info:**")
+                        st.text(f"Error: {error_msg}")
+                        st.text(f"Key starts with: {st.session_state.openai_api_key[:10]}...")
+                        st.text(f"Key length: {len(st.session_state.openai_api_key)}")
                         
                         if st.button("🔄 Test API Key Again"):
                             st.rerun()
