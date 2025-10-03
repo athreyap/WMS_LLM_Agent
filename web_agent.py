@@ -461,6 +461,88 @@ class PortfolioAnalytics:
             st.error(f"Error fetching historical prices: {e}")
             return df
     
+    def fetch_historical_price_for_month(self, ticker, month_date):
+        """Fetch historical price for a specific month"""
+        try:
+            # Convert month_date to the last day of the month for better price data
+            if month_date.month == 12:
+                last_day = month_date.replace(year=month_date.year + 1, month=1, day=1) - timedelta(days=1)
+            else:
+                last_day = month_date.replace(month=month_date.month + 1, day=1) - timedelta(days=1)
+            
+            # Use the last trading day of the month
+            target_date = last_day
+            
+            # Check if it's a mutual fund (numerical ticker)
+            clean_ticker = str(ticker).strip().upper()
+            clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
+            
+            if clean_ticker.isdigit():
+                # Mutual fund - use mftool for historical price
+                try:
+                    from mf_price_fetcher import fetch_mutual_fund_price
+                    price = fetch_mutual_fund_price(ticker, target_date.strftime('%Y-%m-%d'))
+                    if price and price > 0:
+                        return float(price)
+                except Exception as e:
+                    st.debug(f"MFTool failed for {ticker} on {target_date}: {e}")
+                
+                # Fallback to INDstocks for mutual funds
+                try:
+                    from indstocks_api import get_indstocks_client
+                    api_client = get_indstocks_client()
+                    if api_client and api_client.available:
+                        price_data = api_client.get_historical_price(ticker, target_date.strftime('%Y-%m-%d'))
+                        if price_data and price_data.get('price'):
+                            return float(price_data['price'])
+                except Exception as e:
+                    st.debug(f"INDstocks failed for mutual fund {ticker} on {target_date}: {e}")
+            else:
+                # Stock - use yfinance for historical price
+                try:
+                    import yfinance as yf
+                    
+                    # Add .NS suffix for Indian stocks if not present
+                    if not ticker.endswith(('.NS', '.BO')):
+                        ticker_with_suffix = f"{ticker}.NS"
+                    else:
+                        ticker_with_suffix = ticker
+                    
+                    stock = yf.Ticker(ticker_with_suffix)
+                    
+                    # Get historical data for the specific date
+                    hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
+                    
+                    if not hist_data.empty:
+                        # Use closing price
+                        return float(hist_data['Close'].iloc[0])
+                    
+                    # If no data for exact date, try to get the closest available date
+                    hist_data = stock.history(start=target_date - timedelta(days=7), end=target_date + timedelta(days=7))
+                    if not hist_data.empty:
+                        # Use the closest date
+                        return float(hist_data['Close'].iloc[-1])
+                        
+                except Exception as e:
+                    st.debug(f"YFinance failed for {ticker} on {target_date}: {e}")
+                    
+                    # Fallback to INDstocks for stocks
+                    try:
+                        from indstocks_api import get_indstocks_client
+                        api_client = get_indstocks_client()
+                        if api_client and api_client.available:
+                            price_data = api_client.get_historical_price(ticker, target_date.strftime('%Y-%m-%d'))
+                            if price_data and price_data.get('price'):
+                                return float(price_data['price'])
+                    except Exception as e:
+                        st.debug(f"INDstocks failed for stock {ticker} on {target_date}: {e}")
+            
+            return None
+            
+        except Exception as e:
+            st.debug(f"Error fetching historical price for {ticker} on {month_date}: {e}")
+            return None
+    
     def save_transactions_to_database(self, df, user_id, filename):
         """Save transactions to database"""
         try:
@@ -2631,7 +2713,8 @@ class PortfolioAnalytics:
             
             # Monthly P&L Analysis for 1-Year Buy Stocks
             st.subheader("📈 Monthly P&L Analysis (1-Year Buy Stocks)")
-            st.markdown("*Tracking monthly performance from purchase date to current date*")
+            st.markdown("*Tracking monthly performance from purchase date to current date using historical prices*")
+            st.info("💡 **Note:** This analysis fetches historical prices for each month to show the actual performance trajectory of your investments over time.")
             
             # Filter for buy transactions in the last year
             one_year_ago = datetime.now() - timedelta(days=365)
@@ -2655,7 +2738,13 @@ class PortfolioAnalytics:
                 }).reset_index()
                 
                 # Generate monthly data for each stock from purchase date to current date
-                for _, stock in stock_purchases.iterrows():
+                st.info("🔄 Fetching historical prices for monthly P&L analysis...")
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                total_stocks = len(stock_purchases)
+                
+                for idx, (_, stock) in enumerate(stock_purchases.iterrows()):
                     ticker = stock['ticker']
                     purchase_date = stock['date']
                     purchase_price = stock['price']
@@ -2664,36 +2753,66 @@ class PortfolioAnalytics:
                     stock_name = stock['stock_name']
                     sector = stock['sector']
                     
-                    # Get current live price
-                    current_price = df[df['ticker'] == ticker]['current_price'].iloc[0] if 'current_price' in df.columns else None
+                    # Update progress
+                    progress = (idx + 1) / total_stocks
+                    progress_bar.progress(progress)
+                    status_text.text(f"Processing {ticker} ({idx + 1}/{total_stocks})...")
                     
-                    if current_price and current_price > 0:
-                        # Generate monthly data points from purchase date to current date
-                        current_date = datetime.now()
-                        monthly_dates = pd.date_range(
-                            start=purchase_date.replace(day=1),  # Start from first day of purchase month
-                            end=current_date.replace(day=1),  # End at first day of current month
-                            freq='MS'  # Month start frequency
-                        )
-                        
-                        for month_date in monthly_dates:
-                            # For now, we'll use current price for all months
-                            # In a real implementation, you'd fetch historical prices for each month
-                            monthly_pnl_data.append({
-                                'ticker': ticker,
-                                'stock_name': stock_name,
-                                'sector': sector,
-                                'month': month_date,
-                                'purchase_price': purchase_price,
-                                'current_price': current_price,
-                                'quantity': quantity,
-                                'invested_amount': invested_amount,
-                                'current_value': quantity * current_price,
-                                'unrealized_pnl': (current_price - purchase_price) * quantity,
-                                'pnl_percentage': ((current_price - purchase_price) / purchase_price) * 100
-                            })
+                    # Generate monthly data points from purchase date to current date
+                    current_date = datetime.now()
+                    monthly_dates = pd.date_range(
+                        start=purchase_date.replace(day=1),  # Start from first day of purchase month
+                        end=current_date.replace(day=1),  # End at first day of current month
+                        freq='MS'  # Month start frequency
+                    )
+                    
+                    # Fetch historical prices for each month
+                    for month_date in monthly_dates:
+                        try:
+                            # Fetch historical price for this specific month
+                            historical_price = self.fetch_historical_price_for_month(ticker, month_date)
+                            
+                            if historical_price and historical_price > 0:
+                                monthly_pnl_data.append({
+                                    'ticker': ticker,
+                                    'stock_name': stock_name,
+                                    'sector': sector,
+                                    'month': month_date,
+                                    'purchase_price': purchase_price,
+                                    'historical_price': historical_price,
+                                    'quantity': quantity,
+                                    'invested_amount': invested_amount,
+                                    'current_value': quantity * historical_price,
+                                    'unrealized_pnl': (historical_price - purchase_price) * quantity,
+                                    'pnl_percentage': ((historical_price - purchase_price) / purchase_price) * 100
+                                })
+                            else:
+                                # Fallback to current price if historical price not available
+                                current_price = df[df['ticker'] == ticker]['current_price'].iloc[0] if 'current_price' in df.columns else None
+                                if current_price and current_price > 0:
+                                    monthly_pnl_data.append({
+                                        'ticker': ticker,
+                                        'stock_name': stock_name,
+                                        'sector': sector,
+                                        'month': month_date,
+                                        'purchase_price': purchase_price,
+                                        'historical_price': current_price,
+                                        'quantity': quantity,
+                                        'invested_amount': invested_amount,
+                                        'current_value': quantity * current_price,
+                                        'unrealized_pnl': (current_price - purchase_price) * quantity,
+                                        'pnl_percentage': ((current_price - purchase_price) / purchase_price) * 100
+                                    })
+                        except Exception as e:
+                            st.warning(f"⚠️ Could not fetch historical price for {ticker} on {month_date}: {e}")
+                            continue
+                
+                # Clear progress indicators
+                progress_bar.empty()
+                status_text.empty()
                 
                 if monthly_pnl_data:
+                    st.success(f"✅ Successfully fetched historical prices for {len(monthly_pnl_data)} monthly data points across {len(stock_purchases)} stocks!")
                     monthly_pnl_df = pd.DataFrame(monthly_pnl_data)
                     
                     # Create interactive chart showing monthly P&L progression
@@ -2803,9 +2922,9 @@ class PortfolioAnalytics:
                             
                             st.metric(
                                 "Current Price",
-                                f"₹{latest_data['current_price']:.2f}",
-                                delta=f"₹{latest_data['current_price'] - latest_data['purchase_price']:.2f}",
-                                delta_color="normal" if latest_data['current_price'] > latest_data['purchase_price'] else "inverse"
+                                f"₹{latest_data['historical_price']:.2f}",
+                                delta=f"₹{latest_data['historical_price'] - latest_data['purchase_price']:.2f}",
+                                delta_color="normal" if latest_data['historical_price'] > latest_data['purchase_price'] else "inverse"
                             )
                             
                             st.metric(
@@ -2833,7 +2952,7 @@ class PortfolioAnalytics:
                             'Stock Name': stock_latest['stock_name'],
                             'Sector': stock_latest['sector'],
                             'Purchase Price': f"₹{stock_latest['purchase_price']:.2f}",
-                            'Current Price': f"₹{stock_latest['current_price']:.2f}",
+                            'Current Price': f"₹{stock_latest['historical_price']:.2f}",
                             'Quantity': f"{stock_latest['quantity']:,.0f}",
                             'Invested Amount': f"₹{stock_latest['invested_amount']:,.2f}",
                             'Current Value': f"₹{stock_latest['current_value']:,.2f}",
