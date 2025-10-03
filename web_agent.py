@@ -1477,42 +1477,64 @@ class PortfolioAnalytics:
                 
                 # Test Gemini API key validity
                 try:
-                    # Configure API key
-                    genai.configure(api_key=st.session_state.gemini_api_key)
-                    
                     # Show API key info for debugging
                     api_key_display = st.session_state.gemini_api_key[:10] + "..." + st.session_state.gemini_api_key[-4:] if len(st.session_state.gemini_api_key) > 14 else "***"
                     st.sidebar.text(f"🔑 Gemini Key: {api_key_display}")
                     
-                    # List available models for debugging
+                    # Configure API key
+                    genai.configure(api_key=st.session_state.gemini_api_key)
+                    st.sidebar.text("✅ API key configured")
+                    
+                    # Test API key by listing models
                     try:
+                        st.sidebar.text("🔄 Testing API key...")
                         models = list(genai.list_models())
-                        available_models = [m.name for m in models if 'generateContent' in m.supported_generation_methods]
-                        st.sidebar.text(f"📋 Available models: {len(available_models)}")
+                        st.sidebar.text(f"✅ API key valid - {len(models)} models found")
+                        
+                        # Show all models that support generateContent
+                        available_models = []
+                        for m in models:
+                            if hasattr(m, 'supported_generation_methods') and 'generateContent' in m.supported_generation_methods:
+                                available_models.append(m.name)
+                        
+                        st.sidebar.text(f"📋 Models with generateContent: {len(available_models)}")
                         if available_models:
-                            # Show first few model names
-                            for model_name in available_models[:3]:
-                                st.sidebar.text(f"  • {model_name.split('/')[-1]}")
+                            # Show all available model names
+                            for model_name in available_models:
+                                short_name = model_name.split('/')[-1] if '/' in model_name else model_name
+                                st.sidebar.text(f"  • {short_name}")
+                        else:
+                            st.sidebar.text("⚠️ No models support generateContent")
+                            
                     except Exception as e:
-                        st.sidebar.text(f"⚠️ Could not list models: {str(e)[:30]}...")
+                        st.sidebar.text(f"❌ API key test failed: {str(e)[:50]}...")
+                        st.sidebar.text("💡 Check if your API key is valid and has proper permissions")
                     
                     # Try different model names to find a working one
                     model_names_to_try = ['gemini-1.0-pro', 'gemini-pro', 'gemini-1.5-pro', 'gemini-1.5-flash']
                     working_model = None
+                    errors = []
                     
                     for model_name in model_names_to_try:
                         try:
+                            st.sidebar.text(f"🔄 Trying {model_name}...")
                             model = genai.GenerativeModel(model_name)
                             test_response = model.generate_content("hi")
                             working_model = model_name
                             st.sidebar.success(f"✅ Gemini Ready ({model_name})")
                             break
                         except Exception as e:
+                            error_msg = str(e)
+                            errors.append(f"{model_name}: {error_msg[:50]}...")
+                            st.sidebar.text(f"❌ {model_name} failed")
                             continue
                     
                     if working_model is None:
                         st.sidebar.error("❌ No working model found")
-                        st.sidebar.text("Try checking your API key or model availability")
+                        st.sidebar.text("Errors:")
+                        for error in errors:
+                            st.sidebar.text(f"  • {error}")
+                        st.sidebar.text("💡 Check your API key or try a different region")
                 except Exception as e:
                     error_msg = str(e)
                     st.sidebar.error(f"❌ Gemini Error: {error_msg}")
