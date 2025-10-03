@@ -4283,7 +4283,13 @@ class PortfolioAnalytics:
             st.session_state.chat_history.append({"role": "user", "content": user_input})
             
             # Prepare context data with current page
-            context_data = self.prepare_context_data(current_page)
+            try:
+                context_data = self.prepare_context_data(current_page)
+                if not context_data:
+                    context_data = {"error": "No portfolio data available"}
+            except Exception as e:
+                st.error(f"❌ Error preparing context: {e}")
+                context_data = {"error": f"Context preparation failed: {str(e)}"}
             
             # Process uploaded files if any
             file_content = ""
@@ -4305,7 +4311,11 @@ class PortfolioAnalytics:
                     file_content = self.process_uploaded_files(uploaded_files)
             
             # Generate AI response
-            ai_response = self.generate_ai_response(user_input, context_data, file_content)
+            try:
+                ai_response = self.generate_ai_response(user_input, context_data, file_content)
+            except Exception as e:
+                st.error(f"❌ Error generating AI response: {e}")
+                ai_response = "❌ Sorry, I encountered an error while generating a response. Please try again or check your API configuration."
             
             # Add AI response to chat history
             st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
@@ -4346,7 +4356,7 @@ class PortfolioAnalytics:
             }
             
             # Get portfolio data
-            if self.session_state.portfolio_data is not None:
+            if hasattr(self.session_state, 'portfolio_data') and self.session_state.portfolio_data is not None:
                 df = self.session_state.portfolio_data
                 
                 # Portfolio summary
@@ -4398,7 +4408,7 @@ class PortfolioAnalytics:
                 context["stock_data"]["live_prices"] = self.convert_to_json_serializable(self.session_state.live_prices)
             
             # Add page-specific data based on current page
-            if current_page and self.session_state.portfolio_data is not None:
+            if current_page and hasattr(self.session_state, 'portfolio_data') and self.session_state.portfolio_data is not None:
                 df = self.session_state.portfolio_data
                 
                 if current_page == "🏠 Overview":
@@ -4444,11 +4454,30 @@ class PortfolioAnalytics:
                         }
                     }
             
+            # If no portfolio data is available, provide a helpful message
+            if not context.get("portfolio_summary") or not any(context["portfolio_summary"].values()):
+                context["portfolio_summary"] = {
+                    "message": "No portfolio data available. Please upload your transaction data first.",
+                    "total_invested": 0,
+                    "total_current_value": 0,
+                    "total_pnl": 0,
+                    "total_stocks": 0
+                }
+            
             return context
             
         except Exception as e:
             st.error(f"❌ Error preparing context: {e}")
-            return {}
+            return {
+                "error": f"Context preparation failed: {str(e)}",
+                "portfolio_summary": {
+                    "message": "Unable to load portfolio data due to an error.",
+                    "total_invested": 0,
+                    "total_current_value": 0,
+                    "total_pnl": 0,
+                    "total_stocks": 0
+                }
+            }
     
     def extract_text_from_pdf(self, pdf_bytes):
         """Extract text from PDF using multiple methods including OCR for images"""
@@ -4590,7 +4619,7 @@ class PortfolioAnalytics:
             - If you don't have specific data, say so clearly
             
             Portfolio Context:
-            """ + json.dumps(context_data, indent=2)
+            """ + json.dumps(self.convert_to_json_serializable(context_data), indent=2)
             
             if file_content:
                 system_prompt += f"\n\nUploaded File Content:\n{file_content}"
@@ -4612,7 +4641,17 @@ class PortfolioAnalytics:
             return response.choices[0].message.content
             
         except Exception as e:
-            return f"❌ Error generating AI response: {e}"
+            error_msg = str(e)
+            if "You tried to access" in error_msg:
+                return "❌ API access error. Please check your OpenAI API key and ensure it has proper permissions."
+            elif "rate limit" in error_msg.lower():
+                return "❌ API rate limit exceeded. Please wait a moment and try again."
+            elif "insufficient_quota" in error_msg.lower():
+                return "❌ API quota exceeded. Please check your OpenAI account billing."
+            elif "invalid_api_key" in error_msg.lower():
+                return "❌ Invalid API key. Please check your OpenAI API key configuration."
+            else:
+                return f"❌ Error generating AI response: {error_msg}"
     
     def quick_analysis(self, query, current_page=None):
         """Perform quick analysis with predefined queries"""
