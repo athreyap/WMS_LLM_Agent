@@ -1413,14 +1413,14 @@ class PortfolioAnalytics:
         # Model selection
         ai_model = st.sidebar.selectbox(
             "🤖 Choose AI Model",
-            ["Google Gemini Flash (Fast)", "Google Gemini Pro (Advanced)", "OpenAI GPT-3.5"],
-            help="Gemini Flash: Fast & cost-effective. Gemini Pro: Advanced analysis. OpenAI: 3/min limit"
+            ["Google Gemini 2.5 Flash (Fast)", "Google Gemini 2.5 Pro (Advanced)", "OpenAI GPT-3.5"],
+            help="Gemini 2.5 Flash: Fast & efficient. Gemini 2.5 Pro: Advanced analysis. OpenAI: 3/min limit"
         )
         
-        if ai_model == "Google Gemini Flash (Fast)":
-            st.sidebar.success("✅ **Gemini Flash**: 60 requests/minute, fast & cost-effective!")
-        elif ai_model == "Google Gemini Pro (Advanced)":
-            st.sidebar.success("✅ **Gemini Pro**: Advanced analysis, 60 requests/minute!")
+        if ai_model == "Google Gemini 2.5 Flash (Fast)":
+            st.sidebar.success("✅ **Gemini 2.5 Flash**: 60 requests/minute, fast & efficient!")
+        elif ai_model == "Google Gemini 2.5 Pro (Advanced)":
+            st.sidebar.success("✅ **Gemini 2.5 Pro**: Advanced analysis, 60 requests/minute!")
         else:
             st.sidebar.warning("⚠️ **OpenAI**: 3 requests/minute, higher cost")
         
@@ -1469,7 +1469,7 @@ class PortfolioAnalytics:
                 st.session_state.gemini_secrets_error = str(e)
         
         # API Key Status based on selected model
-        if ai_model in ["Google Gemini Flash (Fast)", "Google Gemini Pro (Advanced)"]:
+        if ai_model in ["Google Gemini 2.5 Flash (Fast)", "Google Gemini 2.5 Pro (Advanced)"]:
             if st.session_state.gemini_api_key:
                 # Show Gemini API key status
                 if st.session_state.get('gemini_api_key_source') == "secrets":
@@ -1510,8 +1510,15 @@ class PortfolioAnalytics:
                         st.sidebar.text(f"❌ API key test failed: {str(e)[:50]}...")
                         st.sidebar.text("💡 Check if your API key is valid and has proper permissions")
                     
-                    # Try different model names to find a working one
-                    model_names_to_try = ['gemini-1.0-pro', 'gemini-pro', 'gemini-1.5-pro', 'gemini-1.5-flash']
+                    # Try the newer Gemini 2.5 models that are actually available
+                    model_names_to_try = [
+                        'gemini-2.5-flash',  # Fast and efficient
+                        'gemini-2.5-pro',    # Advanced analysis
+                        'gemini-2.0-flash',  # Alternative fast model
+                        'gemini-2.0-pro-exp', # Experimental pro model
+                        'gemini-flash-latest', # Latest flash
+                        'gemini-pro-latest'   # Latest pro
+                    ]
                     working_model = None
                     errors = []
                     
@@ -4505,14 +4512,14 @@ class PortfolioAnalytics:
         
         # Quick Actions are now in the sidebar for better UX
     
-    def process_ai_query(self, user_input, uploaded_files=None, current_page=None, ai_model="Google Gemini Flash (Fast)"):
+    def process_ai_query(self, user_input, uploaded_files=None, current_page=None, ai_model="Google Gemini 2.5 Flash (Fast)"):
         """Process user query with AI assistant"""
         try:
             # Check rate limit based on selected model
             import time
             current_time = time.time()
             
-            if ai_model in ["Google Gemini Flash (Fast)", "Google Gemini Pro (Advanced)"]:
+            if ai_model in ["Google Gemini 2.5 Flash (Fast)", "Google Gemini 2.5 Pro (Advanced)"]:
                 # Gemini has 60 requests per minute - more lenient
                 st.session_state.api_call_times = [t for t in st.session_state.api_call_times if current_time - t < 60]
                 if len(st.session_state.api_call_times) >= 60:
@@ -4821,10 +4828,10 @@ class PortfolioAnalytics:
             st.error(f"❌ Error processing files: {e}")
             return ""
     
-    def generate_ai_response(self, user_input, context_data, file_content="", ai_model="Google Gemini Flash (Fast)"):
+    def generate_ai_response(self, user_input, context_data, file_content="", ai_model="Google Gemini 2.5 Flash (Fast)"):
         """Generate AI response using selected AI model"""
         try:
-            if ai_model in ["Google Gemini Flash (Fast)", "Google Gemini Pro (Advanced)"]:
+            if ai_model in ["Google Gemini 2.5 Flash (Fast)", "Google Gemini 2.5 Pro (Advanced)"]:
                 # Use Gemini API
                 api_key = None
                 try:
@@ -4838,9 +4845,16 @@ class PortfolioAnalytics:
                 # Configure Gemini API key
                 genai.configure(api_key=api_key)
                 
-                # Try different model names in order of preference
+                # Try the newer Gemini 2.5 models that are actually available
                 model = None
-                model_names_to_try = ['gemini-1.0-pro', 'gemini-pro', 'gemini-1.5-pro', 'gemini-1.5-flash']
+                model_names_to_try = [
+                    'gemini-2.5-flash',  # Fast and efficient
+                    'gemini-2.5-pro',    # Advanced analysis
+                    'gemini-2.0-flash',  # Alternative fast model
+                    'gemini-2.0-pro-exp', # Experimental pro model
+                    'gemini-flash-latest', # Latest flash
+                    'gemini-pro-latest'   # Latest pro
+                ]
                 
                 for model_name in model_names_to_try:
                     try:
