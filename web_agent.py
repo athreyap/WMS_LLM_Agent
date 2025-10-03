@@ -18,7 +18,11 @@ from database_config_supabase import (
     get_file_records_supabase,
     update_stock_data_supabase,
     get_stock_data_supabase,
-    update_user_login_supabase
+    update_user_login_supabase,
+    save_monthly_stock_price_supabase,
+    get_monthly_stock_price_supabase,
+    get_monthly_stock_prices_range_supabase,
+    get_all_monthly_stock_prices_supabase
 )
 
 # Password hashing - temporarily disabled due to login_system.py issues
@@ -462,7 +466,7 @@ class PortfolioAnalytics:
             return df
     
     def fetch_historical_price_for_month(self, ticker, month_date):
-        """Fetch historical price for a specific month"""
+        """Fetch historical price for a specific month - uses database cache first"""
         try:
             # Convert month_date to the last day of the month for better price data
             if month_date.month == 12:
@@ -472,6 +476,16 @@ class PortfolioAnalytics:
             
             # Use the last trading day of the month
             target_date = last_day
+            target_date_str = target_date.strftime('%Y-%m-%d')
+            
+            # First, try to get from database cache
+            cached_price = get_monthly_stock_price_supabase(ticker, target_date_str)
+            if cached_price and cached_price > 0:
+                return float(cached_price)
+            
+            # If not in cache, fetch from API and save to database
+            price = None
+            price_source = 'unknown'
             
             # Check if it's a mutual fund (numerical ticker)
             clean_ticker = str(ticker).strip().upper()
@@ -481,22 +495,25 @@ class PortfolioAnalytics:
                 # Mutual fund - use mftool for historical price
                 try:
                     from mf_price_fetcher import fetch_mutual_fund_price
-                    price = fetch_mutual_fund_price(ticker, target_date.strftime('%Y-%m-%d'))
+                    price = fetch_mutual_fund_price(ticker, target_date_str)
+                    price_source = 'mftool'
                     if price and price > 0:
-                        return float(price)
+                        price = float(price)
                 except Exception as e:
                     st.debug(f"MFTool failed for {ticker} on {target_date}: {e}")
                 
                 # Fallback to INDstocks for mutual funds
-                try:
-                    from indstocks_api import get_indstocks_client
-                    api_client = get_indstocks_client()
-                    if api_client and api_client.available:
-                        price_data = api_client.get_historical_price(ticker, target_date.strftime('%Y-%m-%d'))
-                        if price_data and price_data.get('price'):
-                            return float(price_data['price'])
-                except Exception as e:
-                    st.debug(f"INDstocks failed for mutual fund {ticker} on {target_date}: {e}")
+                if not price or price <= 0:
+                    try:
+                        from indstocks_api import get_indstocks_client
+                        api_client = get_indstocks_client()
+                        if api_client and api_client.available:
+                            price_data = api_client.get_historical_price(ticker, target_date_str)
+                            if price_data and price_data.get('price'):
+                                price = float(price_data['price'])
+                                price_source = 'indstocks_mf'
+                    except Exception as e:
+                        st.debug(f"INDstocks failed for mutual fund {ticker} on {target_date}: {e}")
             else:
                 # Stock - use yfinance for historical price
                 try:
@@ -515,27 +532,36 @@ class PortfolioAnalytics:
                     
                     if not hist_data.empty:
                         # Use closing price
-                        return float(hist_data['Close'].iloc[0])
-                    
-                    # If no data for exact date, try to get the closest available date
-                    hist_data = stock.history(start=target_date - timedelta(days=7), end=target_date + timedelta(days=7))
-                    if not hist_data.empty:
-                        # Use the closest date
-                        return float(hist_data['Close'].iloc[-1])
+                        price = float(hist_data['Close'].iloc[0])
+                        price_source = 'yfinance'
+                    else:
+                        # If no data for exact date, try to get the closest available date
+                        hist_data = stock.history(start=target_date - timedelta(days=7), end=target_date + timedelta(days=7))
+                        if not hist_data.empty:
+                            # Use the closest date
+                            price = float(hist_data['Close'].iloc[-1])
+                            price_source = 'yfinance'
                         
                 except Exception as e:
                     st.debug(f"YFinance failed for {ticker} on {target_date}: {e}")
                     
                     # Fallback to INDstocks for stocks
-                    try:
-                        from indstocks_api import get_indstocks_client
-                        api_client = get_indstocks_client()
-                        if api_client and api_client.available:
-                            price_data = api_client.get_historical_price(ticker, target_date.strftime('%Y-%m-%d'))
-                            if price_data and price_data.get('price'):
-                                return float(price_data['price'])
-                    except Exception as e:
-                        st.debug(f"INDstocks failed for stock {ticker} on {target_date}: {e}")
+                    if not price or price <= 0:
+                        try:
+                            from indstocks_api import get_indstocks_client
+                            api_client = get_indstocks_client()
+                            if api_client and api_client.available:
+                                price_data = api_client.get_historical_price(ticker, target_date_str)
+                                if price_data and price_data.get('price'):
+                                    price = float(price_data['price'])
+                                    price_source = 'indstocks'
+                        except Exception as e:
+                            st.debug(f"INDstocks failed for stock {ticker} on {target_date}: {e}")
+            
+            # Save to database cache if we got a valid price
+            if price and price > 0:
+                save_monthly_stock_price_supabase(ticker, target_date_str, price, price_source)
+                return price
             
             return None
             
@@ -656,11 +682,99 @@ class PortfolioAnalytics:
             # Fetch live prices and sectors
             self.fetch_live_prices_and_sectors(user_id)
             
+            # Pre-populate monthly stock prices cache for 1-year buy stocks
+            self.populate_monthly_prices_cache(user_id)
+            
             # Load portfolio data
             self.load_portfolio_data(user_id)
             
         except Exception as e:
             st.error(f"Error initializing portfolio data: {e}")
+    
+    def populate_monthly_prices_cache(self, user_id):
+        """Pre-populate monthly stock prices cache for 1-year buy stocks"""
+        try:
+            # Get transactions for the user
+            transactions = get_transactions_supabase(user_id)
+            if not transactions:
+                return
+            
+            # Convert to DataFrame for easier processing
+            df = pd.DataFrame(transactions)
+            df['date'] = pd.to_datetime(df['date'])
+            
+            # Filter for buy transactions in the last year
+            one_year_ago = datetime.now() - timedelta(days=365)
+            buy_transactions = df[
+                (df['transaction_type'] == 'buy') & 
+                (df['date'] >= one_year_ago)
+            ].copy()
+            
+            if buy_transactions.empty:
+                return
+            
+            # Get unique stocks
+            unique_stocks = buy_transactions['ticker'].unique()
+            
+            st.info(f"🔄 Pre-populating monthly price cache for {len(unique_stocks)} stocks...")
+            
+            # Create progress bar
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            total_stocks = len(unique_stocks)
+            cached_count = 0
+            
+            for idx, ticker in enumerate(unique_stocks):
+                # Update progress
+                progress = (idx + 1) / total_stocks
+                progress_bar.progress(progress)
+                status_text.text(f"Caching prices for {ticker} ({idx + 1}/{total_stocks})...")
+                
+                # Get stock's purchase date
+                stock_purchases = buy_transactions[buy_transactions['ticker'] == ticker]
+                purchase_date = stock_purchases['date'].min()
+                
+                # Generate monthly dates from purchase date to current date
+                current_date = datetime.now()
+                monthly_dates = pd.date_range(
+                    start=purchase_date.replace(day=1),
+                    end=current_date.replace(day=1),
+                    freq='MS'
+                )
+                
+                # Check which months are already cached
+                for month_date in monthly_dates:
+                    if month_date.month == 12:
+                        last_day = month_date.replace(year=month_date.year + 1, month=1, day=1) - timedelta(days=1)
+                    else:
+                        last_day = month_date.replace(month=month_date.month + 1, day=1) - timedelta(days=1)
+                    
+                    target_date_str = last_day.strftime('%Y-%m-%d')
+                    
+                    # Check if already cached
+                    cached_price = get_monthly_stock_price_supabase(ticker, target_date_str)
+                    if not cached_price or cached_price <= 0:
+                        # Fetch and cache the price
+                        price = self.fetch_historical_price_for_month(ticker, month_date)
+                        if price and price > 0:
+                            cached_count += 1
+                
+                # Small delay to avoid rate limiting
+                import time
+                time.sleep(0.1)
+            
+            # Clear progress indicators
+            progress_bar.empty()
+            status_text.empty()
+            
+            if cached_count > 0:
+                st.success(f"✅ Cached {cached_count} new monthly price points!")
+            else:
+                st.info("ℹ️ All monthly prices were already cached.")
+                
+        except Exception as e:
+            st.warning(f"⚠️ Error pre-populating price cache: {e}")
     
     def update_missing_historical_prices(self, user_id):
         """Update missing historical prices in database"""
@@ -1331,7 +1445,15 @@ class PortfolioAnalytics:
         with col3:
             total_pnl = df['unrealized_pnl'].sum()
             pnl_color = "normal" if total_pnl >= 0 else "inverse"
-            st.metric("Total P&L", f"₹{total_pnl:,.2f}", delta_color=pnl_color)
+            # Determine arrow for total P&L
+            if total_pnl > 0:
+                pnl_arrow = "🔼"
+            elif total_pnl < 0:
+                pnl_arrow = "🔽"
+            else:
+                pnl_arrow = "➖"
+            
+            st.metric("Total P&L", f"{pnl_arrow} ₹{total_pnl:,.2f}", delta_color=pnl_color)
         
         with col4:
             if total_invested > 0:
@@ -2713,8 +2835,8 @@ class PortfolioAnalytics:
             
             # Monthly P&L Analysis for 1-Year Buy Stocks
             st.subheader("📈 Monthly P&L Analysis (1-Year Buy Stocks)")
-            st.markdown("*Tracking monthly performance from purchase date to current date using historical prices*")
-            st.info("💡 **Note:** This analysis fetches historical prices for each month to show the actual performance trajectory of your investments over time.")
+            st.markdown("*Tracking monthly performance from purchase date to current date using cached historical prices*")
+            st.info("💡 **Note:** This analysis uses cached historical prices for fast performance. Prices are pre-fetched during login and stored in the database.")
             
             # Filter for buy transactions in the last year
             one_year_ago = datetime.now() - timedelta(days=365)
@@ -2738,7 +2860,7 @@ class PortfolioAnalytics:
                 }).reset_index()
                 
                 # Generate monthly data for each stock from purchase date to current date
-                st.info("🔄 Fetching historical prices for monthly P&L analysis...")
+                st.info("🔄 Loading monthly P&L data from cache...")
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
@@ -2812,7 +2934,7 @@ class PortfolioAnalytics:
                 status_text.empty()
                 
                 if monthly_pnl_data:
-                    st.success(f"✅ Successfully fetched historical prices for {len(monthly_pnl_data)} monthly data points across {len(stock_purchases)} stocks!")
+                    st.success(f"✅ Successfully loaded {len(monthly_pnl_data)} monthly data points across {len(stock_purchases)} stocks from cache!")
                     monthly_pnl_df = pd.DataFrame(monthly_pnl_data)
                     
                     # Create interactive chart showing monthly P&L progression
@@ -2920,18 +3042,47 @@ class PortfolioAnalytics:
                                 help="Average purchase price"
                             )
                             
+                            # Determine arrow and color for price change
+                            current_price = latest_data['historical_price']
+                            purchase_price = latest_data['purchase_price']
+                            price_change = current_price - purchase_price
+                            
+                            if price_change > 0:
+                                arrow = "🔼"
+                                color = "normal"
+                            elif price_change < 0:
+                                arrow = "🔽"
+                                color = "inverse"
+                            else:
+                                arrow = "➖"
+                                color = "off"
+                            
                             st.metric(
                                 "Current Price",
-                                f"₹{latest_data['historical_price']:.2f}",
-                                delta=f"₹{latest_data['historical_price'] - latest_data['purchase_price']:.2f}",
-                                delta_color="normal" if latest_data['historical_price'] > latest_data['purchase_price'] else "inverse"
+                                f"{arrow} ₹{current_price:.2f}",
+                                delta=f"₹{price_change:+.2f}",
+                                delta_color=color
                             )
+                            
+                            # Determine arrow and color based on P&L
+                            pnl_value = latest_data['unrealized_pnl']
+                            pnl_percentage = latest_data['pnl_percentage']
+                            
+                            if pnl_value > 0:
+                                arrow = "🔼"
+                                color = "normal"
+                            elif pnl_value < 0:
+                                arrow = "🔽"
+                                color = "inverse"
+                            else:
+                                arrow = "➖"
+                                color = "off"
                             
                             st.metric(
                                 "Total P&L",
-                                f"₹{latest_data['unrealized_pnl']:,.2f}",
-                                delta=f"{latest_data['pnl_percentage']:.2f}%",
-                                delta_color="normal" if latest_data['unrealized_pnl'] > 0 else "inverse"
+                                f"{arrow} ₹{pnl_value:,.2f}",
+                                delta=f"{pnl_percentage:+.2f}%",
+                                delta_color=color
                             )
                             
                             st.metric(

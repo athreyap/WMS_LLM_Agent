@@ -949,6 +949,16 @@ def create_database():
             live_price DECIMAL(10,2),
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        
+        CREATE TABLE IF NOT EXISTS monthly_stock_prices (
+            id SERIAL PRIMARY KEY,
+            ticker VARCHAR(20) NOT NULL,
+            price_date DATE NOT NULL,
+            price DECIMAL(10,2) NOT NULL,
+            price_source VARCHAR(20) DEFAULT 'yfinance',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(ticker, price_date)
+        );
         """
         
         # Execute SQL using Supabase client
@@ -1235,5 +1245,71 @@ def diagnose_database_issues():
             print(f"💡 You may need to disable RLS for testing or configure proper policies")
     
     print("\n🔍 Database diagnosis complete!")
+
+# Monthly Stock Prices Functions
+def save_monthly_stock_price_supabase(ticker: str, price_date: str, price: float, price_source: str = 'yfinance') -> bool:
+    """Save monthly stock price to database using Supabase"""
+    try:
+        result = supabase.table('monthly_stock_prices').upsert({
+            'ticker': ticker,
+            'price_date': price_date,
+            'price': price,
+            'price_source': price_source
+        }).execute()
+        
+        return len(result.data) > 0
+        
+    except Exception as e:
+        print(f"❌ Error saving monthly stock price for {ticker} on {price_date}: {e}")
+        return False
+
+def get_monthly_stock_price_supabase(ticker: str, price_date: str) -> Optional[float]:
+    """Get monthly stock price from database using Supabase"""
+    try:
+        result = supabase.table('monthly_stock_prices').select('price').eq('ticker', ticker).eq('price_date', price_date).execute()
+        
+        if result.data:
+            return float(result.data[0]['price'])
+        return None
+        
+    except Exception as e:
+        print(f"❌ Error getting monthly stock price for {ticker} on {price_date}: {e}")
+        return None
+
+def get_monthly_stock_prices_range_supabase(ticker: str, start_date: str, end_date: str) -> List[Dict]:
+    """Get monthly stock prices for a date range using Supabase"""
+    try:
+        result = supabase.table('monthly_stock_prices').select('*').eq('ticker', ticker).gte('price_date', start_date).lte('price_date', end_date).order('price_date').execute()
+        
+        return result.data if result.data else []
+        
+    except Exception as e:
+        print(f"❌ Error getting monthly stock prices range for {ticker}: {e}")
+        return []
+
+def get_all_monthly_stock_prices_supabase() -> List[Dict]:
+    """Get all monthly stock prices using Supabase"""
+    try:
+        result = supabase.table('monthly_stock_prices').select('*').order('ticker', 'price_date').execute()
+        
+        return result.data if result.data else []
+        
+    except Exception as e:
+        print(f"❌ Error getting all monthly stock prices: {e}")
+        return []
+
+def delete_old_monthly_prices_supabase(days_old: int = 365) -> bool:
+    """Delete monthly stock prices older than specified days using Supabase"""
+    try:
+        from datetime import datetime, timedelta
+        cutoff_date = (datetime.now() - timedelta(days=days_old)).strftime('%Y-%m-%d')
+        
+        result = supabase.table('monthly_stock_prices').delete().lt('price_date', cutoff_date).execute()
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error deleting old monthly prices: {e}")
+        return False
 
 
