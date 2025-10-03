@@ -1409,9 +1409,14 @@ class PortfolioAnalytics:
         st.sidebar.markdown("---")
         st.sidebar.subheader("🤖 AI Assistant")
         
+        # Rate limit warning for ₹399 plan
+        st.sidebar.warning("⚠️ **Rate Limit**: Your ₹399 plan allows only 3 requests/minute. Use AI sparingly!")
+        
         # Initialize chat history if not exists
         if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
+        if 'last_api_call' not in st.session_state:
+            st.session_state.last_api_call = 0
         if 'openai_api_key' not in st.session_state:
             # Try to get API key from Streamlit secrets first, then fallback to manual input
             try:
@@ -1438,11 +1443,12 @@ class PortfolioAnalytics:
                 api_key_display = st.session_state.openai_api_key[:10] + "..." + st.session_state.openai_api_key[-4:] if len(st.session_state.openai_api_key) > 14 else "***"
                 st.sidebar.text(f"🔑 Key: {api_key_display}")
                 
-                # Quick test call to validate API key
+                # Quick test call to validate API key (minimal usage)
                 test_response = client.chat.completions.create(
                     model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": "test"}],
-                    max_tokens=1
+                    messages=[{"role": "user", "content": "hi"}],
+                    max_tokens=1,
+                    temperature=0
                 )
                 st.sidebar.success("✅ AI Ready")
             except Exception as e:
@@ -4384,6 +4390,19 @@ class PortfolioAnalytics:
     def process_ai_query(self, user_input, uploaded_files=None, current_page=None):
         """Process user query with AI assistant"""
         try:
+            # Check rate limit cooldown (20 seconds between calls for ₹399 plan)
+            import time
+            current_time = time.time()
+            time_since_last_call = current_time - st.session_state.last_api_call
+            
+            if time_since_last_call < 20:  # 20 seconds cooldown
+                remaining_time = 20 - time_since_last_call
+                st.warning(f"⏳ Please wait {int(remaining_time)} seconds before making another request. Your ₹399 plan has strict rate limits.")
+                return
+            
+            # Update last API call time
+            st.session_state.last_api_call = current_time
+            
             # Add user message to chat history
             st.session_state.chat_history.append({"role": "user", "content": user_input})
             
@@ -4494,8 +4513,8 @@ class PortfolioAnalytics:
                     sector_allocation = df.groupby('sector')['current_value'].sum().to_dict()
                     context["portfolio_summary"]["sector_allocation"] = {k: float(v) for k, v in sector_allocation.items()}
                 
-                # Recent transactions
-                recent_transactions_df = df.tail(10)[['ticker', 'stock_name', 'transaction_type', 'quantity', 'price', 'date']]
+                # Recent transactions (limit to 5 to reduce tokens)
+                recent_transactions_df = df.tail(5)[['ticker', 'stock_name', 'transaction_type', 'quantity', 'price', 'date']]
                 recent_transactions = []
                 for _, row in recent_transactions_df.iterrows():
                     recent_transactions.append({
@@ -4749,10 +4768,10 @@ class PortfolioAnalytics:
             error_msg = str(e)
             if "You tried to access" in error_msg:
                 return "❌ API access error. Please check your OpenAI API key and ensure it has proper permissions."
-            elif "rate limit" in error_msg.lower():
-                return "❌ API rate limit exceeded. Please wait a moment and try again."
+            elif "rate limit" in error_msg.lower() or "429" in error_msg:
+                return "⚠️ Rate limit exceeded. Please wait 1-2 minutes before trying again. Your ₹399 plan has strict limits (3 requests/minute)."
             elif "insufficient_quota" in error_msg.lower():
-                return "❌ API quota exceeded. Please check your OpenAI account billing."
+                return "❌ API quota exceeded. Please check your OpenAI account billing and usage limits."
             elif "invalid_api_key" in error_msg.lower():
                 return "❌ Invalid API key. Please check your OpenAI API key configuration."
             else:
