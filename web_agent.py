@@ -2425,6 +2425,209 @@ class PortfolioAnalytics:
                         st.metric("Best Return", f"{best_arrow} {best_overall:.2f}%", delta_color=best_color)
             else:
                 st.info("No stock buy transactions found in the last 1 year")
+            
+            # Monthly Transaction Analysis (1-Year)
+            st.subheader("📅 Monthly Transaction Analysis (1-Year)")
+            
+            # Filter transactions within the last year
+            one_year_ago = datetime.now() - timedelta(days=365)
+            recent_transactions = df[df['date'] >= one_year_ago].copy()
+            
+            if not recent_transactions.empty:
+                # Create monthly aggregations
+                monthly_data = recent_transactions.groupby([
+                    recent_transactions['date'].dt.to_period('M'), 
+                    'transaction_type'
+                ]).agg({
+                    'invested_amount': 'sum',
+                    'quantity': 'sum'
+                }).reset_index()
+                
+                # Pivot to get buy and sell in separate columns
+                monthly_pivot = monthly_data.pivot(
+                    index='date', 
+                    columns='transaction_type', 
+                    values=['invested_amount', 'quantity']
+                ).fillna(0)
+                
+                # Flatten column names
+                monthly_pivot.columns = [f"{col[1]}_{col[0]}" for col in monthly_pivot.columns]
+                monthly_pivot = monthly_pivot.reset_index()
+                
+                # Calculate net flow (buy - sell)
+                if 'buy_invested_amount' in monthly_pivot.columns and 'sell_invested_amount' in monthly_pivot.columns:
+                    monthly_pivot['net_flow'] = monthly_pivot['buy_invested_amount'] - monthly_pivot['sell_invested_amount']
+                else:
+                    monthly_pivot['net_flow'] = 0
+                
+                # Create visualizations
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Monthly Transaction Values Chart
+                    fig_monthly = go.Figure()
+                    
+                    if 'buy_invested_amount' in monthly_pivot.columns:
+                        fig_monthly.add_trace(go.Bar(
+                            x=monthly_pivot['date'].astype(str),
+                            y=monthly_pivot['buy_invested_amount'],
+                            name='Buy Transactions',
+                            marker_color='green',
+                            opacity=0.7
+                        ))
+                    
+                    if 'sell_invested_amount' in monthly_pivot.columns:
+                        fig_monthly.add_trace(go.Bar(
+                            x=monthly_pivot['date'].astype(str),
+                            y=monthly_pivot['sell_invested_amount'],
+                            name='Sell Transactions',
+                            marker_color='red',
+                            opacity=0.7
+                        ))
+                    
+                    fig_monthly.update_layout(
+                        title="Monthly Transaction Values",
+                        xaxis_title="Month",
+                        yaxis_title="Transaction Value (₹)",
+                        barmode='group',
+                        height=400
+                    )
+                    
+                    st.plotly_chart(fig_monthly, use_container_width=True)
+                
+                with col2:
+                    # Net Flow Chart
+                    fig_net = go.Figure()
+                    
+                    colors = ['green' if x >= 0 else 'red' for x in monthly_pivot['net_flow']]
+                    fig_net.add_trace(go.Bar(
+                        x=monthly_pivot['date'].astype(str),
+                        y=monthly_pivot['net_flow'],
+                        marker_color=colors,
+                        name='Net Flow',
+                        opacity=0.7
+                    ))
+                    
+                    fig_net.update_layout(
+                        title="Monthly Net Flow (Buy - Sell)",
+                        xaxis_title="Month",
+                        yaxis_title="Net Flow (₹)",
+                        height=400
+                    )
+                    
+                    # Add horizontal line at zero
+                    fig_net.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.5)
+                    
+                    st.plotly_chart(fig_net, use_container_width=True)
+                
+                # Monthly Analysis Summary
+                st.subheader("📊 Monthly Analysis Summary")
+                
+                # Calculate summary statistics
+                total_buy_value = monthly_pivot['buy_invested_amount'].sum() if 'buy_invested_amount' in monthly_pivot.columns else 0
+                total_sell_value = monthly_pivot['sell_invested_amount'].sum() if 'sell_invested_amount' in monthly_pivot.columns else 0
+                total_net_flow = total_buy_value - total_sell_value
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric(
+                        "Total Buy Value",
+                        f"₹{total_buy_value:,.2f}",
+                        help="Total value of buy transactions in the last year"
+                    )
+                
+                with col2:
+                    st.metric(
+                        "Total Sell Value", 
+                        f"₹{total_sell_value:,.2f}",
+                        help="Total value of sell transactions in the last year"
+                    )
+                
+                with col3:
+                    st.metric(
+                        "Net Flow",
+                        f"₹{total_net_flow:,.2f}",
+                        delta=f"{'Positive' if total_net_flow > 0 else 'Negative' if total_net_flow < 0 else 'Neutral'}",
+                        delta_color="normal" if total_net_flow > 0 else "inverse" if total_net_flow < 0 else "off",
+                        help="Net flow (Buy - Sell) in the last year"
+                    )
+                
+                with col4:
+                    avg_monthly_flow = total_net_flow / len(monthly_pivot) if len(monthly_pivot) > 0 else 0
+                    st.metric(
+                        "Avg Monthly Flow",
+                        f"₹{avg_monthly_flow:,.2f}",
+                        help="Average monthly net flow"
+                    )
+                
+                # Trading Pattern Analysis
+                st.subheader("🔍 Trading Pattern Analysis")
+                
+                if len(monthly_pivot) > 1:
+                    # Calculate volatility (standard deviation of net flow)
+                    net_flow_std = monthly_pivot['net_flow'].std()
+                    
+                    # Find most active month
+                    if 'buy_invested_amount' in monthly_pivot.columns and 'sell_invested_amount' in monthly_pivot.columns:
+                        monthly_pivot['total_activity'] = monthly_pivot['buy_invested_amount'] + monthly_pivot['sell_invested_amount']
+                        most_active_month = monthly_pivot.loc[monthly_pivot['total_activity'].idxmax()]
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.info(f"**Most Active Month:** {most_active_month['date']}")
+                            st.write(f"Total Activity: ₹{most_active_month['total_activity']:,.2f}")
+                        
+                        with col2:
+                            st.info(f"**Trading Volatility:** ₹{net_flow_std:,.2f}")
+                            st.write("Standard deviation of monthly net flow")
+                        
+                        with col3:
+                            if total_buy_value > total_sell_value:
+                                pattern = "🟢 Net Buyer"
+                                description = "More buying than selling"
+                            elif total_sell_value > total_buy_value:
+                                pattern = "🔴 Net Seller"
+                                description = "More selling than buying"
+                            else:
+                                pattern = "🟡 Balanced"
+                                description = "Equal buying and selling"
+                            
+                            st.info(f"**Trading Pattern:** {pattern}")
+                            st.write(description)
+                
+                # Monthly breakdown table
+                st.subheader("📋 Monthly Breakdown")
+                
+                # Prepare data for display
+                display_data = monthly_pivot.copy()
+                display_data['date'] = display_data['date'].astype(str)
+                
+                # Rename columns for better display
+                column_mapping = {
+                    'buy_invested_amount': 'Buy Value (₹)',
+                    'sell_invested_amount': 'Sell Value (₹)',
+                    'net_flow': 'Net Flow (₹)',
+                    'buy_quantity': 'Buy Quantity',
+                    'sell_quantity': 'Sell Quantity'
+                }
+                
+                display_data = display_data.rename(columns=column_mapping)
+                
+                # Format currency columns
+                for col in display_data.columns:
+                    if 'Value' in col or 'Flow' in col:
+                        display_data[col] = display_data[col].apply(lambda x: f"₹{x:,.2f}")
+                
+                st.dataframe(
+                    display_data,
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+            else:
+                st.info("No transactions found in the last year")
                 
         except Exception as e:
             st.error(f"Error processing performance data: {e}")
