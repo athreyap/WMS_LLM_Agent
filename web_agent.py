@@ -1477,20 +1477,42 @@ class PortfolioAnalytics:
                 
                 # Test Gemini API key validity
                 try:
+                    # Configure API key
                     genai.configure(api_key=st.session_state.gemini_api_key)
-                    # Use appropriate model based on selection
-                    if ai_model == "Google Gemini Pro (Advanced)":
-                        model = genai.GenerativeModel('gemini-1.5-pro')
-                    else:
-                        model = genai.GenerativeModel('gemini-1.5-flash')
                     
                     # Show API key info for debugging
                     api_key_display = st.session_state.gemini_api_key[:10] + "..." + st.session_state.gemini_api_key[-4:] if len(st.session_state.gemini_api_key) > 14 else "***"
                     st.sidebar.text(f"🔑 Gemini Key: {api_key_display}")
                     
-                    # Quick test call to validate API key
-                    test_response = model.generate_content("hi")
-                    st.sidebar.success("✅ Gemini Ready")
+                    # List available models for debugging
+                    try:
+                        models = list(genai.list_models())
+                        available_models = [m.name for m in models if 'generateContent' in m.supported_generation_methods]
+                        st.sidebar.text(f"📋 Available models: {len(available_models)}")
+                        if available_models:
+                            # Show first few model names
+                            for model_name in available_models[:3]:
+                                st.sidebar.text(f"  • {model_name.split('/')[-1]}")
+                    except Exception as e:
+                        st.sidebar.text(f"⚠️ Could not list models: {str(e)[:30]}...")
+                    
+                    # Try different model names to find a working one
+                    model_names_to_try = ['gemini-1.0-pro', 'gemini-pro', 'gemini-1.5-pro', 'gemini-1.5-flash']
+                    working_model = None
+                    
+                    for model_name in model_names_to_try:
+                        try:
+                            model = genai.GenerativeModel(model_name)
+                            test_response = model.generate_content("hi")
+                            working_model = model_name
+                            st.sidebar.success(f"✅ Gemini Ready ({model_name})")
+                            break
+                        except Exception as e:
+                            continue
+                    
+                    if working_model is None:
+                        st.sidebar.error("❌ No working model found")
+                        st.sidebar.text("Try checking your API key or model availability")
                 except Exception as e:
                     error_msg = str(e)
                     st.sidebar.error(f"❌ Gemini Error: {error_msg}")
@@ -4791,12 +4813,24 @@ class PortfolioAnalytics:
                 if not api_key:
                     return "❌ Gemini API key not configured. Please set it in Streamlit secrets as 'gemini_api_key'."
                 
-                # Configure Gemini with appropriate model
+                # Configure Gemini API key
                 genai.configure(api_key=api_key)
-                if ai_model == "Google Gemini Pro (Advanced)":
-                    model = genai.GenerativeModel('gemini-1.5-pro')
-                else:  # Default to Flash for speed
-                    model = genai.GenerativeModel('gemini-1.5-flash')
+                
+                # Try different model names in order of preference
+                model = None
+                model_names_to_try = ['gemini-1.0-pro', 'gemini-pro', 'gemini-1.5-pro', 'gemini-1.5-flash']
+                
+                for model_name in model_names_to_try:
+                    try:
+                        model = genai.GenerativeModel(model_name)
+                        # Test if model works with a simple call
+                        test_response = model.generate_content("test")
+                        break
+                    except Exception as e:
+                        continue
+                
+                if model is None:
+                    return "❌ No working Gemini model found. Please check your API key and available models."
                 
                 # Prepare system prompt for Gemini
                 current_page_info = ""
