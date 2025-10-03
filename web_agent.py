@@ -4054,11 +4054,12 @@ class PortfolioAnalytics:
         
         with col2:
             st.info("""
-            📋 **PDF OCR Requirements:**
-            - Tesseract OCR must be installed on your system
-            - Windows: Download from [GitHub Tesseract releases](https://github.com/UB-Mannheim/tesseract/wiki)
-            - Linux: `sudo apt-get install tesseract-ocr`
-            - macOS: `brew install tesseract`
+            📋 **Configuration:**
+            - **API Key**: Configured via Streamlit secrets (`open_ai`)
+            - **PDF OCR**: Tesseract OCR must be installed on your system
+            - **Windows**: Download from [GitHub Tesseract releases](https://github.com/UB-Mannheim/tesseract/wiki)
+            - **Linux**: `sudo apt-get install tesseract-ocr`
+            - **macOS**: `brew install tesseract`
             - The system will automatically detect and use OCR for PDF images
             """)
         
@@ -4066,19 +4067,31 @@ class PortfolioAnalytics:
         if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
         if 'openai_api_key' not in st.session_state:
-            st.session_state.openai_api_key = "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"
+            # Try to get API key from Streamlit secrets first, then fallback to manual input
+            try:
+                st.session_state.openai_api_key = st.secrets["open_ai"]
+            except:
+                st.session_state.openai_api_key = None
         
         # API Key Status
         if st.session_state.openai_api_key:
-            st.success("✅ OpenAI API Key is configured and ready to use!")
+            # Check if API key is from secrets or manual input
+            try:
+                secrets_key = st.secrets["open_ai"]
+                if st.session_state.openai_api_key == secrets_key:
+                    st.success("✅ OpenAI API Key loaded from Streamlit secrets and ready to use!")
+                else:
+                    st.success("✅ OpenAI API Key is configured and ready to use!")
+            except:
+                st.success("✅ OpenAI API Key is configured and ready to use!")
         
         # API Key Configuration
         with st.expander("🔑 OpenAI API Configuration", expanded=False):
             api_key = st.text_input(
                 "Enter your OpenAI API Key:",
                 type="password",
-                value=st.session_state.openai_api_key or "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",
-                help="Get your API key from https://platform.openai.com/api-keys"
+                value=st.session_state.openai_api_key or "",
+                help="Get your API key from https://platform.openai.com/api-keys or configure it in Streamlit secrets as 'open_ai'"
             )
             
             if st.button("Save API Key"):
@@ -4365,8 +4378,17 @@ class PortfolioAnalytics:
     def generate_ai_response(self, user_input, context_data, file_content=""):
         """Generate AI response using OpenAI API"""
         try:
-            # Set OpenAI API key
-            openai.api_key = st.session_state.openai_api_key
+            # Set OpenAI API key - try secrets first, then session state
+            api_key = None
+            try:
+                api_key = st.secrets["open_ai"]
+            except:
+                api_key = st.session_state.openai_api_key
+            
+            if not api_key:
+                return "❌ OpenAI API key not configured. Please set it in the configuration section or in Streamlit secrets as 'open_ai'."
+            
+            openai.api_key = api_key
             
             # Prepare system prompt
             system_prompt = """You are an expert stock broker and Portfolio Management System (PMS) assistant. 
