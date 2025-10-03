@@ -15,6 +15,7 @@ import pdfplumber
 import pytesseract
 from PIL import Image
 from pdf2image import convert_from_bytes
+import google.generativeai as genai
 warnings.filterwarnings('ignore')
 
 # Database and authentication imports
@@ -1409,8 +1410,35 @@ class PortfolioAnalytics:
         st.sidebar.markdown("---")
         st.sidebar.subheader("🤖 AI Assistant")
         
-        # Rate limit warning for ₹399 plan
-        st.sidebar.warning("⚠️ **Rate Limit**: Your ₹399 plan allows only 3 requests/minute. Use AI sparingly!")
+        # Model selection
+        ai_model = st.sidebar.selectbox(
+            "🤖 Choose AI Model",
+            ["Google Gemini (Recommended)", "OpenAI GPT-3.5"],
+            help="Gemini has better rate limits (60/min) and is more cost-effective"
+        )
+        
+        if ai_model == "Google Gemini (Recommended)":
+            st.sidebar.success("✅ **Gemini**: 60 requests/minute, better pricing!")
+        else:
+            st.sidebar.warning("⚠️ **OpenAI**: 3 requests/minute, higher cost")
+        
+        # Show usage tracking
+        if 'api_call_count' not in st.session_state:
+            st.session_state.api_call_count = 0
+        if 'api_call_times' not in st.session_state:
+            st.session_state.api_call_times = []
+        
+        # Clean old call times (older than 1 minute)
+        import time
+        current_time = time.time()
+        st.session_state.api_call_times = [t for t in st.session_state.api_call_times if current_time - t < 60]
+        
+        # Show current usage
+        recent_calls = len(st.session_state.api_call_times)
+        st.sidebar.info(f"📊 **Usage**: {recent_calls}/3 calls in last minute")
+        
+        if recent_calls >= 3:
+            st.sidebar.error("🚫 **Rate limit reached!** Wait 1 minute before trying again.")
         
         # Initialize chat history if not exists
         if 'chat_history' not in st.session_state:
@@ -1428,11 +1456,51 @@ class PortfolioAnalytics:
                 # Store the error for debugging
                 st.session_state.secrets_error = str(e)
         
-        # API Key Status
-        if st.session_state.openai_api_key:
-            # Show source of API key
-            if st.session_state.get('api_key_source') == "secrets":
-                st.sidebar.info("🔑 API Key from Streamlit Secrets")
+        if 'gemini_api_key' not in st.session_state:
+            # Try to get Gemini API key from Streamlit secrets
+            try:
+                st.session_state.gemini_api_key = st.secrets["gemini_api_key"]
+                st.session_state.gemini_api_key_source = "secrets"
+            except Exception as e:
+                st.session_state.gemini_api_key = None
+                st.session_state.gemini_api_key_source = "none"
+                st.session_state.gemini_secrets_error = str(e)
+        
+        # API Key Status based on selected model
+        if ai_model == "Google Gemini (Recommended)":
+            if st.session_state.gemini_api_key:
+                # Show Gemini API key status
+                if st.session_state.get('gemini_api_key_source') == "secrets":
+                    st.sidebar.info("🔑 Gemini API Key from Streamlit Secrets")
+                
+                # Test Gemini API key validity
+                try:
+                    genai.configure(api_key=st.session_state.gemini_api_key)
+                    model = genai.GenerativeModel('gemini-pro')
+                    
+                    # Show API key info for debugging
+                    api_key_display = st.session_state.gemini_api_key[:10] + "..." + st.session_state.gemini_api_key[-4:] if len(st.session_state.gemini_api_key) > 14 else "***"
+                    st.sidebar.text(f"🔑 Gemini Key: {api_key_display}")
+                    
+                    # Quick test call to validate API key
+                    test_response = model.generate_content("hi")
+                    st.sidebar.success("✅ Gemini Ready")
+                except Exception as e:
+                    error_msg = str(e)
+                    st.sidebar.error(f"❌ Gemini Error: {error_msg}")
+                    
+                    if st.sidebar.button("🔑 Configure Gemini API Key"):
+                        st.session_state.show_gemini_config = True
+            else:
+                st.sidebar.warning("⚠️ Gemini API Key Needed")
+                if st.sidebar.button("🔑 Configure Gemini API Key"):
+                    st.session_state.show_gemini_config = True
+        else:
+            # OpenAI API key status (existing code)
+            if st.session_state.openai_api_key:
+                # Show source of API key
+                if st.session_state.get('api_key_source') == "secrets":
+                    st.sidebar.info("🔑 OpenAI API Key from Streamlit Secrets")
             
             # Test API key validity
             try:
@@ -4387,21 +4455,29 @@ class PortfolioAnalytics:
         
         # Quick Actions are now in the sidebar for better UX
     
-    def process_ai_query(self, user_input, uploaded_files=None, current_page=None):
+    def process_ai_query(self, user_input, uploaded_files=None, current_page=None, ai_model="Google Gemini (Recommended)"):
         """Process user query with AI assistant"""
         try:
-            # Check rate limit cooldown (20 seconds between calls for ₹399 plan)
+            # Check rate limit based on selected model
             import time
             current_time = time.time()
-            time_since_last_call = current_time - st.session_state.last_api_call
             
-            if time_since_last_call < 20:  # 20 seconds cooldown
-                remaining_time = 20 - time_since_last_call
-                st.warning(f"⏳ Please wait {int(remaining_time)} seconds before making another request. Your ₹399 plan has strict rate limits.")
-                return
+            if ai_model == "Google Gemini (Recommended)":
+                # Gemini has 60 requests per minute - more lenient
+                st.session_state.api_call_times = [t for t in st.session_state.api_call_times if current_time - t < 60]
+                if len(st.session_state.api_call_times) >= 60:
+                    st.error("🚫 **Rate limit exceeded!** You can only make 60 API calls per minute with Gemini. Please wait 1 minute before trying again.")
+                    return
+            else:
+                # OpenAI has 3 requests per minute - strict
+                st.session_state.api_call_times = [t for t in st.session_state.api_call_times if current_time - t < 60]
+                if len(st.session_state.api_call_times) >= 3:
+                    st.error("🚫 **Rate limit exceeded!** You can only make 3 API calls per minute with OpenAI. Please wait 1 minute before trying again.")
+                    return
             
-            # Update last API call time
-            st.session_state.last_api_call = current_time
+            # Add this call to the tracking
+            st.session_state.api_call_times.append(current_time)
+            st.session_state.api_call_count += 1
             
             # Add user message to chat history
             st.session_state.chat_history.append({"role": "user", "content": user_input})
@@ -4436,7 +4512,7 @@ class PortfolioAnalytics:
             
             # Generate AI response
             try:
-                ai_response = self.generate_ai_response(user_input, context_data, file_content)
+                ai_response = self.generate_ai_response(user_input, context_data, file_content, ai_model)
             except Exception as e:
                 st.error(f"❌ Error generating AI response: {e}")
                 ai_response = "❌ Sorry, I encountered an error while generating a response. Please try again or check your API configuration."
@@ -4695,18 +4771,78 @@ class PortfolioAnalytics:
             st.error(f"❌ Error processing files: {e}")
             return ""
     
-    def generate_ai_response(self, user_input, context_data, file_content=""):
-        """Generate AI response using OpenAI API"""
+    def generate_ai_response(self, user_input, context_data, file_content="", ai_model="Google Gemini (Recommended)"):
+        """Generate AI response using selected AI model"""
         try:
-            # Set OpenAI API key - try secrets first, then session state
-            api_key = None
-            try:
-                api_key = st.secrets["open_ai"]
-            except:
-                api_key = st.session_state.openai_api_key
-            
-            if not api_key:
-                return "❌ OpenAI API key not configured. Please set it in the configuration section or in Streamlit secrets as 'open_ai'."
+            if ai_model == "Google Gemini (Recommended)":
+                # Use Gemini API
+                api_key = None
+                try:
+                    api_key = st.secrets["gemini_api_key"]
+                except:
+                    api_key = st.session_state.gemini_api_key
+                
+                if not api_key:
+                    return "❌ Gemini API key not configured. Please set it in Streamlit secrets as 'gemini_api_key'."
+                
+                # Configure Gemini
+                genai.configure(api_key=api_key)
+                model = genai.GenerativeModel('gemini-pro')
+                
+                # Prepare system prompt for Gemini
+                current_page_info = ""
+                if context_data.get("current_page"):
+                    current_page_info = f"\n\nYou are currently helping the user on the '{context_data['current_page']}' page. "
+                    if context_data.get("page_specific_data"):
+                        page_data = context_data["page_specific_data"]
+                        current_page_info += f"This page shows {page_data.get('description', 'portfolio data')}. "
+                        if page_data.get('page_type'):
+                            current_page_info += f"Focus your analysis on {page_data['page_type']} related insights. "
+                
+                system_prompt = f"""You are an expert stock broker and Portfolio Management System (PMS) assistant. 
+                You have access to the user's complete portfolio data, transaction history, and market information.
+                {current_page_info}
+                
+                Your role:
+                1. Provide intelligent analysis of portfolio performance
+                2. Give investment recommendations based on data
+                3. Analyze risk and suggest improvements
+                4. Answer questions about stocks, mutual funds, and market trends
+                5. Help with financial planning and strategy
+                6. Give context-aware responses based on the current page the user is viewing
+                
+                Guidelines:
+                - Always base your analysis on the provided data
+                - Be specific and actionable in your recommendations
+                - Consider Indian market context for stocks and mutual funds
+                - Provide clear explanations for your insights
+                - Be professional but conversational
+                - Tailor your response to the current page context when relevant
+                - If you don't have specific data, say so clearly
+                
+                Portfolio Context:
+                """ + json.dumps(self.convert_to_json_serializable(context_data), indent=2)
+                
+                if file_content:
+                    system_prompt += f"\n\nUploaded File Content:\n{file_content}"
+                
+                # Prepare full prompt for Gemini
+                full_prompt = f"{system_prompt}\n\nUser Question: {user_input}"
+                
+                # Generate response using Gemini
+                response = model.generate_content(full_prompt)
+                return response.text
+                
+            else:
+                # Use OpenAI API (existing code)
+                api_key = None
+                try:
+                    api_key = st.secrets["open_ai"]
+                except:
+                    api_key = st.session_state.openai_api_key
+                
+                if not api_key:
+                    return "❌ OpenAI API key not configured. Please set it in the configuration section or in Streamlit secrets as 'open_ai'."
             
             # Prepare system prompt
             # Prepare system prompt with current page context
