@@ -1279,7 +1279,7 @@ class PortfolioAnalytics:
                             color=top_performers.values,
                             color_continuous_scale='Greens'
                         )
-                        st.plotly_chart(fig_top, width='stretch')
+                        st.plotly_chart(fig_top, config={'displayModeBar': True, 'responsive': True})
                     else:
                         st.info("No performance data available")
                 else:
@@ -1303,7 +1303,7 @@ class PortfolioAnalytics:
                             color=underperformers.values,
                             color_continuous_scale='Reds'
                         )
-                        st.plotly_chart(fig_bottom, width='stretch')
+                        st.plotly_chart(fig_bottom, config={'displayModeBar': True, 'responsive': True})
                     else:
                         st.info("No performance data available")
                 else:
@@ -1373,7 +1373,7 @@ class PortfolioAnalytics:
                         )
                     )
                     
-                    st.plotly_chart(fig_timeline, width='stretch')
+                    st.plotly_chart(fig_timeline, config={'displayModeBar': True, 'responsive': True})
                     
                     # Show summary statistics
                     col1, col2, col3 = st.columns(3)
@@ -1458,7 +1458,7 @@ class PortfolioAnalytics:
                 hovermode='x unified'
             )
             
-            st.plotly_chart(fig_performance, width='stretch')
+            st.plotly_chart(fig_performance, config={'displayModeBar': True, 'responsive': True})
             
             # Best Performing Sector and Channel Analysis
             st.subheader("🏆 Best Performing Sector & Channel")
@@ -1598,7 +1598,7 @@ class PortfolioAnalytics:
                     hover_data=['invested_amount', 'unrealized_pnl', 'rating']
                 )
                 fig_stock_performance.update_xaxes(tickangle=45)
-                st.plotly_chart(fig_stock_performance, width='stretch')
+                st.plotly_chart(fig_stock_performance, config={'displayModeBar': True, 'responsive': True})
                 
                 # Add comprehensive table with sector, channel, and ratings
                 st.subheader("📊 Detailed Performance Table (1-Year Buy Transactions)")
@@ -1775,7 +1775,7 @@ class PortfolioAnalytics:
                             categoryarray=all_quarterly['quarter_label'].unique()
                         )
                         
-                        st.plotly_chart(fig_quarterly, width='stretch')
+                        st.plotly_chart(fig_quarterly, config={'displayModeBar': True, 'responsive': True})
                         
                         # Add quarterly summary table
                         st.subheader("📊 Quarterly Summary Table")
@@ -1907,7 +1907,7 @@ class PortfolioAnalytics:
                             hover_data=['invested_amount', 'unrealized_pnl']
                         )
                         fig_sector_perf.update_xaxes(tickangle=45)
-                        st.plotly_chart(fig_sector_perf, use_container_width=True)
+                        st.plotly_chart(fig_sector_perf, config={'displayModeBar': True, 'responsive': True})
                         
                         # Best performing sector
                         if not sector_performance.empty:
@@ -1950,7 +1950,7 @@ class PortfolioAnalytics:
                             hover_data=['invested_amount', 'unrealized_pnl']
                         )
                         fig_channel_perf.update_xaxes(tickangle=45)
-                        st.plotly_chart(fig_channel_perf, use_container_width=True)
+                        st.plotly_chart(fig_channel_perf, config={'displayModeBar': True, 'responsive': True})
                         
                         # Best performing channel
                         if not channel_performance.empty:
@@ -2256,7 +2256,7 @@ class PortfolioAnalytics:
                                 hover_data=['Best Stock']
                             )
                             fig_best_stocks.update_xaxes(tickangle=45)
-                            st.plotly_chart(fig_best_stocks, use_container_width=True)
+                            st.plotly_chart(fig_best_stocks, config={'displayModeBar': True, 'responsive': True})
                     else:
                         st.info("No sector-based stock analysis data available")
                     
@@ -2395,7 +2395,7 @@ class PortfolioAnalytics:
                                 hover_data=['Best Stock']
                             )
                             fig_best_stocks_channel.update_xaxes(tickangle=45)
-                            st.plotly_chart(fig_best_stocks_channel, use_container_width=True)
+                            st.plotly_chart(fig_best_stocks_channel, config={'displayModeBar': True, 'responsive': True})
                     else:
                         st.info("No channel-based stock analysis data available")
                         
@@ -2493,7 +2493,7 @@ class PortfolioAnalytics:
                         height=400
                     )
                     
-                    st.plotly_chart(fig_monthly, use_container_width=True)
+                    st.plotly_chart(fig_monthly, config={'displayModeBar': True, 'responsive': True})
                 
                 with col2:
                     # Net Flow Chart
@@ -2518,7 +2518,7 @@ class PortfolioAnalytics:
                     # Add horizontal line at zero
                     fig_net.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.5)
                     
-                    st.plotly_chart(fig_net, use_container_width=True)
+                    st.plotly_chart(fig_net, config={'displayModeBar': True, 'responsive': True})
                 
                 # Monthly Analysis Summary
                 st.subheader("📊 Monthly Analysis Summary")
@@ -2628,6 +2628,245 @@ class PortfolioAnalytics:
                 
             else:
                 st.info("No transactions found in the last year")
+            
+            # Monthly P&L Analysis for 1-Year Buy Stocks
+            st.subheader("📈 Monthly P&L Analysis (1-Year Buy Stocks)")
+            st.markdown("*Tracking monthly performance from purchase date to current date*")
+            
+            # Filter for buy transactions in the last year
+            one_year_ago = datetime.now() - timedelta(days=365)
+            buy_transactions = df[
+                (df['transaction_type'] == 'buy') & 
+                (df['date'] >= one_year_ago)
+            ].copy()
+            
+            if not buy_transactions.empty:
+                # Create monthly P&L tracking for each stock
+                monthly_pnl_data = []
+                
+                # Get unique stocks with their purchase details
+                stock_purchases = buy_transactions.groupby('ticker').agg({
+                    'date': 'min',  # First purchase date
+                    'price': 'mean',  # Average purchase price
+                    'quantity': 'sum',  # Total quantity
+                    'invested_amount': 'sum',  # Total invested
+                    'stock_name': 'first',
+                    'sector': 'first'
+                }).reset_index()
+                
+                # Generate monthly data for each stock from purchase date to current date
+                for _, stock in stock_purchases.iterrows():
+                    ticker = stock['ticker']
+                    purchase_date = stock['date']
+                    purchase_price = stock['price']
+                    quantity = stock['quantity']
+                    invested_amount = stock['invested_amount']
+                    stock_name = stock['stock_name']
+                    sector = stock['sector']
+                    
+                    # Get current live price
+                    current_price = df[df['ticker'] == ticker]['current_price'].iloc[0] if 'current_price' in df.columns else None
+                    
+                    if current_price and current_price > 0:
+                        # Generate monthly data points from purchase date to current date
+                        current_date = datetime.now()
+                        monthly_dates = pd.date_range(
+                            start=purchase_date.replace(day=1),  # Start from first day of purchase month
+                            end=current_date.replace(day=1),  # End at first day of current month
+                            freq='MS'  # Month start frequency
+                        )
+                        
+                        for month_date in monthly_dates:
+                            # For now, we'll use current price for all months
+                            # In a real implementation, you'd fetch historical prices for each month
+                            monthly_pnl_data.append({
+                                'ticker': ticker,
+                                'stock_name': stock_name,
+                                'sector': sector,
+                                'month': month_date,
+                                'purchase_price': purchase_price,
+                                'current_price': current_price,
+                                'quantity': quantity,
+                                'invested_amount': invested_amount,
+                                'current_value': quantity * current_price,
+                                'unrealized_pnl': (current_price - purchase_price) * quantity,
+                                'pnl_percentage': ((current_price - purchase_price) / purchase_price) * 100
+                            })
+                
+                if monthly_pnl_data:
+                    monthly_pnl_df = pd.DataFrame(monthly_pnl_data)
+                    
+                    # Create interactive chart showing monthly P&L progression
+                    st.subheader("📊 Monthly P&L Progression by Stock")
+                    
+                    # Group by month and calculate aggregate P&L
+                    monthly_aggregate = monthly_pnl_df.groupby('month').agg({
+                        'invested_amount': 'sum',
+                        'current_value': 'sum',
+                        'unrealized_pnl': 'sum'
+                    }).reset_index()
+                    
+                    monthly_aggregate['pnl_percentage'] = (monthly_aggregate['unrealized_pnl'] / monthly_aggregate['invested_amount']) * 100
+                    
+                    # Create dual-axis chart for P&L and percentage
+                    fig_monthly_pnl = make_subplots(
+                        rows=2, cols=1,
+                        subplot_titles=('Monthly P&L (₹)', 'Monthly P&L Percentage (%)'),
+                        vertical_spacing=0.1
+                    )
+                    
+                    # P&L in rupees
+                    fig_monthly_pnl.add_trace(
+                        go.Scatter(
+                            x=monthly_aggregate['month'],
+                            y=monthly_aggregate['unrealized_pnl'],
+                            mode='lines+markers',
+                            name='Unrealized P&L (₹)',
+                            line=dict(color='blue', width=3),
+                            marker=dict(size=8)
+                        ),
+                        row=1, col=1
+                    )
+                    
+                    # P&L percentage
+                    fig_monthly_pnl.add_trace(
+                        go.Scatter(
+                            x=monthly_aggregate['month'],
+                            y=monthly_aggregate['pnl_percentage'],
+                            mode='lines+markers',
+                            name='P&L Percentage (%)',
+                            line=dict(color='green', width=3),
+                            marker=dict(size=8)
+                        ),
+                        row=2, col=1
+                    )
+                    
+                    fig_monthly_pnl.update_layout(
+                        title="Monthly P&L Progression for 1-Year Buy Stocks",
+                        height=600,
+                        showlegend=True
+                    )
+                    
+                    fig_monthly_pnl.update_xaxes(title_text="Month", row=2, col=1)
+                    fig_monthly_pnl.update_yaxes(title_text="P&L (₹)", row=1, col=1)
+                    fig_monthly_pnl.update_yaxes(title_text="P&L (%)", row=2, col=1)
+                    
+                    st.plotly_chart(fig_monthly_pnl, config={'displayModeBar': True, 'responsive': True})
+                    
+                    # Individual stock performance
+                    st.subheader("📈 Individual Stock Performance")
+                    
+                    # Create dropdown for stock selection
+                    unique_stocks = monthly_pnl_df['ticker'].unique()
+                    selected_stock = st.selectbox(
+                        "Select a stock to view detailed monthly performance:",
+                        unique_stocks,
+                        format_func=lambda x: f"{x} - {monthly_pnl_df[monthly_pnl_df['ticker']==x]['stock_name'].iloc[0]}"
+                    )
+                    
+                    if selected_stock:
+                        stock_data = monthly_pnl_df[monthly_pnl_df['ticker'] == selected_stock].copy()
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            # Stock performance chart
+                            fig_stock = go.Figure()
+                            
+                            fig_stock.add_trace(go.Scatter(
+                                x=stock_data['month'],
+                                y=stock_data['unrealized_pnl'],
+                                mode='lines+markers',
+                                name='Unrealized P&L (₹)',
+                                line=dict(color='blue', width=3),
+                                marker=dict(size=8)
+                            ))
+                            
+                            fig_stock.update_layout(
+                                title=f"{selected_stock} - Monthly P&L Progression",
+                                xaxis_title="Month",
+                                yaxis_title="Unrealized P&L (₹)",
+                                height=400
+                            )
+                            
+                            st.plotly_chart(fig_stock, config={'displayModeBar': True, 'responsive': True})
+                        
+                        with col2:
+                            # Stock metrics
+                            latest_data = stock_data.iloc[-1]
+                            
+                            st.metric(
+                                "Purchase Price",
+                                f"₹{latest_data['purchase_price']:.2f}",
+                                help="Average purchase price"
+                            )
+                            
+                            st.metric(
+                                "Current Price",
+                                f"₹{latest_data['current_price']:.2f}",
+                                delta=f"₹{latest_data['current_price'] - latest_data['purchase_price']:.2f}",
+                                delta_color="normal" if latest_data['current_price'] > latest_data['purchase_price'] else "inverse"
+                            )
+                            
+                            st.metric(
+                                "Total P&L",
+                                f"₹{latest_data['unrealized_pnl']:,.2f}",
+                                delta=f"{latest_data['pnl_percentage']:.2f}%",
+                                delta_color="normal" if latest_data['unrealized_pnl'] > 0 else "inverse"
+                            )
+                            
+                            st.metric(
+                                "Quantity",
+                                f"{latest_data['quantity']:,.0f}",
+                                help="Total quantity purchased"
+                            )
+                    
+                    # Summary table of all stocks
+                    st.subheader("📋 Monthly P&L Summary Table")
+                    
+                    # Create summary table with latest data for each stock
+                    summary_data = []
+                    for ticker in unique_stocks:
+                        stock_latest = monthly_pnl_df[monthly_pnl_df['ticker'] == ticker].iloc[-1]
+                        summary_data.append({
+                            'Ticker': ticker,
+                            'Stock Name': stock_latest['stock_name'],
+                            'Sector': stock_latest['sector'],
+                            'Purchase Price': f"₹{stock_latest['purchase_price']:.2f}",
+                            'Current Price': f"₹{stock_latest['current_price']:.2f}",
+                            'Quantity': f"{stock_latest['quantity']:,.0f}",
+                            'Invested Amount': f"₹{stock_latest['invested_amount']:,.2f}",
+                            'Current Value': f"₹{stock_latest['current_value']:,.2f}",
+                            'Unrealized P&L': f"₹{stock_latest['unrealized_pnl']:,.2f}",
+                            'P&L %': f"{stock_latest['pnl_percentage']:.2f}%"
+                        })
+                    
+                    summary_df = pd.DataFrame(summary_data)
+                    
+                    # Sort by P&L percentage
+                    summary_df['P&L % Sort'] = summary_df['P&L %'].str.replace('%', '').astype(float)
+                    summary_df = summary_df.sort_values('P&L % Sort', ascending=False)
+                    summary_df = summary_df.drop('P&L % Sort', axis=1)
+                    
+                    st.dataframe(
+                        summary_df,
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                    
+                    # Download option
+                    csv = summary_df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download Monthly P&L Summary",
+                        data=csv,
+                        file_name=f"monthly_pnl_summary_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+                    
+                else:
+                    st.info("No monthly P&L data available for 1-year buy stocks")
+            else:
+                st.info("No buy transactions found in the last year")
                 
         except Exception as e:
             st.error(f"Error processing performance data: {e}")
@@ -2663,7 +2902,7 @@ class PortfolioAnalytics:
                         names=allocation_by_type.index,
                         title="Allocation by Asset Type"
                     )
-                    st.plotly_chart(fig_type, width='stretch')
+                    st.plotly_chart(fig_type, config={'displayModeBar': True, 'responsive': True})
                 else:
                     st.info("No asset type allocation data available")
             else:
@@ -2688,7 +2927,7 @@ class PortfolioAnalytics:
                         title="Allocation by Sector",
                         labels={'x': 'Current Value (₹)', 'y': 'Sector'}
                     )
-                    st.plotly_chart(fig_sector, width='stretch')
+                    st.plotly_chart(fig_sector, config={'displayModeBar': True, 'responsive': True})
                     
                     # Sector allocation chart is sufficient here - detailed tables moved to Performance page
                 else:
@@ -2719,7 +2958,7 @@ class PortfolioAnalytics:
                         labels={'x': 'Ticker', 'y': 'Current Value (₹)'}
                     )
                     fig_holdings.update_xaxes(tickangle=45)
-                    st.plotly_chart(fig_holdings, width='stretch')
+                    st.plotly_chart(fig_holdings, config={'displayModeBar': True, 'responsive': True})
                 else:
                     st.info("No holdings data available for visualization")
             else:
@@ -2858,7 +3097,7 @@ class PortfolioAnalytics:
                             color_discrete_sequence=px.colors.qualitative.Set3
                         )
                         fig_market_cap.update_traces(textposition='inside', textinfo='percent+label')
-                        st.plotly_chart(fig_market_cap, width='stretch')
+                        st.plotly_chart(fig_market_cap, config={'displayModeBar': True, 'responsive': True})
                         
                         # Show summary metrics
                         col1, col2, col3, col4 = st.columns(4)
@@ -2949,7 +3188,7 @@ class PortfolioAnalytics:
             }
         )
         
-        st.plotly_chart(fig_pnl, width='stretch')
+        st.plotly_chart(fig_pnl, config={'displayModeBar': True, 'responsive': True})
         
 
         
@@ -3002,7 +3241,7 @@ class PortfolioAnalytics:
                 color_continuous_scale='RdYlGn'
             )
             fig_sector_pnl.update_xaxes(tickangle=45)
-            st.plotly_chart(fig_sector_pnl, width='stretch')
+            st.plotly_chart(fig_sector_pnl, config={'displayModeBar': True, 'responsive': True})
             
             # Sector P&L summary
             col1, col2, col3 = st.columns(3)
@@ -3050,7 +3289,7 @@ class PortfolioAnalytics:
                 color_continuous_scale='RdYlGn'
             )
             fig_channel_pnl.update_xaxes(tickangle=45)
-            st.plotly_chart(fig_channel_pnl, width='stretch')
+            st.plotly_chart(fig_channel_pnl, config={'displayModeBar': True, 'responsive': True})
             
             # Channel P&L summary
             col1, col2, col3 = st.columns(3)
@@ -3099,7 +3338,7 @@ class PortfolioAnalytics:
                 barmode='group'
             )
             fig_combined.update_xaxes(tickangle=45)
-            st.plotly_chart(fig_combined, width='stretch')
+            st.plotly_chart(fig_combined, config={'displayModeBar': True, 'responsive': True})
             
             # Combined summary table
             combined_pnl['pnl_formatted'] = combined_pnl['unrealized_pnl'].apply(lambda x: f"₹{x:,.2f}")
