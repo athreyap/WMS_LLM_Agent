@@ -1413,12 +1413,14 @@ class PortfolioAnalytics:
         # Model selection
         ai_model = st.sidebar.selectbox(
             "🤖 Choose AI Model",
-            ["Google Gemini (Recommended)", "OpenAI GPT-3.5"],
-            help="Gemini has better rate limits (60/min) and is more cost-effective"
+            ["Google Gemini Flash (Fast)", "Google Gemini Pro (Advanced)", "OpenAI GPT-3.5"],
+            help="Gemini Flash: Fast & cost-effective. Gemini Pro: Advanced analysis. OpenAI: 3/min limit"
         )
         
-        if ai_model == "Google Gemini (Recommended)":
-            st.sidebar.success("✅ **Gemini**: 60 requests/minute, better pricing!")
+        if ai_model == "Google Gemini Flash (Fast)":
+            st.sidebar.success("✅ **Gemini Flash**: 60 requests/minute, fast & cost-effective!")
+        elif ai_model == "Google Gemini Pro (Advanced)":
+            st.sidebar.success("✅ **Gemini Pro**: Advanced analysis, 60 requests/minute!")
         else:
             st.sidebar.warning("⚠️ **OpenAI**: 3 requests/minute, higher cost")
         
@@ -1467,7 +1469,7 @@ class PortfolioAnalytics:
                 st.session_state.gemini_secrets_error = str(e)
         
         # API Key Status based on selected model
-        if ai_model == "Google Gemini (Recommended)":
+        if ai_model in ["Google Gemini Flash (Fast)", "Google Gemini Pro (Advanced)"]:
             if st.session_state.gemini_api_key:
                 # Show Gemini API key status
                 if st.session_state.get('gemini_api_key_source') == "secrets":
@@ -1476,7 +1478,11 @@ class PortfolioAnalytics:
                 # Test Gemini API key validity
                 try:
                     genai.configure(api_key=st.session_state.gemini_api_key)
-                    model = genai.GenerativeModel('gemini-pro')
+                    # Use appropriate model based on selection
+                    if ai_model == "Google Gemini Pro (Advanced)":
+                        model = genai.GenerativeModel('gemini-1.5-pro')
+                    else:
+                        model = genai.GenerativeModel('gemini-1.5-flash')
                     
                     # Show API key info for debugging
                     api_key_display = st.session_state.gemini_api_key[:10] + "..." + st.session_state.gemini_api_key[-4:] if len(st.session_state.gemini_api_key) > 14 else "***"
@@ -4455,14 +4461,14 @@ class PortfolioAnalytics:
         
         # Quick Actions are now in the sidebar for better UX
     
-    def process_ai_query(self, user_input, uploaded_files=None, current_page=None, ai_model="Google Gemini (Recommended)"):
+    def process_ai_query(self, user_input, uploaded_files=None, current_page=None, ai_model="Google Gemini Flash (Fast)"):
         """Process user query with AI assistant"""
         try:
             # Check rate limit based on selected model
             import time
             current_time = time.time()
             
-            if ai_model == "Google Gemini (Recommended)":
+            if ai_model in ["Google Gemini Flash (Fast)", "Google Gemini Pro (Advanced)"]:
                 # Gemini has 60 requests per minute - more lenient
                 st.session_state.api_call_times = [t for t in st.session_state.api_call_times if current_time - t < 60]
                 if len(st.session_state.api_call_times) >= 60:
@@ -4771,10 +4777,10 @@ class PortfolioAnalytics:
             st.error(f"❌ Error processing files: {e}")
             return ""
     
-    def generate_ai_response(self, user_input, context_data, file_content="", ai_model="Google Gemini (Recommended)"):
+    def generate_ai_response(self, user_input, context_data, file_content="", ai_model="Google Gemini Flash (Fast)"):
         """Generate AI response using selected AI model"""
         try:
-            if ai_model == "Google Gemini (Recommended)":
+            if ai_model in ["Google Gemini Flash (Fast)", "Google Gemini Pro (Advanced)"]:
                 # Use Gemini API
                 api_key = None
                 try:
@@ -4785,9 +4791,12 @@ class PortfolioAnalytics:
                 if not api_key:
                     return "❌ Gemini API key not configured. Please set it in Streamlit secrets as 'gemini_api_key'."
                 
-                # Configure Gemini
+                # Configure Gemini with appropriate model
                 genai.configure(api_key=api_key)
-                model = genai.GenerativeModel('gemini-pro')
+                if ai_model == "Google Gemini Pro (Advanced)":
+                    model = genai.GenerativeModel('gemini-1.5-pro')
+                else:  # Default to Flash for speed
+                    model = genai.GenerativeModel('gemini-1.5-flash')
                 
                 # Prepare system prompt for Gemini
                 current_page_info = ""
