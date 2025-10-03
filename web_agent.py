@@ -1445,6 +1445,20 @@ class PortfolioAnalytics:
                 if "You tried to access" in error_msg:
                     st.sidebar.error("❌ API Access Denied")
                     st.sidebar.info("💡 Check API key permissions in Streamlit secrets")
+                    
+                    # Show detailed troubleshooting
+                    with st.sidebar.expander("🔧 Troubleshooting Steps", expanded=True):
+                        st.markdown("""
+                        **Common Solutions:**
+                        1. **Generate New API Key**: Create a fresh key at [OpenAI Platform](https://platform.openai.com/api-keys)
+                        2. **Check Permissions**: Ensure key has GPT-3.5-turbo access
+                        3. **Verify Billing**: Check your OpenAI account has active billing
+                        4. **Update Secrets**: Replace the key in your Streamlit secrets
+                        5. **Wait & Retry**: Sometimes takes a few minutes to propagate
+                        """)
+                        
+                        if st.button("🔄 Test API Key Again"):
+                            st.rerun()
                 elif "invalid_api_key" in error_msg.lower():
                     st.sidebar.error("❌ Invalid API Key")
                     st.sidebar.info("💡 Check your API key in Streamlit secrets")
