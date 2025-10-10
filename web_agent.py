@@ -1657,7 +1657,7 @@ class PortfolioAnalytics:
                     "Stock analysis reports",
                     type=['pdf', 'txt'],
                     accept_multiple_files=True,
-                    key="sidebar_file_upload",
+                    key="ai_sidebar_pdf_upload",
                     label_visibility="collapsed"
                 )
             
