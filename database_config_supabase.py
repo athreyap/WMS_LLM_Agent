@@ -950,7 +950,7 @@ def create_database():
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         
-        CREATE TABLE IF NOT EXISTS monthly_stock_prices (
+        CREATE TABLE IF NOT EXISTS stock_prices (
             id SERIAL PRIMARY KEY,
             ticker VARCHAR(20) NOT NULL,
             price_date DATE NOT NULL,
@@ -1246,70 +1246,77 @@ def diagnose_database_issues():
     
     print("\n🔍 Database diagnosis complete!")
 
-# Monthly Stock Prices Functions
-def save_monthly_stock_price_supabase(ticker: str, price_date: str, price: float, price_source: str = 'yfinance') -> bool:
-    """Save monthly stock price to database using Supabase"""
+# Stock Prices Functions (unified for both weekly and monthly data)
+def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_source: str = 'yfinance') -> bool:
+    """Save stock price to database using Supabase"""
     try:
-        result = supabase.table('monthly_stock_prices').upsert({
+        result = supabase.table('stock_prices').upsert({
             'ticker': ticker,
             'price_date': price_date,
             'price': price,
             'price_source': price_source
         }).execute()
         
-        return len(result.data) > 0
+        return True
         
     except Exception as e:
-        print(f"❌ Error saving monthly stock price for {ticker} on {price_date}: {e}")
+        print(f"❌ Error saving stock price for {ticker} on {price_date}: {e}")
         return False
 
-def get_monthly_stock_price_supabase(ticker: str, price_date: str) -> Optional[float]:
-    """Get monthly stock price from database using Supabase"""
+def get_stock_price_supabase(ticker: str, price_date: str) -> Optional[float]:
+    """Get stock price from database using Supabase"""
     try:
-        result = supabase.table('monthly_stock_prices').select('price').eq('ticker', ticker).eq('price_date', price_date).execute()
+        result = supabase.table('stock_prices').select('price').eq('ticker', ticker).eq('price_date', price_date).execute()
         
         if result.data:
             return float(result.data[0]['price'])
         return None
         
     except Exception as e:
-        print(f"❌ Error getting monthly stock price for {ticker} on {price_date}: {e}")
+        print(f"❌ Error getting stock price for {ticker} on {price_date}: {e}")
         return None
 
-def get_monthly_stock_prices_range_supabase(ticker: str, start_date: str, end_date: str) -> List[Dict]:
-    """Get monthly stock prices for a date range using Supabase"""
+def get_stock_prices_range_supabase(ticker: str, start_date: str, end_date: str) -> List[Dict]:
+    """Get stock prices for a date range using Supabase"""
     try:
-        result = supabase.table('monthly_stock_prices').select('*').eq('ticker', ticker).gte('price_date', start_date).lte('price_date', end_date).order('price_date').execute()
+        result = supabase.table('stock_prices').select('*').eq('ticker', ticker).gte('price_date', start_date).lte('price_date', end_date).order('price_date').execute()
         
         return result.data if result.data else []
         
     except Exception as e:
-        print(f"❌ Error getting monthly stock prices range for {ticker}: {e}")
+        print(f"❌ Error getting stock prices range for {ticker}: {e}")
         return []
 
-def get_all_monthly_stock_prices_supabase() -> List[Dict]:
-    """Get all monthly stock prices using Supabase"""
+def get_all_stock_prices_supabase() -> List[Dict]:
+    """Get all stock prices using Supabase"""
     try:
-        result = supabase.table('monthly_stock_prices').select('*').order('ticker', 'price_date').execute()
+        result = supabase.table('stock_prices').select('*').order('ticker', 'price_date').execute()
         
         return result.data if result.data else []
         
     except Exception as e:
-        print(f"❌ Error getting all monthly stock prices: {e}")
+        print(f"❌ Error getting all stock prices: {e}")
         return []
 
-def delete_old_monthly_prices_supabase(days_old: int = 365) -> bool:
-    """Delete monthly stock prices older than specified days using Supabase"""
+def delete_old_stock_prices_supabase(days_old: int = 730) -> bool:
+    """Delete stock prices older than specified days using Supabase (default: 2 years)"""
     try:
         from datetime import datetime, timedelta
         cutoff_date = (datetime.now() - timedelta(days=days_old)).strftime('%Y-%m-%d')
         
-        result = supabase.table('monthly_stock_prices').delete().lt('price_date', cutoff_date).execute()
+        result = supabase.table('stock_prices').delete().lt('price_date', cutoff_date).execute()
         
         return True
         
     except Exception as e:
-        print(f"❌ Error deleting old monthly prices: {e}")
+        print(f"❌ Error deleting old stock prices: {e}")
         return False
+
+# Backward compatibility aliases
+save_monthly_stock_price_supabase = save_stock_price_supabase
+get_monthly_stock_price_supabase = get_stock_price_supabase
+save_weekly_stock_price_supabase = save_stock_price_supabase
+get_weekly_stock_price_supabase = get_stock_price_supabase
+get_weekly_stock_prices_range_supabase = get_stock_prices_range_supabase
 
 

@@ -598,6 +598,105 @@ class PortfolioAnalytics:
             st.debug(f"Error fetching historical price for {ticker} on {month_date}: {e}")
             return None
     
+    def fetch_historical_price_for_week(self, ticker, week_date):
+        """Fetch historical price for a specific week - uses database cache first"""
+        try:
+            # Use the week date (Monday) as the target date
+            target_date = week_date
+            target_date_str = target_date.strftime('%Y-%m-%d')
+            
+            # First, try to get from database cache
+            from database_config_supabase import get_stock_price_supabase, save_stock_price_supabase
+            cached_price = get_stock_price_supabase(ticker, target_date_str)
+            if cached_price and cached_price > 0:
+                return float(cached_price)
+            
+            # If not in cache, fetch from API and save to database
+            price = None
+            price_source = 'unknown'
+            
+            # Check if it's a mutual fund (numerical ticker)
+            clean_ticker = str(ticker).strip().upper()
+            clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
+            
+            if clean_ticker.isdigit():
+                # Mutual fund - use mftool for historical price
+                try:
+                    from mf_price_fetcher import fetch_mutual_fund_price
+                    price = fetch_mutual_fund_price(ticker, target_date_str)
+                    price_source = 'mftool'
+                    if price and price > 0:
+                        price = float(price)
+                except Exception as e:
+                    st.debug(f"MFTool failed for {ticker} on {target_date}: {e}")
+                
+                # Fallback to INDstocks for mutual funds
+                if not price or price <= 0:
+                    try:
+                        from indstocks_api import get_indstocks_client
+                        api_client = get_indstocks_client()
+                        if api_client and api_client.available:
+                            price_data = api_client.get_historical_price(ticker, target_date_str)
+                            if price_data and price_data.get('price'):
+                                price = float(price_data['price'])
+                                price_source = 'indstocks_mf'
+                    except Exception as e:
+                        st.debug(f"INDstocks failed for mutual fund {ticker} on {target_date}: {e}")
+            else:
+                # Stock - use yfinance for historical price
+                try:
+                    import yfinance as yf
+                    
+                    # Add .NS suffix for Indian stocks if not present
+                    if not ticker.endswith(('.NS', '.BO')):
+                        ticker_with_suffix = f"{ticker}.NS"
+                    else:
+                        ticker_with_suffix = ticker
+                    
+                    stock = yf.Ticker(ticker_with_suffix)
+                    
+                    # Get historical data for the specific date
+                    hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
+                    
+                    if not hist_data.empty:
+                        # Use closing price
+                        price = float(hist_data['Close'].iloc[0])
+                        price_source = 'yfinance'
+                    else:
+                        # If no data for exact date, try to get the closest available date
+                        hist_data = stock.history(start=target_date - timedelta(days=7), end=target_date + timedelta(days=7))
+                        if not hist_data.empty:
+                            # Use the closest date
+                            price = float(hist_data['Close'].iloc[-1])
+                            price_source = 'yfinance'
+                        
+                except Exception as e:
+                    st.debug(f"YFinance failed for {ticker} on {target_date}: {e}")
+                    
+                    # Fallback to INDstocks for stocks
+                    if not price or price <= 0:
+                        try:
+                            from indstocks_api import get_indstocks_client
+                            api_client = get_indstocks_client()
+                            if api_client and api_client.available:
+                                price_data = api_client.get_historical_price(ticker, target_date_str)
+                                if price_data and price_data.get('price'):
+                                    price = float(price_data['price'])
+                                    price_source = 'indstocks'
+                        except Exception as e:
+                            st.debug(f"INDstocks failed for stock {ticker} on {target_date}: {e}")
+            
+            # Save to database cache if we got a valid price
+            if price and price > 0:
+                save_stock_price_supabase(ticker, target_date_str, price, price_source)
+                return price
+            
+            return None
+            
+        except Exception as e:
+            st.debug(f"Error fetching historical price for {ticker} on {week_date}: {e}")
+            return None
+    
     def save_transactions_to_database(self, df, user_id, filename):
         """Save transactions to database"""
         try:
@@ -3944,6 +4043,235 @@ class PortfolioAnalytics:
                 st.error(f"Error in historical tracking: {e}")
                 import traceback
                 st.error(traceback.format_exc())
+            
+            # Weekly Analysis Section
+            st.markdown("---")
+            st.subheader("📅 Weekly Stock Analysis")
+            st.info("💡 Detailed weekly price tracking for all your stocks and mutual funds over the last 2 years")
+            
+            with st.expander("📊 View Weekly Analysis", expanded=False):
+                try:
+                    # Get all unique tickers
+                    all_tickers = df['ticker'].unique()
+                    
+                    if len(all_tickers) > 0:
+                        # Date range for 2 years back
+                        end_date = pd.Timestamp.now()
+                        start_date = end_date - timedelta(days=730)  # 2 years = 730 days
+                        
+                        # Generate weekly date range (Mondays)
+                        weekly_dates = pd.date_range(start=start_date, end=end_date, freq='W-MON')
+                        
+                        st.info(f"📅 Tracking {len(all_tickers)} holdings over {len(weekly_dates)} weeks (2 years)")
+                        
+                        # Collect weekly data for all tickers
+                        weekly_data = []
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        for idx, ticker in enumerate(all_tickers):
+                            status_text.text(f"Fetching weekly data for {ticker}... ({idx+1}/{len(all_tickers)})")
+                            
+                            ticker_data = df[df['ticker'] == ticker].iloc[0]
+                            stock_name = ticker_data.get('stock_name', ticker)
+                            
+                            for week_date in weekly_dates:
+                                # Fetch historical price for this week
+                                week_price = self.fetch_historical_price_for_week(ticker, week_date)
+                                
+                                if week_price and week_price > 0:
+                                    weekly_data.append({
+                                        'Date': week_date,
+                                        'Ticker': ticker,
+                                        'Stock Name': stock_name,
+                                        'Price': week_price
+                                    })
+                            
+                            progress_bar.progress((idx + 1) / len(all_tickers))
+                        
+                        progress_bar.empty()
+                        status_text.empty()
+                        
+                        if weekly_data:
+                            weekly_df = pd.DataFrame(weekly_data)
+                            
+                            # Create tabs for different views
+                            tab1, tab2, tab3 = st.tabs(["📈 Price Movement", "📊 Performance Table", "🔍 Individual Stock"])
+                            
+                            with tab1:
+                                st.subheader("📊 Stock Price Movement Overview")
+                                
+                                # Create interactive line chart
+                                fig = go.Figure()
+                                
+                                for ticker in weekly_df['Ticker'].unique():
+                                    ticker_weekly = weekly_df[weekly_df['Ticker'] == ticker]
+                                    stock_name = ticker_weekly['Stock Name'].iloc[0]
+                                    
+                                    fig.add_trace(go.Scatter(
+                                        x=ticker_weekly['Date'],
+                                        y=ticker_weekly['Price'],
+                                        mode='lines+markers',
+                                        name=f"{stock_name} ({ticker})",
+                                        hovertemplate=f"<b>{stock_name}</b><br>Date: %{{x}}<br>Price: ₹%{{y:.2f}}<extra></extra>"
+                                    ))
+                                
+                                fig.update_layout(
+                                    title="Weekly Price Movement - All Holdings",
+                                    xaxis_title="Week",
+                                    yaxis_title="Price (₹)",
+                                    hovermode='x unified',
+                                    height=600,
+                                    showlegend=True,
+                                    legend=dict(
+                                        yanchor="top",
+                                        y=0.99,
+                                        xanchor="left",
+                                        x=0.01
+                                    )
+                                )
+                                
+                                st.plotly_chart(fig, config={'displayModeBar': True, 'responsive': True})
+                                
+                                # Download option
+                                csv = weekly_df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Download Weekly Data",
+                                    data=csv,
+                                    file_name=f"weekly_analysis_{datetime.now().strftime('%Y%m%d')}.csv",
+                                    mime="text/csv"
+                                )
+                            
+                            with tab2:
+                                st.subheader("📊 Weekly Performance Comparison")
+                                
+                                # Calculate performance metrics
+                                comparison_data = []
+                                
+                                for ticker in weekly_df['Ticker'].unique():
+                                    ticker_weekly = weekly_df[weekly_df['Ticker'] == ticker].sort_values('Date')
+                                    
+                                    if len(ticker_weekly) >= 2:
+                                        first_price = ticker_weekly['Price'].iloc[0]
+                                        last_price = ticker_weekly['Price'].iloc[-1]
+                                        max_price = ticker_weekly['Price'].max()
+                                        min_price = ticker_weekly['Price'].min()
+                                        avg_price = ticker_weekly['Price'].mean()
+                                        
+                                        price_change = last_price - first_price
+                                        price_change_pct = (price_change / first_price) * 100 if first_price > 0 else 0
+                                        
+                                        comparison_data.append({
+                                            'Ticker': ticker,
+                                            'Stock Name': ticker_weekly['Stock Name'].iloc[0],
+                                            'Start Price': f"₹{first_price:.2f}",
+                                            'Current Price': f"₹{last_price:.2f}",
+                                            'Highest': f"₹{max_price:.2f}",
+                                            'Lowest': f"₹{min_price:.2f}",
+                                            'Average': f"₹{avg_price:.2f}",
+                                            'Change': f"₹{price_change:+.2f}",
+                                            'Change %': f"{price_change_pct:+.2f}%",
+                                            'Sort': price_change_pct
+                                        })
+                                
+                                if comparison_data:
+                                    comp_df = pd.DataFrame(comparison_data)
+                                    comp_df = comp_df.sort_values('Sort', ascending=False)
+                                    comp_df = comp_df.drop('Sort', axis=1)
+                                    
+                                    st.dataframe(
+                                        comp_df,
+                                        use_container_width=True,
+                                        hide_index=True
+                                    )
+                                    
+                                    # Best and worst performers
+                                    col1, col2 = st.columns(2)
+                                    
+                                    with col1:
+                                        if len(comp_df) > 0:
+                                            st.success(f"🏆 Best Performer: {comp_df.iloc[0]['Stock Name']} ({comp_df.iloc[0]['Change %']})")
+                                    
+                                    with col2:
+                                        if len(comp_df) > 0:
+                                            st.error(f"📉 Worst Performer: {comp_df.iloc[-1]['Stock Name']} ({comp_df.iloc[-1]['Change %']})")
+                                else:
+                                    st.info("No comparison data available")
+                            
+                            with tab3:
+                                st.subheader("Individual Stock Weekly Analysis")
+                                
+                                selected_ticker = st.selectbox(
+                                    "Select a stock/MF to analyze",
+                                    all_tickers,
+                                    format_func=lambda x: f"{df[df['ticker']==x]['stock_name'].iloc[0]} ({x})" if len(df[df['ticker']==x]) > 0 else x,
+                                    key="weekly_ticker_select"
+                                )
+                                
+                                if selected_ticker and weekly_data:
+                                    ticker_weekly = weekly_df[weekly_df['Ticker'] == selected_ticker].sort_values('Date')
+                                    
+                                    if not ticker_weekly.empty:
+                                        # Individual stock chart
+                                        fig_individual = go.Figure()
+                                        
+                                        fig_individual.add_trace(go.Scatter(
+                                            x=ticker_weekly['Date'],
+                                            y=ticker_weekly['Price'],
+                                            mode='lines+markers',
+                                            name=ticker_weekly['Stock Name'].iloc[0],
+                                            line=dict(color='green', width=3),
+                                            marker=dict(size=8),
+                                            fill='tonexty',
+                                            hovertemplate="Week: %{x}<br>Price: ₹%{y:.2f}<extra></extra>"
+                                        ))
+                                        
+                                        fig_individual.update_layout(
+                                            title=f"{ticker_weekly['Stock Name'].iloc[0]} - Weekly Performance",
+                                            xaxis_title="Week",
+                                            yaxis_title="Price (₹)",
+                                            hovermode='x unified',
+                                            height=500
+                                        )
+                                        
+                                        st.plotly_chart(fig_individual, config={'displayModeBar': True, 'responsive': True})
+                                        
+                                        # Statistics
+                                        col1, col2, col3, col4, col5 = st.columns(5)
+                                        
+                                        with col1:
+                                            st.metric("Start Price", f"₹{ticker_weekly['Price'].iloc[0]:.2f}")
+                                        
+                                        with col2:
+                                            st.metric("Current Price", f"₹{ticker_weekly['Price'].iloc[-1]:.2f}")
+                                        
+                                        with col3:
+                                            st.metric("Highest", f"₹{ticker_weekly['Price'].max():.2f}")
+                                        
+                                        with col4:
+                                            st.metric("Lowest", f"₹{ticker_weekly['Price'].min():.2f}")
+                                        
+                                        with col5:
+                                            st.metric("Average", f"₹{ticker_weekly['Price'].mean():.2f}")
+                                        
+                                        # Detailed data table
+                                        st.subheader("Weekly Price Data")
+                                        st.dataframe(
+                                            ticker_weekly[['Date', 'Price']].sort_values('Date', ascending=False),
+                                            use_container_width=True,
+                                            hide_index=True
+                                        )
+                                    else:
+                                        st.warning(f"No weekly data available for {selected_ticker}")
+                        else:
+                            st.warning("No weekly data available")
+                    else:
+                        st.info("No holdings found in portfolio")
+                        
+                except Exception as e:
+                    st.error(f"Error in weekly analysis: {e}")
+                    import traceback
+                    st.error(traceback.format_exc())
                 
         except Exception as e:
             st.error(f"Error processing performance data: {e}")
