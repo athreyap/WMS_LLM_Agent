@@ -228,15 +228,8 @@ class PortfolioAnalytics:
     def authenticate_user(self, username, password):
         """Authenticate user and initialize session"""
         try:
-            # Convert username to lowercase for case-insensitive comparison
-            username_lower = username.lower().strip()
-            
-            # Try to find user with case-insensitive username
-            user = get_user_by_username_supabase(username_lower)
-            
-            # If not found, try with original username (for backward compatibility)
-            if not user:
-                user = get_user_by_username_supabase(username)
+            # Get user (case-insensitive lookup handled by database function)
+            user = get_user_by_username_supabase(username.strip())
             
             # Temporary simple password handling - will be updated when login_system is fixed
             if user and user['password_hash'] == password:  # In production, use proper verification
@@ -529,7 +522,7 @@ class PortfolioAnalytics:
                     if price and price > 0:
                         price = float(price)
                 except Exception as e:
-                    st.debug(f"MFTool failed for {ticker} on {target_date}: {e}")
+                    print(f"MFTool failed for {ticker} on {target_date}: {e}")
                 
                 # Fallback to INDstocks for mutual funds
                 if not price or price <= 0:
@@ -542,7 +535,7 @@ class PortfolioAnalytics:
                                 price = float(price_data['price'])
                                 price_source = 'indstocks_mf'
                     except Exception as e:
-                        st.debug(f"INDstocks failed for mutual fund {ticker} on {target_date}: {e}")
+                        print(f"INDstocks failed for mutual fund {ticker} on {target_date}: {e}")
             else:
                 # Stock - use yfinance for historical price
                 try:
@@ -562,7 +555,7 @@ class PortfolioAnalytics:
                         
                         # If NSE fails, try BSE (.BO)
                         if hist_data.empty:
-                            st.debug(f"NSE data not found for {ticker}, trying BSE...")
+                            print(f"NSE data not found for {ticker}, trying BSE...")
                             ticker_with_suffix = f"{ticker}.BO"
                             stock = yf.Ticker(ticker_with_suffix)
                             hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
@@ -580,7 +573,7 @@ class PortfolioAnalytics:
                             price_source = 'yfinance'
                         
                 except Exception as e:
-                    st.debug(f"YFinance failed for {ticker} on {target_date}: {e}")
+                    print(f"YFinance failed for {ticker} on {target_date}: {e}")
                     
                     # Fallback to INDstocks for stocks
                     if not price or price <= 0:
@@ -593,7 +586,7 @@ class PortfolioAnalytics:
                                     price = float(price_data['price'])
                                     price_source = 'indstocks'
                         except Exception as e:
-                            st.debug(f"INDstocks failed for stock {ticker} on {target_date}: {e}")
+                            print(f"INDstocks failed for stock {ticker} on {target_date}: {e}")
             
             # Save to database cache if we got a valid price
             if price and price > 0:
@@ -603,7 +596,7 @@ class PortfolioAnalytics:
             return None
             
         except Exception as e:
-            st.debug(f"Error fetching historical price for {ticker} on {month_date}: {e}")
+            print(f"Error fetching historical price for {ticker} on {month_date}: {e}")
             return None
     
     def fetch_historical_price_for_week(self, ticker, week_date):
@@ -636,7 +629,7 @@ class PortfolioAnalytics:
                     if price and price > 0:
                         price = float(price)
                 except Exception as e:
-                    st.debug(f"MFTool failed for {ticker} on {target_date}: {e}")
+                    print(f"MFTool failed for {ticker} on {target_date}: {e}")
                 
                 # Fallback to INDstocks for mutual funds
                 if not price or price <= 0:
@@ -649,7 +642,7 @@ class PortfolioAnalytics:
                                 price = float(price_data['price'])
                                 price_source = 'indstocks_mf'
                     except Exception as e:
-                        st.debug(f"INDstocks failed for mutual fund {ticker} on {target_date}: {e}")
+                        print(f"INDstocks failed for mutual fund {ticker} on {target_date}: {e}")
             else:
                 # Stock - use yfinance for historical price
                 try:
@@ -669,7 +662,7 @@ class PortfolioAnalytics:
                         
                         # If NSE fails, try BSE (.BO)
                         if hist_data.empty:
-                            st.debug(f"NSE data not found for {ticker}, trying BSE...")
+                            print(f"NSE data not found for {ticker}, trying BSE...")
                             ticker_with_suffix = f"{ticker}.BO"
                             stock = yf.Ticker(ticker_with_suffix)
                             hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
@@ -687,7 +680,7 @@ class PortfolioAnalytics:
                             price_source = 'yfinance'
                         
                 except Exception as e:
-                    st.debug(f"YFinance failed for {ticker} on {target_date}: {e}")
+                    print(f"YFinance failed for {ticker} on {target_date}: {e}")
                     
                     # Fallback to INDstocks for stocks
                     if not price or price <= 0:
@@ -700,7 +693,7 @@ class PortfolioAnalytics:
                                     price = float(price_data['price'])
                                     price_source = 'indstocks'
                         except Exception as e:
-                            st.debug(f"INDstocks failed for stock {ticker} on {target_date}: {e}")
+                            print(f"INDstocks failed for stock {ticker} on {target_date}: {e}")
             
             # Save to database cache if we got a valid price
             if price and price > 0:
@@ -710,7 +703,7 @@ class PortfolioAnalytics:
             return None
             
         except Exception as e:
-            st.debug(f"Error fetching historical price for {ticker} on {week_date}: {e}")
+            print(f"Error fetching historical price for {ticker} on {week_date}: {e}")
             return None
     
     def save_transactions_to_database(self, df, user_id, filename):
@@ -757,6 +750,7 @@ class PortfolioAnalytics:
                 return True  # Return success since the file is already processed
             
             # Save transactions in bulk
+            st.info(f"💾 Saving {len(df)} transactions to database...")
             success = save_transactions_bulk_supabase(df, file_id, user_id)
             
             if success:
@@ -780,7 +774,12 @@ class PortfolioAnalytics:
                 
                 return True
             else:
-                st.error("Failed to save transactions to database")
+                st.error("❌ Failed to save transactions to database")
+                st.error("💡 This could be due to:")
+                st.error("   • Invalid data values (infinity, NaN, or out of range)")
+                st.error("   • Database connection issues")
+                st.error("   • Permission errors")
+                st.info("📊 Please check the console logs for detailed error messages")
                 return False
                 
         except Exception as e:
@@ -1066,9 +1065,9 @@ class PortfolioAnalytics:
                                                 # This would require a create function - for now just store in session
                                                 pass
                                         except Exception as e:
-                                            st.debug(f"Could not update sector for {ticker}: {e}")
+                                            print(f"Could not update sector for {ticker}: {e}")
                                 except Exception as e:
-                                    st.debug(f"Could not fetch sector for {ticker}: {e}")
+                                    print(f"Could not fetch sector for {ticker}: {e}")
                                     sector = 'Unknown'
                         
                         # If still no sector, use a more intelligent categorization
@@ -5677,7 +5676,7 @@ class PortfolioAnalytics:
         """Get AI-generated portfolio summary"""
         query = "Provide a comprehensive summary of my portfolio including performance, allocation, and key insights"
         self.process_ai_query(query)
-
+    
     def render_settings_page(self):
         """Render settings page"""
         st.header("⚙️ Settings")

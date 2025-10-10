@@ -314,11 +314,14 @@ class StockData(Base):
 def create_user_supabase(username: str, password_hash: str, password_salt: str, email: str = None, role: str = "user", folder_path: str = None) -> Optional[Dict]:
     """Create a new user using Supabase client"""
     try:
+        # Convert username to lowercase for case-insensitive storage
+        username_lower = username.lower()
+        
         # Convert folder path to GitHub path for Streamlit Cloud
-        github_folder_path = get_user_folder_path(username, folder_path)
+        github_folder_path = get_user_folder_path(username_lower, folder_path)
         
         data = {
-            "username": username,
+            "username": username_lower,
             "password_hash": password_hash,
             "password_salt": password_salt,
             "email": email,
@@ -330,10 +333,10 @@ def create_user_supabase(username: str, password_hash: str, password_salt: str, 
         result = supabase.table("users").insert(data).execute()
         
         if result.data:
-            print(f"✅ User {username} created successfully")
+            print(f"✅ User {username_lower} created successfully")
             return result.data[0]
         else:
-            print(f"❌ Failed to create user {username}")
+            print(f"❌ Failed to create user {username_lower}")
             return None
             
     except Exception as e:
@@ -341,9 +344,12 @@ def create_user_supabase(username: str, password_hash: str, password_salt: str, 
         return None
 
 def get_user_by_username_supabase(username: str) -> Optional[Dict]:
-    """Get user by username using Supabase client"""
+    """Get user by username using Supabase client (case-insensitive)"""
     try:
-        result = supabase.table("users").select("*").eq("username", username).execute()
+        # Convert username to lowercase for case-insensitive lookup
+        username_lower = username.lower()
+        
+        result = supabase.table("users").select("*").eq("username", username_lower).execute()
         
         if result.data:
             return result.data[0]
@@ -867,6 +873,11 @@ def save_transactions_bulk_supabase(df: pd.DataFrame, file_id: int, user_id: int
         
         # Insert all transactions in bulk
         print(f"🔄 Inserting {len(bulk_data)} transactions into database...")
+        
+        # Debug: Print first transaction to verify data structure
+        if bulk_data:
+            print(f"📊 Sample transaction data: {bulk_data[0]}")
+        
         result = supabase.table("investment_transactions").insert(bulk_data).execute()
         
         if result.data:
