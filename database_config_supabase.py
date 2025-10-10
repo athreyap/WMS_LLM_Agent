@@ -833,15 +833,20 @@ def save_transactions_bulk_supabase(df: pd.DataFrame, file_id: int, user_id: int
             return True
         
         # Prepare bulk data
+        import math
         bulk_data = []
         for _, row in df.iterrows():
             # Safely convert quantity to float, handling inf/nan
             quantity = row.get('quantity', 0)
             if pd.notna(quantity):
-                quantity_float = float(quantity)
-                # Check for inf/-inf and replace with 0
-                if not (-1e308 < quantity_float < 1e308):  # Check if within JSON float range
-                    print(f"⚠️ Invalid quantity value {quantity_float} for {row.get('ticker', 'unknown')}, using 0")
+                try:
+                    quantity_float = float(quantity)
+                    # Check for inf/-inf/nan using math.isfinite
+                    if not math.isfinite(quantity_float):
+                        print(f"⚠️ Invalid quantity value {quantity_float} for {row.get('ticker', 'unknown')}, using 0")
+                        quantity_float = 0
+                except (ValueError, OverflowError) as e:
+                    print(f"⚠️ Could not convert quantity {quantity} for {row.get('ticker', 'unknown')}: {e}, using 0")
                     quantity_float = 0
             else:
                 quantity_float = 0
@@ -849,10 +854,14 @@ def save_transactions_bulk_supabase(df: pd.DataFrame, file_id: int, user_id: int
             # Safely convert price to float, handling inf/nan
             price = row.get('price')
             if pd.notna(price):
-                price_float = float(price)
-                # Check for inf/-inf and replace with None
-                if not (-1e308 < price_float < 1e308):  # Check if within JSON float range
-                    print(f"⚠️ Invalid price value {price_float} for {row.get('ticker', 'unknown')}, using None")
+                try:
+                    price_float = float(price)
+                    # Check for inf/-inf/nan using math.isfinite
+                    if not math.isfinite(price_float):
+                        print(f"⚠️ Invalid price value {price_float} for {row.get('ticker', 'unknown')}, using None")
+                        price_float = None
+                except (ValueError, OverflowError) as e:
+                    print(f"⚠️ Could not convert price {price} for {row.get('ticker', 'unknown')}: {e}, using None")
                     price_float = None
             else:
                 price_float = None
