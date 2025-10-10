@@ -1677,14 +1677,17 @@ class PortfolioAnalytics:
             
             # Show recent chat
             if st.session_state.chat_history:
-                with st.sidebar.expander("💬 Chat History", expanded=False):
-                    for msg in st.session_state.chat_history[-3:]:  # Show last 3 messages
+                with st.sidebar.expander("💬 Chat History", expanded=True):
+                    for i, msg in enumerate(st.session_state.chat_history[-5:]):  # Show last 5 messages
                         if msg["role"] == "user":
-                            st.markdown(f"**You:** {msg['content'][:100]}...")
+                            st.markdown(f"**You:** {msg['content']}")
                         else:
-                            st.markdown(f"**AI:** {msg['content'][:100]}...")
+                            st.markdown(f"**AI:** {msg['content']}")
+                        
+                        if i < len(st.session_state.chat_history[-5:]) - 1:
+                            st.markdown("---")
                     
-                    if st.button("🗑️ Clear", key="clear_chat"):
+                    if st.button("🗑️ Clear Chat", key="clear_chat"):
                         st.session_state.chat_history = []
                         st.rerun()
         
@@ -5045,21 +5048,22 @@ class PortfolioAnalytics:
             st.info("This might be due to missing columns in the database schema")
     
     def process_ai_query_with_db_access(self, user_query, uploaded_files=None):
-        """Process AI query with full database access"""
+        """Process AI query with full database access - ChatGPT style with conversation history"""
         try:
             # Add user message to chat history
             st.session_state.chat_history.append({"role": "user", "content": user_query})
             
             # Get complete portfolio data from database
-            from database_config_supabase import get_transactions_supabase, get_all_stock_prices_supabase
+            from database_config_supabase import get_transactions_supabase
             
             user_id = self.session_state.user_id
             transactions = get_transactions_supabase(user_id=user_id)
             
-            # Prepare context with database data
+            # Prepare rich context with database data
             context_data = {
                 "total_transactions": len(transactions) if transactions else 0,
-                "portfolio_summary": {}
+                "portfolio_summary": {},
+                "conversation_history": st.session_state.chat_history[:-1]  # All messages except current
             }
             
             if self.session_state.portfolio_data is not None:
@@ -5068,32 +5072,143 @@ class PortfolioAnalytics:
                     "total_invested": float(df['invested_amount'].sum()),
                     "current_value": float(df['current_value'].sum()),
                     "total_pnl": float(df['unrealized_pnl'].sum()),
+                    "pnl_percentage": float((df['unrealized_pnl'].sum() / df['invested_amount'].sum()) * 100) if df['invested_amount'].sum() > 0 else 0,
                     "total_stocks": len(df['ticker'].unique()),
+                    "holdings": df[['ticker', 'stock_name', 'quantity', 'invested_amount', 'current_value', 'unrealized_pnl', 'pnl_percentage']].to_dict('records'),
                     "top_performers": df.nlargest(5, 'unrealized_pnl')[['ticker', 'stock_name', 'unrealized_pnl', 'pnl_percentage']].to_dict('records'),
                     "worst_performers": df.nsmallest(5, 'unrealized_pnl')[['ticker', 'stock_name', 'unrealized_pnl', 'pnl_percentage']].to_dict('records'),
                     "sector_allocation": df.groupby('sector')['invested_amount'].sum().to_dict() if 'sector' in df.columns else {},
                     "channel_allocation": df.groupby('channel')['invested_amount'].sum().to_dict() if 'channel' in df.columns else {}
                 }
             
-            # Process uploaded files
+            # Process uploaded files (PDFs)
             file_content = ""
             if uploaded_files:
-                file_content = self.process_uploaded_files(uploaded_files)
+                with st.spinner("📄 Processing uploaded documents..."):
+                    file_content = self.process_uploaded_files(uploaded_files)
+                    if file_content:
+                        st.success(f"✅ Processed {len(uploaded_files)} document(s)")
             
-            # Generate AI response using Gemini
-            ai_response = self.generate_ai_response(user_query, context_data, file_content, "Google Gemini 2.5 Flash (Fast)")
+            # Build conversation context for ChatGPT-style interaction
+            conversation_messages = []
+            
+            # System message with portfolio context
+            system_prompt = f"""You are an expert financial advisor and portfolio analyst with access to real-time portfolio data.
+
+PORTFOLIO SUMMARY:
+- Total Invested: ₹{context_data['portfolio_summary'].get('total_invested', 0):,.2f}
+- Current Value: ₹{context_data['portfolio_summary'].get('current_value', 0):,.2f}
+- Total P&L: ₹{context_data['portfolio_summary'].get('total_pnl', 0):,.2f} ({context_data['portfolio_summary'].get('pnl_percentage', 0):.2f}%)
+- Number of Holdings: {context_data['portfolio_summary'].get('total_stocks', 0)}
+
+You have access to:
+1. Complete portfolio data (all holdings, transactions, P&L)
+2. Sector and channel allocation
+3. Top and worst performers
+4. Uploaded PDF documents (if any)
+5. Internet search capability (mention if you need current market data)
+
+Provide detailed, actionable insights. Reference specific stocks and numbers from the portfolio data."""
+
+            conversation_messages.append({"role": "system", "content": system_prompt})
+            
+            # Add conversation history (last 10 messages for context)
+            for msg in st.session_state.chat_history[-11:-1]:  # Exclude current message
+                conversation_messages.append(msg)
+            
+            # Add current user message
+            current_message = user_query
+            if file_content:
+                current_message += f"\n\n[UPLOADED DOCUMENTS CONTENT]:\n{file_content[:5000]}"  # Limit to 5000 chars
+            
+            conversation_messages.append({"role": "user", "content": current_message})
+            
+            # Generate AI response using Gemini with conversation context
+            with st.spinner("🤔 Analyzing your portfolio..."):
+                ai_response = self.generate_conversational_response(conversation_messages, "Google Gemini 2.5 Flash (Fast)")
             
             # Add AI response to chat history
             st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
             
-            # Show response in main area if on a page
+            # Show response in main area
             st.success("✅ AI Response:")
             st.markdown(ai_response)
             
         except Exception as e:
             error_msg = f"Error processing AI query: {e}"
             st.error(error_msg)
+            import traceback
+            st.error(traceback.format_exc())
             st.session_state.chat_history.append({"role": "assistant", "content": f"❌ {error_msg}"})
+    
+    def generate_conversational_response(self, conversation_messages, ai_model="Google Gemini 2.5 Flash (Fast)"):
+        """Generate conversational AI response like ChatGPT with full context"""
+        try:
+            if ai_model in ["Google Gemini 2.5 Flash (Fast)", "Google Gemini 2.5 Pro (Advanced)"]:
+                # Use Gemini
+                api_key = st.session_state.gemini_api_key
+                if not api_key:
+                    return "❌ Gemini API key not configured"
+                
+                genai.configure(api_key=api_key)
+                
+                # Try different Gemini models
+                model_names = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-flash-latest']
+                model = None
+                
+                for model_name in model_names:
+                    try:
+                        model = genai.GenerativeModel(model_name)
+                        break
+                    except:
+                        continue
+                
+                if not model:
+                    return "❌ No working Gemini model found"
+                
+                # Convert conversation to Gemini format
+                # Gemini uses a simpler format - combine system + history into context
+                full_context = ""
+                user_message = ""
+                
+                for msg in conversation_messages:
+                    if msg["role"] == "system":
+                        full_context += f"SYSTEM CONTEXT:\n{msg['content']}\n\n"
+                    elif msg["role"] == "user":
+                        user_message = msg['content']
+                        if len(conversation_messages) > 2:  # If there's history
+                            full_context += f"Previous User: {msg['content']}\n"
+                    elif msg["role"] == "assistant":
+                        full_context += f"Previous Assistant: {msg['content']}\n"
+                
+                # Final prompt with full context
+                final_prompt = f"{full_context}\n\nCurrent User Question: {user_message}\n\nProvide a detailed, helpful response:"
+                
+                # Generate response
+                response = model.generate_content(final_prompt)
+                return response.text
+                
+            else:
+                # Use OpenAI ChatGPT
+                from openai import OpenAI
+                api_key = st.session_state.openai_api_key
+                if not api_key:
+                    return "❌ OpenAI API key not configured"
+                
+                client = OpenAI(api_key=api_key)
+                
+                # ChatGPT natively supports conversation format
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=conversation_messages,
+                    temperature=0.7,
+                    max_tokens=2000
+                )
+                
+                return response.choices[0].message.content
+                
+        except Exception as e:
+            return f"❌ Error generating response: {str(e)}"
     
     def render_ai_assistant_page(self):
         """Render AI Assistant page as a clean chatbot with database access"""
