@@ -335,14 +335,33 @@ class PortfolioAnalytics:
                 df['channel'] = channel_name
                 st.info(f"📁 Channel extracted from filename: {channel_name}")
             
+            # Check if this is a holdings-only file (no dates/transaction types)
+            has_dates = 'date' in df.columns and not df['date'].isna().all()
+            has_transaction_types = 'transaction_type' in df.columns and not df['transaction_type'].isna().all()
+            
+            if not has_dates or not has_transaction_types:
+                # This is a holdings-only file - treat as purchases from 1 month ago
+                st.info(f"📋 Detected holdings-only file (no dates/transaction types)")
+                
+                # Set default values
+                if 'date' not in df.columns or df['date'].isna().all():
+                    # Set date as 1 month back from today
+                    one_month_ago = pd.Timestamp.now() - pd.Timedelta(days=30)
+                    df['date'] = one_month_ago
+                    st.info(f"📅 Using 1 month ago ({one_month_ago.strftime('%Y-%m-%d')}) as purchase date for all holdings")
+                
+                if 'transaction_type' not in df.columns or df['transaction_type'].isna().all():
+                    df['transaction_type'] = 'buy'
+                    st.info(f"💼 Treating all as 'buy' transactions (purchases from 1 month ago)")
+            
             # Ensure required columns exist
-            required_columns = ['ticker', 'quantity', 'transaction_type', 'date']
+            required_columns = ['ticker', 'quantity']
             missing_columns = [col for col in required_columns if col not in df.columns]
             
             if missing_columns:
                 st.error(f"❌ Missing required columns in {uploaded_file.name}: {missing_columns}")
-                st.info("Required columns: date, ticker, quantity, transaction_type")
-                st.info("Optional columns: price, stock_name, sector")
+                st.info("Required columns: ticker, quantity")
+                st.info("Optional columns: date, transaction_type, price, stock_name, sector")
                 return False
             
             # Clean and validate data
@@ -3690,6 +3709,241 @@ class PortfolioAnalytics:
                     st.info("No monthly P&L data available for 1-year buy stocks")
             else:
                 st.info("No buy transactions found in the last year")
+            
+            # Historical Performance Tracking for All Holdings
+            st.markdown("---")
+            st.subheader("📊 Historical Performance Tracking (All Holdings)")
+            st.info("💡 Track monthly/weekly performance for all your stocks and mutual funds over the past year")
+            
+            # Time period selection
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                tracking_period = st.selectbox(
+                    "Select Tracking Period",
+                    ["Monthly", "Weekly"],
+                    help="Choose how frequently to track performance"
+                )
+            
+            try:
+                # Get all unique tickers from portfolio
+                all_tickers = df['ticker'].unique()
+                
+                if len(all_tickers) > 0:
+                    # Date range for 1 year back
+                    end_date = pd.Timestamp.now()
+                    start_date = end_date - timedelta(days=365)
+                    
+                    # Generate date range based on selected period
+                    if tracking_period == "Monthly":
+                        date_range = pd.date_range(start=start_date, end=end_date, freq='MS')  # Month start
+                        period_label = "Month"
+                    else:
+                        date_range = pd.date_range(start=start_date, end=end_date, freq='W-MON')  # Weekly on Monday
+                        period_label = "Week"
+                    
+                    st.info(f"📅 Tracking {len(all_tickers)} holdings over {len(date_range)} {period_label.lower()}s")
+                    
+                    # Create tabs for different views
+                    tab1, tab2, tab3 = st.tabs(["📈 Performance Chart", "📊 Comparison Table", "🔍 Individual Analysis"])
+                    
+                    with tab1:
+                        st.subheader(f"{period_label}ly Performance Overview")
+                        
+                        # Collect historical data for all tickers
+                        historical_data = []
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        for idx, ticker in enumerate(all_tickers[:20]):  # Limit to first 20 for performance
+                            status_text.text(f"Fetching data for {ticker}... ({idx+1}/{min(len(all_tickers), 20)})")
+                            
+                            ticker_data = df[df['ticker'] == ticker].iloc[0]
+                            stock_name = ticker_data.get('stock_name', ticker)
+                            
+                            for date in date_range:
+                                # Fetch historical price for this date
+                                hist_price = self.fetch_historical_price_for_month(ticker, date)
+                                
+                                if hist_price and hist_price > 0:
+                                    historical_data.append({
+                                        'Date': date,
+                                        'Ticker': ticker,
+                                        'Stock Name': stock_name,
+                                        'Price': hist_price
+                                    })
+                            
+                            progress_bar.progress((idx + 1) / min(len(all_tickers), 20))
+                        
+                        progress_bar.empty()
+                        status_text.empty()
+                        
+                        if historical_data:
+                            hist_df = pd.DataFrame(historical_data)
+                            
+                            # Create interactive line chart
+                            fig = go.Figure()
+                            
+                            for ticker in hist_df['Ticker'].unique():
+                                ticker_hist = hist_df[hist_df['Ticker'] == ticker]
+                                stock_name = ticker_hist['Stock Name'].iloc[0]
+                                
+                                fig.add_trace(go.Scatter(
+                                    x=ticker_hist['Date'],
+                                    y=ticker_hist['Price'],
+                                    mode='lines+markers',
+                                    name=f"{stock_name} ({ticker})",
+                                    hovertemplate=f"<b>{stock_name}</b><br>Date: %{{x}}<br>Price: ₹%{{y:.2f}}<extra></extra>"
+                                ))
+                            
+                            fig.update_layout(
+                                title=f"{period_label}ly Price Movement - All Holdings",
+                                xaxis_title="Date",
+                                yaxis_title="Price (₹)",
+                                hovermode='x unified',
+                                height=600,
+                                showlegend=True,
+                                legend=dict(
+                                    yanchor="top",
+                                    y=0.99,
+                                    xanchor="left",
+                                    x=0.01
+                                )
+                            )
+                            
+                            st.plotly_chart(fig, config={'displayModeBar': True, 'responsive': True})
+                            
+                            # Download option
+                            csv = hist_df.to_csv(index=False)
+                            st.download_button(
+                                label=f"📥 Download {period_label}ly Data",
+                                data=csv,
+                                file_name=f"historical_performance_{tracking_period.lower()}_{datetime.now().strftime('%Y%m%d')}.csv",
+                                mime="text/csv"
+                            )
+                        else:
+                            st.warning("No historical data available")
+                    
+                    with tab2:
+                        st.subheader(f"{period_label}ly Performance Comparison")
+                        
+                        if historical_data:
+                            # Calculate performance metrics
+                            comparison_data = []
+                            
+                            for ticker in hist_df['Ticker'].unique():
+                                ticker_hist = hist_df[hist_df['Ticker'] == ticker].sort_values('Date')
+                                
+                                if len(ticker_hist) >= 2:
+                                    first_price = ticker_hist['Price'].iloc[0]
+                                    last_price = ticker_hist['Price'].iloc[-1]
+                                    max_price = ticker_hist['Price'].max()
+                                    min_price = ticker_hist['Price'].min()
+                                    
+                                    price_change = last_price - first_price
+                                    price_change_pct = (price_change / first_price) * 100 if first_price > 0 else 0
+                                    
+                                    comparison_data.append({
+                                        'Ticker': ticker,
+                                        'Stock Name': ticker_hist['Stock Name'].iloc[0],
+                                        'Start Price': f"₹{first_price:.2f}",
+                                        'Current Price': f"₹{last_price:.2f}",
+                                        'Highest': f"₹{max_price:.2f}",
+                                        'Lowest': f"₹{min_price:.2f}",
+                                        'Change': f"₹{price_change:+.2f}",
+                                        'Change %': f"{price_change_pct:+.2f}%",
+                                        'Sort': price_change_pct
+                                    })
+                            
+                            if comparison_data:
+                                comp_df = pd.DataFrame(comparison_data)
+                                comp_df = comp_df.sort_values('Sort', ascending=False)
+                                comp_df = comp_df.drop('Sort', axis=1)
+                                
+                                st.dataframe(
+                                    comp_df,
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
+                                
+                                # Best and worst performers
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    st.success(f"🏆 Best Performer: {comp_df.iloc[0]['Stock Name']} ({comp_df.iloc[0]['Change %']})")
+                                
+                                with col2:
+                                    st.error(f"📉 Worst Performer: {comp_df.iloc[-1]['Stock Name']} ({comp_df.iloc[-1]['Change %']})")
+                        else:
+                            st.info("No comparison data available")
+                    
+                    with tab3:
+                        st.subheader("Individual Stock Analysis")
+                        
+                        selected_ticker = st.selectbox(
+                            "Select a stock/MF to analyze",
+                            all_tickers,
+                            format_func=lambda x: f"{df[df['ticker']==x]['stock_name'].iloc[0]} ({x})" if len(df[df['ticker']==x]) > 0 else x
+                        )
+                        
+                        if selected_ticker and historical_data:
+                            ticker_hist = hist_df[hist_df['Ticker'] == selected_ticker].sort_values('Date')
+                            
+                            if not ticker_hist.empty:
+                                # Individual stock chart
+                                fig_individual = go.Figure()
+                                
+                                fig_individual.add_trace(go.Scatter(
+                                    x=ticker_hist['Date'],
+                                    y=ticker_hist['Price'],
+                                    mode='lines+markers',
+                                    name=ticker_hist['Stock Name'].iloc[0],
+                                    line=dict(color='blue', width=3),
+                                    marker=dict(size=8),
+                                    fill='tonexty',
+                                    hovertemplate="Date: %{x}<br>Price: ₹%{y:.2f}<extra></extra>"
+                                ))
+                                
+                                fig_individual.update_layout(
+                                    title=f"{ticker_hist['Stock Name'].iloc[0]} - {period_label}ly Performance",
+                                    xaxis_title="Date",
+                                    yaxis_title="Price (₹)",
+                                    hovermode='x unified',
+                                    height=500
+                                )
+                                
+                                st.plotly_chart(fig_individual, config={'displayModeBar': True, 'responsive': True})
+                                
+                                # Statistics
+                                col1, col2, col3, col4 = st.columns(4)
+                                
+                                with col1:
+                                    st.metric("Start Price", f"₹{ticker_hist['Price'].iloc[0]:.2f}")
+                                
+                                with col2:
+                                    st.metric("Current Price", f"₹{ticker_hist['Price'].iloc[-1]:.2f}")
+                                
+                                with col3:
+                                    st.metric("Highest", f"₹{ticker_hist['Price'].max():.2f}")
+                                
+                                with col4:
+                                    st.metric("Lowest", f"₹{ticker_hist['Price'].min():.2f}")
+                                
+                                # Detailed data table
+                                st.subheader(f"{period_label}ly Price Data")
+                                st.dataframe(
+                                    ticker_hist[['Date', 'Price']].sort_values('Date', ascending=False),
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
+                            else:
+                                st.warning(f"No historical data available for {selected_ticker}")
+                else:
+                    st.info("No holdings found in portfolio")
+                    
+            except Exception as e:
+                st.error(f"Error in historical tracking: {e}")
+                import traceback
+                st.error(traceback.format_exc())
                 
         except Exception as e:
             st.error(f"Error processing performance data: {e}")
