@@ -251,8 +251,8 @@ class PortfolioAnalytics:
                 self.session_state.user_role = user['role']
                 self.session_state.login_time = datetime.now()
                 
-                # Initialize portfolio data after login
-                self.initialize_portfolio_data()
+                # Initialize portfolio data after login (enable background cache)
+                self.initialize_portfolio_data(skip_cache_population=False)
                 return True
             return False
             
@@ -860,24 +860,39 @@ class PortfolioAnalytics:
             st.error(f"Registration error: {e}")
             return False
     
-    def initialize_portfolio_data(self):
-        """Initialize portfolio data after login"""
+    def initialize_portfolio_data(self, skip_cache_population=False):
+        """
+        Initialize portfolio data after login
+        
+        Args:
+            skip_cache_population: If True, skip the weekly/monthly cache population
+        """
         try:
             user_id = self.session_state.user_id
             if not user_id:
                 return
             
-            # Fetch transactions and update missing historical prices
-            self.update_missing_historical_prices(user_id)
-            
-            # Fetch live prices and sectors
+            # Fetch live prices and sectors (essential for current portfolio view)
             self.fetch_live_prices_and_sectors(user_id)
             
-            # Pre-populate monthly stock prices cache for 1-year buy stocks
-            self.populate_monthly_prices_cache(user_id)
-            
-            # Load portfolio data
+            # Load portfolio data (essential for dashboard)
             self.load_portfolio_data(user_id)
+            
+            # Check if we should populate cache (only once per login session)
+            if not skip_cache_population:
+                # Use a session-specific key that persists across page reloads
+                cache_key = f'cache_populated_{user_id}'
+                
+                if cache_key not in st.session_state:
+                    st.session_state[cache_key] = False
+                
+                # Only populate cache once per login session
+                if not st.session_state[cache_key]:
+                    st.session_state[cache_key] = True
+                    
+                    # Show a small notification
+                    with st.spinner("📊 Updating historical data cache..."):
+                        self.populate_monthly_prices_cache(user_id)
             
         except Exception as e:
             st.error(f"Error initializing portfolio data: {e}")
