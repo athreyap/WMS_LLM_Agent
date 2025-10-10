@@ -360,14 +360,31 @@ class PortfolioAnalytics:
             # Clean and validate data
             st.info(f"🔍 Initial data: {len(df)} rows")
             st.info(f"📊 Quantity column sample: {df['quantity'].head().tolist()}")
+            st.info(f"📊 Quantity column dtype before conversion: {df['quantity'].dtype}")
             
             # Convert quantity to numeric first (before dropping NaN)
             df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce')
             st.info(f"📊 After numeric conversion: {df['quantity'].head().tolist()}")
+            st.info(f"📊 Quantity column dtype after conversion: {df['quantity'].dtype}")
+            st.info(f"📊 Quantity NaN count: {df['quantity'].isna().sum()}")
+            st.info(f"📊 Quantity zero count: {(df['quantity'] == 0).sum()}")
+            
+            # Clean ticker column - remove scientific notation and invalid formats
+            df['ticker'] = df['ticker'].astype(str).str.strip()
+            
+            # Flag invalid tickers
+            invalid_tickers = df[df['ticker'].str.contains(r'[/]|E\+|E-', regex=True, case=False, na=False)]
+            if not invalid_tickers.empty:
+                st.warning(f"⚠️ Found {len(invalid_tickers)} rows with invalid ticker formats (scientific notation or fractions)")
+                st.info(f"Invalid tickers: {invalid_tickers['ticker'].unique().tolist()}")
+                # Remove invalid tickers
+                df = df[~df['ticker'].str.contains(r'[/]|E\+|E-', regex=True, case=False, na=False)]
+                st.info(f"📊 Removed invalid tickers: {len(df)} rows remaining")
             
             # Drop rows with invalid ticker or quantity
             df = df.dropna(subset=['ticker', 'quantity'])
             st.info(f"📊 Data cleaned: {len(df)} valid rows remaining")
+            st.info(f"📊 Final quantity sample: {df['quantity'].head().tolist()}")
             
             # Convert date to datetime
             df['date'] = pd.to_datetime(df['date'], errors='coerce')
@@ -447,8 +464,17 @@ class PortfolioAnalytics:
                 if 'price' in df.columns and pd.notna(df.at[idx, 'price']) and df.at[idx, 'price'] > 0:
                     continue
                 
+                # Detect if this is a mutual fund (ISIN code or numeric)
+                ticker_str = str(ticker).strip()
+                is_mutual_fund = (
+                    ticker_str.isdigit() or 
+                    ticker_str.startswith('MF_') or
+                    ticker_str.startswith('INF') or  # ISIN codes start with INF
+                    len(ticker_str) == 12  # ISIN codes are 12 characters
+                )
+                
                 # Fetch historical price
-                if str(ticker).isdigit() or ticker.startswith('MF_'):
+                if is_mutual_fund:
                     # Mutual fund
                     historical_price = get_mutual_fund_price(
                         ticker, 
@@ -457,7 +483,13 @@ class PortfolioAnalytics:
                         transaction_date.strftime('%Y-%m-%d')
                     )
                 else:
-                    # Stock
+                    # Stock - validate ticker format
+                    if '/' in ticker_str or 'E+' in ticker_str.upper():
+                        # Invalid ticker format (scientific notation or fractions)
+                        st.warning(f"⚠️ Invalid ticker format: {ticker_str}")
+                        df.at[idx, 'price'] = 0.0
+                        continue
+                    
                     historical_price = get_stock_price(
                         ticker, 
                         ticker, 
@@ -468,7 +500,7 @@ class PortfolioAnalytics:
                     df.at[idx, 'price'] = historical_price
                 else:
                     # Use default price if historical price not available
-                    if str(ticker).isdigit() or ticker.startswith('MF_'):
+                    if is_mutual_fund:
                         df.at[idx, 'price'] = 100.0  # Default MF price
                     else:
                         df.at[idx, 'price'] = 1000.0  # Default stock price
@@ -1143,8 +1175,14 @@ class PortfolioAnalytics:
                 print(f"🔍 DEBUG: Quantity stats: min={df['quantity'].min()}, max={df['quantity'].max()}, mean={df['quantity'].mean()}")
                 print(f"🔍 DEBUG: NaN quantities: {df['quantity'].isna().sum()}")
                 print(f"🔍 DEBUG: Zero quantities: {(df['quantity'] == 0).sum()}")
+                
+                # Also show in Streamlit for visibility
+                if df['quantity'].isna().sum() > 0 or (df['quantity'] == 0).sum() > 0:
+                    st.warning(f"⚠️ DATA ISSUE: Found {df['quantity'].isna().sum()} NaN quantities and {(df['quantity'] == 0).sum()} zero quantities out of {len(df)} transactions")
+                    st.info(f"📊 Quantity stats: min={df['quantity'].min()}, max={df['quantity'].max()}, mean={df['quantity'].mean()}")
             else:
                 print(f"❌ DEBUG: 'quantity' column not found in DataFrame!")
+                st.error("❌ CRITICAL: 'quantity' column not found in transaction data!")
             
             # Add live prices to transactions
             df['live_price'] = df['ticker'].map(self.session_state.live_prices)
@@ -1512,7 +1550,7 @@ class PortfolioAnalytics:
         st.sidebar.title("Navigation")
         page = st.sidebar.selectbox(
             "Choose a page:",
-            ["🏠 Overview", "📈 Performance", "📊 Allocation", "💰 P&L Analysis", "🤖 AI Assistant", "📁 Files", "⚙️ Settings"],
+            ["🏠 Overview", "📈 Performance", "📊 Allocation", "💰 P&L Analysis", "📁 Files", "⚙️ Settings"],
             key="main_navigation"
         )
         
@@ -1566,41 +1604,11 @@ class PortfolioAnalytics:
                     st.error(f"Traceback: {traceback.format_exc()}")
         
         # AI Assistant in sidebar (available on all pages)
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("🤖 AI Assistant")
-        
-        # Model selection
-        ai_model = st.sidebar.selectbox(
-            "🤖 Choose AI Model",
-            ["Google Gemini 2.5 Flash (Fast)", "Google Gemini 2.5 Pro (Advanced)", "OpenAI GPT-3.5"],
-            help="Gemini 2.5 Flash: Fast & efficient. Gemini 2.5 Pro: Advanced analysis. OpenAI: 3/min limit",
-            key="ai_model_select"
-        )
-        
-        if ai_model == "Google Gemini 2.5 Flash (Fast)":
-            st.sidebar.success("✅ **Gemini 2.5 Flash**: 60 requests/minute, fast & efficient!")
-        elif ai_model == "Google Gemini 2.5 Pro (Advanced)":
-            st.sidebar.success("✅ **Gemini 2.5 Pro**: Advanced analysis, 60 requests/minute!")
-        else:
-            st.sidebar.warning("⚠️ **OpenAI**: 3 requests/minute, higher cost")
-        
-        # Show usage tracking
+        # Initialize usage tracking
         if 'api_call_count' not in st.session_state:
             st.session_state.api_call_count = 0
         if 'api_call_times' not in st.session_state:
             st.session_state.api_call_times = []
-        
-        # Clean old call times (older than 1 minute)
-        import time
-        current_time = time.time()
-        st.session_state.api_call_times = [t for t in st.session_state.api_call_times if current_time - t < 60]
-        
-        # Show current usage
-        recent_calls = len(st.session_state.api_call_times)
-        st.sidebar.info(f"📊 **Usage**: {recent_calls}/3 calls in last minute")
-        
-        if recent_calls >= 3:
-            st.sidebar.error("🚫 **Rate limit reached!** Wait 1 minute before trying again.")
         
         # Initialize chat history if not exists
         if 'chat_history' not in st.session_state:
@@ -1628,91 +1636,60 @@ class PortfolioAnalytics:
                 st.session_state.gemini_api_key_source = "none"
                 st.session_state.gemini_secrets_error = str(e)
         
-        # API Key Status based on selected model
-        if ai_model in ["Google Gemini 2.5 Flash (Fast)", "Google Gemini 2.5 Pro (Advanced)"]:
-            if st.session_state.gemini_api_key:
-                # Show Gemini API key status
-                if st.session_state.get('gemini_api_key_source') == "secrets":
-                    st.sidebar.info("🔑 Gemini API Key from Streamlit Secrets")
-                
-                # Test Gemini API key validity
-                try:
-                    # Show API key info for debugging
-                    api_key_display = st.session_state.gemini_api_key[:10] + "..." + st.session_state.gemini_api_key[-4:] if len(st.session_state.gemini_api_key) > 14 else "***"
-                    st.sidebar.text(f"🔑 Gemini Key: {api_key_display}")
-                    
-                    # Configure API key
-                    genai.configure(api_key=st.session_state.gemini_api_key)
-                    st.sidebar.text("✅ API key configured")
-                    
-                    # Test API key by listing models
-                    try:
-                        st.sidebar.text("🔄 Testing API key...")
-                        models = list(genai.list_models())
-                        st.sidebar.text(f"✅ API key valid - {len(models)} models found")
-                        
-                        # Show all models that support generateContent
-                        available_models = []
-                        for m in models:
-                            if hasattr(m, 'supported_generation_methods') and 'generateContent' in m.supported_generation_methods:
-                                available_models.append(m.name)
-                        
-                        st.sidebar.text(f"📋 Models with generateContent: {len(available_models)}")
-                        if available_models:
-                            # Show all available model names
-                            for model_name in available_models:
-                                short_name = model_name.split('/')[-1] if '/' in model_name else model_name
-                                st.sidebar.text(f"  • {short_name}")
-                        else:
-                            st.sidebar.text("⚠️ No models support generateContent")
-                            
-                    except Exception as e:
-                        st.sidebar.text(f"❌ API key test failed: {str(e)[:50]}...")
-                        st.sidebar.text("💡 Check if your API key is valid and has proper permissions")
-                    
-                    # Try the newer Gemini 2.5 models that are actually available
-                    model_names_to_try = [
-                        'gemini-2.5-flash',  # Fast and efficient
-                        'gemini-2.5-pro',    # Advanced analysis
-                        'gemini-2.0-flash',  # Alternative fast model
-                        'gemini-2.0-pro-exp', # Experimental pro model
-                        'gemini-flash-latest', # Latest flash
-                        'gemini-pro-latest'   # Latest pro
-                    ]
-                    working_model = None
-                    errors = []
-                    
-                    for model_name in model_names_to_try:
-                        try:
-                            st.sidebar.text(f"🔄 Trying {model_name}...")
-                            model = genai.GenerativeModel(model_name)
-                            test_response = model.generate_content("hi")
-                            working_model = model_name
-                            st.sidebar.success(f"✅ Gemini Ready ({model_name})")
-                            break
-                        except Exception as e:
-                            error_msg = str(e)
-                            errors.append(f"{model_name}: {error_msg[:50]}...")
-                            st.sidebar.text(f"❌ {model_name} failed")
-                            continue
-                    
-                    if working_model is None:
-                        st.sidebar.error("❌ No working model found")
-                        st.sidebar.text("Errors:")
-                        for error in errors:
-                            st.sidebar.text(f"  • {error}")
-                        st.sidebar.text("💡 Check your API key or try a different region")
-                except Exception as e:
-                    error_msg = str(e)
-                    st.sidebar.error(f"❌ Gemini Error: {error_msg}")
-                    
-                    if st.sidebar.button("🔑 Configure Gemini API Key"):
-                        st.session_state.show_gemini_config = True
-            else:
-                st.sidebar.warning("⚠️ Gemini API Key Needed")
-                if st.sidebar.button("🔑 Configure Gemini API Key"):
-                    st.session_state.show_gemini_config = True
+        # AI Chatbot in Sidebar
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🤖 AI Assistant")
+        
+        ai_model = "Google Gemini 2.5 Flash (Fast)"  # Default to Gemini
+        
+        # Check API key
+        if not st.session_state.gemini_api_key:
+            st.sidebar.warning("⚠️ Configure API Key")
+            if st.sidebar.button("🔑 Setup", key="setup_api"):
+                st.session_state.show_gemini_config = True
         else:
+            # Chat interface in sidebar
+            st.sidebar.success("✅ Ready")
+            
+            # File upload in sidebar
+            with st.sidebar.expander("📁 Upload PDFs", expanded=False):
+                uploaded_files = st.file_uploader(
+                    "Stock analysis reports",
+                    type=['pdf', 'txt'],
+                    accept_multiple_files=True,
+                    key="sidebar_file_upload",
+                    label_visibility="collapsed"
+                )
+            
+            # Chat input
+            user_query = st.sidebar.text_area(
+                "Ask about your portfolio:",
+                placeholder="e.g., What are my best performers?",
+                height=100,
+                key="sidebar_chat_input"
+            )
+            
+            if st.sidebar.button("💬 Ask AI", type="primary", use_container_width=True):
+                if user_query:
+                    with st.spinner("🤔 Thinking..."):
+                        self.process_ai_query_with_db_access(user_query, uploaded_files if 'uploaded_files' in locals() else None)
+                    st.rerun()
+            
+            # Show recent chat
+            if st.session_state.chat_history:
+                with st.sidebar.expander("💬 Chat History", expanded=False):
+                    for msg in st.session_state.chat_history[-3:]:  # Show last 3 messages
+                        if msg["role"] == "user":
+                            st.markdown(f"**You:** {msg['content'][:100]}...")
+                        else:
+                            st.markdown(f"**AI:** {msg['content'][:100]}...")
+                    
+                    if st.button("🗑️ Clear", key="clear_chat"):
+                        st.session_state.chat_history = []
+                        st.rerun()
+        
+        # Remove OpenAI section since we're using Gemini by default
+        if False:  # Disabled OpenAI section
             # OpenAI API key status (existing code)
             if st.session_state.openai_api_key:
                 # Show source of API key
@@ -1790,61 +1767,7 @@ class PortfolioAnalytics:
                 if st.sidebar.button("🔑 Configure API Key"):
                     st.session_state.show_api_config = True
         
-        # Quick Actions for current page context
-        st.sidebar.markdown("**⚡ Quick Actions**")
-        
-        # Context-aware quick actions based on current page
-        if page == "🏠 Overview":
-            if st.sidebar.button("📊 Portfolio Summary", key="sidebar_portfolio_summary"):
-                if st.session_state.openai_api_key:
-                    self.quick_analysis("Provide a comprehensive summary of my portfolio including performance, allocation, and key insights", page)
-                else:
-                    st.sidebar.error("❌ Configure API key")
-            
-            if st.sidebar.button("📈 Best Performers", key="sidebar_best_performers"):
-                if st.session_state.openai_api_key:
-                    self.quick_analysis("What are my best performing stocks and why?", page)
-                else:
-                    st.sidebar.error("❌ Configure API key")
-        
-        elif page == "📈 Performance":
-            if st.sidebar.button("📊 Performance Analysis", key="sidebar_performance_analysis"):
-                if st.session_state.openai_api_key:
-                    self.quick_analysis("Analyze my portfolio performance, identify trends, and suggest improvements", page)
-                else:
-                    st.sidebar.error("❌ Configure API key")
-            
-            if st.sidebar.button("📉 Risk Assessment", key="sidebar_risk_assessment"):
-                if st.session_state.openai_api_key:
-                    self.quick_analysis("Analyze the risk in my portfolio and suggest improvements", page)
-                else:
-                    st.sidebar.error("❌ Configure API key")
-        
-        elif page == "📊 Allocation":
-            if st.sidebar.button("🎯 Allocation Review", key="sidebar_allocation_review"):
-                if st.session_state.openai_api_key:
-                    self.quick_analysis("Review my portfolio allocation and suggest rebalancing strategies", page)
-                else:
-                    st.sidebar.error("❌ Configure API key")
-            
-            if st.sidebar.button("📊 Sector Analysis", key="sidebar_sector_analysis"):
-                if st.session_state.openai_api_key:
-                    self.quick_analysis("Analyze my sector allocation and provide diversification insights", page)
-                else:
-                    st.sidebar.error("❌ Configure API key")
-        
-        elif page == "💰 P&L Analysis":
-            if st.sidebar.button("💰 P&L Insights", key="sidebar_pnl_insights"):
-                if st.session_state.openai_api_key:
-                    self.quick_analysis("Provide insights on my profit and loss performance", page)
-                else:
-                    st.sidebar.error("❌ Configure API key")
-            
-            if st.sidebar.button("📈 Trading Analysis", key="sidebar_trading_analysis"):
-                if st.session_state.openai_api_key:
-                    self.quick_analysis("Analyze my trading patterns and suggest improvements", page)
-                else:
-                    st.sidebar.error("❌ Configure API key")
+        # Quick Actions removed - now using AI chatbot in sidebar above
         
         # Universal quick actions
         if st.sidebar.button("🎯 Recommendations", key="sidebar_recommendations"):
@@ -1930,8 +1853,7 @@ class PortfolioAnalytics:
             self.render_allocation_page()
         elif page == "💰 P&L Analysis":
             self.render_pnl_analysis_page()
-        elif page == "🤖 AI Assistant":
-            self.render_ai_assistant_page()
+        # AI Assistant page removed - now in sidebar
         elif page == "📁 Files":
             self.render_files_page()
         elif page == "⚙️ Settings":
@@ -2137,6 +2059,23 @@ class PortfolioAnalytics:
             return
         
         df = self.session_state.portfolio_data
+        
+        # Debug: Show data summary
+        with st.expander("🔍 Debug: Portfolio Data Summary", expanded=False):
+            st.info(f"📊 Total transactions loaded: {len(df)}")
+            st.info(f"📊 Columns: {df.columns.tolist()}")
+            if 'quantity' in df.columns:
+                st.info(f"📊 Quantity stats: min={df['quantity'].min()}, max={df['quantity'].max()}, mean={df['quantity'].mean():.2f}")
+                st.info(f"📊 NaN quantities: {df['quantity'].isna().sum()}, Zero quantities: {(df['quantity'] == 0).sum()}")
+            if 'date' in df.columns:
+                df_temp = df.copy()
+                df_temp['date'] = pd.to_datetime(df_temp['date'])
+                st.info(f"📅 Date range: {df_temp['date'].min()} to {df_temp['date'].max()}")
+                st.info(f"📅 Transactions in last year: {len(df_temp[df_temp['date'] >= (datetime.now() - timedelta(days=365))])}")
+            if 'invested_amount' in df.columns:
+                st.info(f"💰 Total invested: ₹{df['invested_amount'].sum():,.2f}")
+                st.info(f"💰 Zero invested amounts: {(df['invested_amount'] == 0).sum()}")
+            st.dataframe(df.head(10), use_container_width=True)
         
         # Ensure date column is properly formatted as datetime
         if 'date' not in df.columns:
@@ -5105,134 +5044,139 @@ class PortfolioAnalytics:
             st.error(f"Error loading file history: {e}")
             st.info("This might be due to missing columns in the database schema")
     
+    def process_ai_query_with_db_access(self, user_query, uploaded_files=None):
+        """Process AI query with full database access"""
+        try:
+            # Add user message to chat history
+            st.session_state.chat_history.append({"role": "user", "content": user_query})
+            
+            # Get complete portfolio data from database
+            from database_config_supabase import get_transactions_supabase, get_all_stock_prices_supabase
+            
+            user_id = self.session_state.user_id
+            transactions = get_transactions_supabase(user_id=user_id)
+            
+            # Prepare context with database data
+            context_data = {
+                "total_transactions": len(transactions) if transactions else 0,
+                "portfolio_summary": {}
+            }
+            
+            if self.session_state.portfolio_data is not None:
+                df = self.session_state.portfolio_data
+                context_data["portfolio_summary"] = {
+                    "total_invested": float(df['invested_amount'].sum()),
+                    "current_value": float(df['current_value'].sum()),
+                    "total_pnl": float(df['unrealized_pnl'].sum()),
+                    "total_stocks": len(df['ticker'].unique()),
+                    "top_performers": df.nlargest(5, 'unrealized_pnl')[['ticker', 'stock_name', 'unrealized_pnl', 'pnl_percentage']].to_dict('records'),
+                    "worst_performers": df.nsmallest(5, 'unrealized_pnl')[['ticker', 'stock_name', 'unrealized_pnl', 'pnl_percentage']].to_dict('records'),
+                    "sector_allocation": df.groupby('sector')['invested_amount'].sum().to_dict() if 'sector' in df.columns else {},
+                    "channel_allocation": df.groupby('channel')['invested_amount'].sum().to_dict() if 'channel' in df.columns else {}
+                }
+            
+            # Process uploaded files
+            file_content = ""
+            if uploaded_files:
+                file_content = self.process_uploaded_files(uploaded_files)
+            
+            # Generate AI response using Gemini
+            ai_response = self.generate_ai_response(user_query, context_data, file_content, "Google Gemini 2.5 Flash (Fast)")
+            
+            # Add AI response to chat history
+            st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
+            
+            # Show response in main area if on a page
+            st.success("✅ AI Response:")
+            st.markdown(ai_response)
+            
+        except Exception as e:
+            error_msg = f"Error processing AI query: {e}"
+            st.error(error_msg)
+            st.session_state.chat_history.append({"role": "assistant", "content": f"❌ {error_msg}"})
+    
     def render_ai_assistant_page(self):
-        """Render AI Assistant page with ChatGPT integration"""
+        """Render AI Assistant page as a clean chatbot with database access"""
         st.header("🤖 AI Portfolio Assistant")
-        st.markdown("*Your intelligent stock broker and PMS assistant powered by ChatGPT*")
-        
-        # Features and Requirements
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("""
-            ### 🚀 Features:
-            - **Portfolio Analysis**: Get insights on your investment performance
-            - **Market Research**: Ask about stocks, mutual funds, and market trends
-            - **Document Analysis**: Upload PDFs, reports, or financial documents
-            - **Investment Advice**: Get personalized recommendations based on your portfolio
-            - **Risk Assessment**: Understand your portfolio's risk profile
-            - **PDF OCR Processing**: Extract text from images in PDF documents
-            """)
-        
-        with col2:
-            st.info("""
-            📋 **Configuration:**
-            - **API Key**: Configured via Streamlit secrets (`open_ai`)
-            - **PDF OCR**: Tesseract OCR must be installed on your system
-            - **Windows**: Download from [GitHub Tesseract releases](https://github.com/UB-Mannheim/tesseract/wiki)
-            - **Linux**: `sudo apt-get install tesseract-ocr`
-            - **macOS**: `brew install tesseract`
-            - The system will automatically detect and use OCR for PDF images
-            """)
+        st.markdown("*Ask me anything about your portfolio - I have access to your complete investment data*")
         
         # Initialize session state for chat
         if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
-        if 'openai_api_key' not in st.session_state:
-            # Try to get API key from Streamlit secrets first, then fallback to manual input
-            try:
-                st.session_state.openai_api_key = st.secrets["open_ai"]
-            except:
-                st.session_state.openai_api_key = None
         
-        # API Key Status
-        if st.session_state.openai_api_key:
-            # Check if API key is from secrets or manual input
-            try:
-                secrets_key = st.secrets["open_ai"]
-                if st.session_state.openai_api_key == secrets_key:
-                    st.success("✅ OpenAI API Key loaded from Streamlit secrets and ready to use!")
-                else:
-                    st.success("✅ OpenAI API Key is configured and ready to use!")
-            except:
-                st.success("✅ OpenAI API Key is configured and ready to use!")
+        # Check API key status
+        if not st.session_state.gemini_api_key:
+            st.warning("⚠️ AI Assistant needs API key configuration")
+            if st.button("🔑 Configure Gemini API Key"):
+                st.session_state.show_gemini_config = True
+            return
         
-        # API Key Configuration
-        with st.expander("🔑 OpenAI API Configuration", expanded=False):
-            api_key = st.text_input(
-                "Enter your OpenAI API Key:",
-                type="password",
-                value=st.session_state.openai_api_key or "",
-                help="Get your API key from https://platform.openai.com/api-keys or configure it in Streamlit secrets as 'open_ai'"
-            )
-            
-            if st.button("Save API Key"):
-                if api_key:
-                    st.session_state.openai_api_key = api_key
-                    st.success("✅ API Key saved successfully!")
-                else:
-                    st.error("❌ Please enter a valid API key")
-        
-        # File Upload Section
-        with st.expander("📁 Upload Documents for Analysis", expanded=False):
+        # File Upload Section (collapsible)
+        with st.expander("📁 Upload Stock Analysis PDFs (Optional)", expanded=False):
             uploaded_files = st.file_uploader(
-                "Upload documents (PDF with OCR, TXT, CSV, etc.)",
-                type=['pdf', 'txt', 'csv', 'docx', 'xlsx'],
+                "Upload stock analysis reports, research PDFs, or financial documents",
+                type=['pdf', 'txt', 'csv'],
                 accept_multiple_files=True,
-                help="Upload financial documents, reports, or any files you want the AI to analyze. PDFs will be processed with OCR to extract text from images."
+                help="Upload documents for the AI to analyze along with your portfolio data"
             )
             
             if uploaded_files:
-                st.success(f"✅ {len(uploaded_files)} file(s) uploaded successfully!")
+                st.success(f"✅ {len(uploaded_files)} file(s) uploaded")
                 for file in uploaded_files:
-                    file_type_icon = "📄" if file.type != "application/pdf" else "📄🔍"
-                    st.write(f"{file_type_icon} {file.name} ({file.size} bytes)")
-                    if file.type == "application/pdf":
-                        st.caption("🔍 PDF will be processed with OCR for image text extraction")
+                    st.write(f"📄 {file.name}")
         
         # Chat Interface
-        st.subheader("💬 Chat with AI Assistant")
+        st.markdown("---")
         
         # Display chat history
         chat_container = st.container()
         with chat_container:
+            if not st.session_state.chat_history:
+                st.info("👋 Hi! I'm your AI portfolio assistant. I have access to your complete investment data including stocks, mutual funds, PMS, and transactions. Ask me anything!")
+            
             for message in st.session_state.chat_history:
                 if message["role"] == "user":
-                    st.markdown(f"**You:** {message['content']}")
+                    with st.chat_message("user"):
+                        st.markdown(message['content'])
                 else:
-                    st.markdown(f"**AI Assistant:** {message['content']}")
+                    with st.chat_message("assistant"):
+                        st.markdown(message['content'])
         
         # Chat input
-        user_input = st.text_input(
-            "Ask me anything about your portfolio, stocks, or investments:",
-            placeholder="e.g., 'What's my best performing stock?' or 'Analyze my portfolio risk'",
+        user_input = st.chat_input(
+            "Ask me anything about your portfolio...",
             key="chat_input"
         )
         
-        col1, col2, col3 = st.columns([1, 1, 1])
+        if user_input:
+            # Process the query
+            self.process_ai_query_with_db_access(user_input, uploaded_files if 'uploaded_files' in locals() else None)
+            st.rerun()
+        
+        # Quick action buttons
+        st.markdown("---")
+        st.markdown("**💡 Quick Actions:**")
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            if st.button("🚀 Send Message", type="primary"):
-                if user_input and st.session_state.openai_api_key:
-                    self.process_ai_query(user_input, uploaded_files)
-                elif not user_input:
-                    st.error("❌ Please enter a message")
-                else:
-                    st.error("❌ Please configure your OpenAI API key first")
+            if st.button("📊 Portfolio Summary", use_container_width=True):
+                self.process_ai_query_with_db_access("Give me a comprehensive summary of my portfolio including total value, best performers, and allocation")
+                st.rerun()
         
         with col2:
-            if st.button("🗑️ Clear Chat"):
-                st.session_state.chat_history = []
+            if st.button("📈 Best Performers", use_container_width=True):
+                self.process_ai_query_with_db_access("What are my top 5 best performing investments and why?")
                 st.rerun()
         
         with col3:
-            if st.button("📊 Portfolio Summary"):
-                if st.session_state.openai_api_key:
-                    self.get_portfolio_summary()
-                else:
-                    st.error("❌ Please configure your OpenAI API key first")
+            if st.button("⚠️ Risk Analysis", use_container_width=True):
+                self.process_ai_query_with_db_access("Analyze the risk in my portfolio and suggest improvements")
+                st.rerun()
         
-        # Quick Actions are now in the sidebar for better UX
+        with col4:
+            if st.button("🗑️ Clear Chat", use_container_width=True):
+                st.session_state.chat_history = []
+                st.rerun()
     
     def process_ai_query(self, user_input, uploaded_files=None, current_page=None, ai_model="Google Gemini 2.5 Flash (Fast)"):
         """Process user query with AI assistant"""
