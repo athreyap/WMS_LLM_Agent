@@ -358,8 +358,15 @@ class PortfolioAnalytics:
                 return False
             
             # Clean and validate data
-            df = df.dropna(subset=['ticker', 'quantity'])
+            st.info(f"🔍 Initial data: {len(df)} rows")
+            st.info(f"📊 Quantity column sample: {df['quantity'].head().tolist()}")
+            
+            # Convert quantity to numeric first (before dropping NaN)
             df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce')
+            st.info(f"📊 After numeric conversion: {df['quantity'].head().tolist()}")
+            
+            # Drop rows with invalid ticker or quantity
+            df = df.dropna(subset=['ticker', 'quantity'])
             st.info(f"📊 Data cleaned: {len(df)} valid rows remaining")
             
             # Convert date to datetime

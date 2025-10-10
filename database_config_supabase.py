@@ -888,6 +888,20 @@ def save_transactions_bulk_supabase(df: pd.DataFrame, file_id: int, user_id: int
             }
             bulk_data.append(transaction_data)
         
+        # Validate all data before insert
+        print(f"🔍 Validating {len(bulk_data)} transactions before insert...")
+        import json
+        for idx, transaction in enumerate(bulk_data):
+            try:
+                # Try to serialize to JSON to catch any issues
+                json.dumps(transaction)
+            except (TypeError, ValueError, OverflowError) as json_error:
+                print(f"❌ Transaction {idx} failed JSON validation: {json_error}")
+                print(f"❌ Problematic transaction: {transaction}")
+                raise ValueError(f"Invalid data in transaction {idx}: {json_error}")
+        
+        print(f"✅ All transactions passed validation")
+        
         # Insert all transactions in bulk
         print(f"🔄 Inserting {len(bulk_data)} transactions into database...")
         
@@ -920,6 +934,15 @@ def save_transactions_bulk_supabase(df: pd.DataFrame, file_id: int, user_id: int
             
     except Exception as e:
         print(f"❌ Error saving bulk transactions: {e}")
+        print(f"❌ Error type: {type(e).__name__}")
+        print(f"❌ Full error details: {repr(e)}")
+        
+        # Print the problematic data for debugging
+        if bulk_data:
+            print(f"📊 Number of transactions attempted: {len(bulk_data)}")
+            print(f"📊 First transaction: {bulk_data[0]}")
+            if len(bulk_data) > 1:
+                print(f"📊 Last transaction: {bulk_data[-1]}")
         
         # Check for specific error types
         error_str = str(e).lower()
@@ -932,6 +955,9 @@ def save_transactions_bulk_supabase(df: pd.DataFrame, file_id: int, user_id: int
             print(f"💡 Constraint Error: Database constraint violation")
         elif "connection" in error_str:
             print(f"💡 Connection Error: Database connection issue")
+        elif "json" in error_str or "float" in error_str:
+            print(f"💡 Data Type Error: Invalid float/JSON values detected")
+            print(f"💡 Check for infinity, NaN, or extremely large numbers in the data")
         
         return False
 
