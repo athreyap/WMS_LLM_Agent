@@ -1,3 +1,9 @@
+"""
+Database configuration and utilities for Supabase integration.
+Handles user management, transactions, file records, and stock price caching.
+Version: 2.0.0 - Enhanced float validation and fallback mechanisms
+"""
+
 import os
 import hashlib
 from datetime import datetime
@@ -14,6 +20,8 @@ import random
 import socket
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 from supabase import create_client, Client
+
+__version__ = "2.0.0"
 
 # Supabase configuration
 SUPABASE_URL = os.getenv('SUPABASE_URL', 'https://rolcoegikoeblxzqgkix.supabase.co')
