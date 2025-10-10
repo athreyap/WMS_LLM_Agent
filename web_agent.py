@@ -878,21 +878,20 @@ class PortfolioAnalytics:
             # Load portfolio data (essential for dashboard)
             self.load_portfolio_data(user_id)
             
-            # Check if we should populate cache (only once per login session)
+            # Mark that cache population should happen (but don't block UI)
             if not skip_cache_population:
-                # Use a session-specific key that persists across page reloads
                 cache_key = f'cache_populated_{user_id}'
+                cache_trigger_key = f'cache_trigger_{user_id}'
                 
                 if cache_key not in st.session_state:
                     st.session_state[cache_key] = False
                 
-                # Only populate cache once per login session
-                if not st.session_state[cache_key]:
-                    st.session_state[cache_key] = True
-                    
-                    # Show a small notification
-                    with st.spinner("📊 Updating historical data cache..."):
-                        self.populate_monthly_prices_cache(user_id)
+                if cache_trigger_key not in st.session_state:
+                    st.session_state[cache_trigger_key] = False
+                
+                # Set trigger flag (will be handled later in sidebar)
+                if not st.session_state[cache_key] and not st.session_state[cache_trigger_key]:
+                    st.session_state[cache_trigger_key] = True
             
         except Exception as e:
             st.error(f"Error initializing portfolio data: {e}")
@@ -1155,9 +1154,23 @@ class PortfolioAnalytics:
         except Exception as e:
             st.error(f"Error in update_missing_historical_prices: {e}")
     
-    def fetch_live_prices_and_sectors(self, user_id):
-        """Fetch live prices and sectors for all tickers"""
+    def fetch_live_prices_and_sectors(self, user_id, force_refresh=False):
+        """
+        Fetch live prices and sectors for all tickers
+        
+        Args:
+            user_id: User ID
+            force_refresh: If True, force refresh even if already fetched this session
+        """
         try:
+            # Check if already fetched this session (unless force refresh)
+            if not force_refresh:
+                fetch_key = f'prices_fetched_{user_id}'
+                if fetch_key in st.session_state and st.session_state[fetch_key]:
+                    print(f"Prices already fetched this session for user {user_id}, skipping...")
+                    return
+                st.session_state[fetch_key] = True
+            
             st.info("🔄 Fetching live prices and sectors...")
             
             # Show data fetching animation
@@ -1755,6 +1768,26 @@ class PortfolioAnalytics:
         st.sidebar.markdown(f"**User:** {self.session_state.username}")
         st.sidebar.markdown(f"**Role:** {self.session_state.user_role}")
         st.sidebar.markdown(f"**Login:** {self.session_state.login_time.strftime('%Y-%m-%d %H:%M')}")
+        
+        # Background cache population (runs once per session, non-blocking)
+        user_id = self.session_state.user_id
+        cache_key = f'cache_populated_{user_id}'
+        cache_trigger_key = f'cache_trigger_{user_id}'
+        
+        if cache_trigger_key in st.session_state and st.session_state[cache_trigger_key]:
+            if cache_key not in st.session_state or not st.session_state[cache_key]:
+                # Show small status in sidebar
+                with st.sidebar:
+                    with st.status("📊 Updating cache...", expanded=False) as status:
+                        st.write("Fetching historical data in background...")
+                        try:
+                            self.populate_monthly_prices_cache(user_id)
+                            st.session_state[cache_key] = True
+                            st.session_state[cache_trigger_key] = False
+                            status.update(label="✅ Cache updated!", state="complete")
+                        except Exception as e:
+                            st.write(f"Error: {e}")
+                            status.update(label="⚠️ Cache update failed", state="error")
         
         # File upload in sidebar
         st.sidebar.markdown("---")
@@ -6189,8 +6222,8 @@ You can also suggest creating charts/graphs based on this data."""
             if st.button("🔄 Refresh Portfolio Data"):
                 with st.spinner("Refreshing data..."):
                     try:
-                        # First fetch live prices and sectors
-                        self.fetch_live_prices_and_sectors(user_id)
+                        # First fetch live prices and sectors (force refresh)
+                        self.fetch_live_prices_and_sectors(user_id, force_refresh=True)
                         st.success("Live prices updated!")
                         
                         # Then reload portfolio data
@@ -6205,7 +6238,7 @@ You can also suggest creating charts/graphs based on this data."""
         with col2:
             if st.button("📊 Update Live Prices"):
                 with st.spinner("Updating prices..."):
-                    self.fetch_live_prices_and_sectors(user_id)
+                    self.fetch_live_prices_and_sectors(user_id, force_refresh=True)
                     st.success("Live prices updated!")
         
         with col3:
