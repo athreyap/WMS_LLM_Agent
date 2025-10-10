@@ -4474,28 +4474,49 @@ class PortfolioAnalytics:
                         
                         st.info(f"📅 Tracking {len(all_tickers)} holdings over {len(weekly_dates)} weeks (2 years)")
                         
-                        # Collect weekly data for all tickers
+                        # Collect weekly data for all tickers using bulk database queries
+                        st.info("📊 Loading weekly data from cache...")
                         weekly_data = []
                         progress_bar = st.progress(0)
                         status_text = st.empty()
                         
+                        # Import database function for bulk queries
+                        from database_config_supabase import get_stock_prices_range_supabase
+                        
                         for idx, ticker in enumerate(all_tickers):
-                            status_text.text(f"Fetching weekly data for {ticker}... ({idx+1}/{len(all_tickers)})")
+                            status_text.text(f"Loading {ticker}... ({idx+1}/{len(all_tickers)})")
                             
                             ticker_data = df[df['ticker'] == ticker].iloc[0]
                             stock_name = ticker_data.get('stock_name', ticker)
                             
-                            for week_date in weekly_dates:
-                                # Fetch historical price for this week
-                                week_price = self.fetch_historical_price_for_week(ticker, week_date)
-                                
-                                if week_price and week_price > 0:
+                            # Get all prices for this ticker in one bulk query
+                            start_date_str = weekly_dates[0].strftime('%Y-%m-%d')
+                            end_date_str = weekly_dates[-1].strftime('%Y-%m-%d')
+                            
+                            cached_prices = get_stock_prices_range_supabase(ticker, start_date_str, end_date_str)
+                            
+                            if cached_prices:
+                                # Use cached data
+                                for price_record in cached_prices:
                                     weekly_data.append({
-                                        'Date': week_date,
+                                        'Date': pd.to_datetime(price_record['price_date']),
                                         'Ticker': ticker,
                                         'Stock Name': stock_name,
-                                        'Price': week_price
+                                        'Price': float(price_record['price'])
                                     })
+                            else:
+                                # Fallback: Fetch from API if not in cache
+                                st.warning(f"⚠️ No cached data for {ticker}, fetching from API...")
+                                for week_date in weekly_dates:
+                                    week_price = self.fetch_historical_price_for_week(ticker, week_date)
+                                    
+                                    if week_price and week_price > 0:
+                                        weekly_data.append({
+                                            'Date': week_date,
+                                            'Ticker': ticker,
+                                            'Stock Name': stock_name,
+                                            'Price': week_price
+                                        })
                             
                             progress_bar.progress((idx + 1) / len(all_tickers))
                         
