@@ -1315,6 +1315,8 @@ def delete_old_stock_prices_supabase(days_old: int = 730) -> bool:
 # Backward compatibility aliases
 save_monthly_stock_price_supabase = save_stock_price_supabase
 get_monthly_stock_price_supabase = get_stock_price_supabase
+get_monthly_stock_prices_range_supabase = get_stock_prices_range_supabase
+get_all_monthly_stock_prices_supabase = get_all_stock_prices_supabase
 save_weekly_stock_price_supabase = save_stock_price_supabase
 get_weekly_stock_price_supabase = get_stock_price_supabase
 get_weekly_stock_prices_range_supabase = get_stock_prices_range_supabase
