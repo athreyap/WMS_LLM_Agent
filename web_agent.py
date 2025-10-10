@@ -538,6 +538,176 @@ class PortfolioAnalytics:
             st.error(f"Error fetching historical prices: {e}")
             return df
     
+    def fetch_historical_price_comprehensive(self, ticker, target_date):
+        """
+        Comprehensive historical price fetcher - tries ALL sources:
+        1. yfinance (.NS and .BO for stocks)
+        2. indstocks (stocks and mutual funds)
+        3. mftool (mutual funds)
+        4. PMS/AIF (uses transaction price, not market price)
+        
+        Returns the first valid price found, saves to database cache.
+        """
+        try:
+            target_date_str = target_date.strftime('%Y-%m-%d')
+            
+            # First check database cache
+            from database_config_supabase import get_stock_price_supabase, save_stock_price_supabase
+            cached_price = get_stock_price_supabase(ticker, target_date_str)
+            if cached_price and cached_price > 0:
+                return float(cached_price)
+            
+            price = None
+            price_source = 'unknown'
+            clean_ticker = str(ticker).strip().upper()
+            clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
+            
+            # === EARLY CHECK: Is this a PMS/AIF? ===
+            ticker_upper = ticker.upper()
+            is_pms_aif = any(keyword in ticker_upper for keyword in [
+                'PMS', 'AIF', 'INP', 'BUOYANT', 'CARNELIAN', 'JULIUS', 
+                'VALENTIS', 'UNIFI', 'PORTFOLIO', 'FUND'
+            ]) or ticker_upper.endswith('_PMS') or ticker.startswith('INP')
+            
+            if is_pms_aif:
+                # For PMS/AIF, we use the TRANSACTION PRICE as historical price
+                # The actual NAV calculation happens at portfolio level using CAGR
+                print(f"🔍 {ticker}: Detected as PMS/AIF - using transaction price")
+                
+                # Get transaction price from database
+                from database_config_supabase import get_transactions_supabase
+                transactions = get_transactions_supabase(user_id=None)  # Get all transactions
+                
+                if transactions:
+                    df = pd.DataFrame(transactions)
+                    df['date'] = pd.to_datetime(df['date'])
+                    
+                    # Find transactions for this ticker on or before target date
+                    ticker_txns = df[
+                        (df['ticker'] == ticker) & 
+                        (df['date'] <= target_date) &
+                        (df['transaction_type'] == 'buy')
+                    ]
+                    
+                    if not ticker_txns.empty:
+                        # Use the most recent transaction price before target date
+                        latest_txn = ticker_txns.sort_values('date', ascending=False).iloc[0]
+                        price = float(latest_txn['price'])
+                        price_source = 'pms_transaction_price'
+                        print(f"✅ {ticker}: Using transaction price - ₹{price}")
+                        
+                        # Save to cache
+                        try:
+                            save_stock_price_supabase(ticker, target_date_str, price, price_source)
+                        except Exception as e:
+                            print(f"Failed to save PMS price to cache: {e}")
+                        
+                        return price
+                
+                # If no transaction found, return None (will skip caching)
+                print(f"⚠️ {ticker}: PMS/AIF but no transaction found for {target_date_str}")
+                return None
+            
+            # === STRATEGY 1: Try yfinance with .NS (NSE) ===
+            if not price:
+                try:
+                    import yfinance as yf
+                    stock = yf.Ticker(f"{clean_ticker}.NS")
+                    hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
+                    if not hist_data.empty:
+                        price = float(hist_data['Close'].iloc[0])
+                        price_source = 'yfinance_nse'
+                        print(f"✅ {ticker}: yfinance NSE - ₹{price}")
+                except Exception as e:
+                    pass
+            
+            # === STRATEGY 2: Try yfinance with .BO (BSE) ===
+            if not price:
+                try:
+                    import yfinance as yf
+                    stock = yf.Ticker(f"{clean_ticker}.BO")
+                    hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
+                    if not hist_data.empty:
+                        price = float(hist_data['Close'].iloc[0])
+                        price_source = 'yfinance_bse'
+                        print(f"✅ {ticker}: yfinance BSE - ₹{price}")
+                except Exception as e:
+                    pass
+            
+            # === STRATEGY 3: Try indstocks (works for both stocks and MFs) ===
+            if not price:
+                try:
+                    from indstocks_api import get_indstocks_client
+                    api_client = get_indstocks_client()
+                    if api_client and api_client.available:
+                        price_data = api_client.get_historical_price(ticker, target_date_str)
+                        if price_data and price_data.get('price'):
+                            price = float(price_data['price'])
+                            price_source = 'indstocks'
+                            print(f"✅ {ticker}: indstocks - ₹{price}")
+                except Exception as e:
+                    pass
+            
+            # === STRATEGY 4: Try mftool (mutual funds) ===
+            if not price:
+                try:
+                    from mf_price_fetcher import fetch_mutual_fund_price
+                    mf_price = fetch_mutual_fund_price(ticker, target_date_str)
+                    if mf_price and mf_price > 0:
+                        price = float(mf_price)
+                        price_source = 'mftool'
+                        print(f"✅ {ticker}: mftool - ₹{price}")
+                except Exception as e:
+                    pass
+            
+            # === STRATEGY 5: Try PMS/AIF (if ticker suggests it) ===
+            if not price:
+                ticker_upper = ticker.upper()
+                if any(keyword in ticker_upper for keyword in ['PMS', 'AIF', 'INP', 'BUOYANT', 'CARNELIAN', 'JULIUS', 'VALENTIS', 'UNIFI']) or ticker_upper.endswith('_PMS'):
+                    try:
+                        from pms_aif_fetcher import get_pms_nav, get_aif_nav, is_pms_code, is_aif_code
+                        
+                        # For PMS/AIF, we need investment date and amount
+                        # This is a historical price fetch, so we can't calculate value
+                        # Just skip for now - PMS/AIF values are calculated at portfolio level
+                        pass
+                    except Exception as e:
+                        pass
+            
+            # === FALLBACK: Try yfinance with 7-day window ===
+            if not price:
+                try:
+                    import yfinance as yf
+                    for suffix in ['.NS', '.BO']:
+                        stock = yf.Ticker(f"{clean_ticker}{suffix}")
+                        hist_data = stock.history(
+                            start=target_date - timedelta(days=7),
+                            end=target_date + timedelta(days=7)
+                        )
+                        if not hist_data.empty:
+                            # Get closest date
+                            price = float(hist_data['Close'].iloc[-1])
+                            price_source = f'yfinance{suffix}_fallback'
+                            print(f"✅ {ticker}: yfinance{suffix} (7-day window) - ₹{price}")
+                            break
+                except Exception as e:
+                    pass
+            
+            # Save to database if we got a valid price
+            if price and price > 0:
+                try:
+                    save_stock_price_supabase(ticker, target_date_str, price, price_source)
+                except Exception as e:
+                    print(f"Failed to save price to cache: {e}")
+                return price
+            
+            print(f"❌ {ticker}: No price found from any source for {target_date_str}")
+            return None
+            
+        except Exception as e:
+            print(f"Error in comprehensive price fetch for {ticker} on {target_date}: {e}")
+            return None
+    
     def fetch_historical_price_for_month(self, ticker, month_date):
         """Fetch historical price for a specific month - uses database cache first"""
         try:
@@ -556,92 +726,12 @@ class PortfolioAnalytics:
             if cached_price and cached_price > 0:
                 return float(cached_price)
             
-            # If not in cache, fetch from API and save to database
-            price = None
-            price_source = 'unknown'
+            # Use comprehensive fetcher
+            price = self.fetch_historical_price_comprehensive(ticker, target_date)
             
-            # Check if it's a mutual fund (numerical ticker)
-            clean_ticker = str(ticker).strip().upper()
-            clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
-            
-            if clean_ticker.isdigit():
-                # Mutual fund - use mftool for historical price
-                try:
-                    from mf_price_fetcher import fetch_mutual_fund_price
-                    price = fetch_mutual_fund_price(ticker, target_date_str)
-                    price_source = 'mftool'
-                    if price and price > 0:
-                        price = float(price)
-                except Exception as e:
-                    print(f"MFTool failed for {ticker} on {target_date}: {e}")
-                
-                # Fallback to INDstocks for mutual funds
-                if not price or price <= 0:
-                    try:
-                        from indstocks_api import get_indstocks_client
-                        api_client = get_indstocks_client()
-                        if api_client and api_client.available:
-                            price_data = api_client.get_historical_price(ticker, target_date_str)
-                            if price_data and price_data.get('price'):
-                                price = float(price_data['price'])
-                                price_source = 'indstocks_mf'
-                    except Exception as e:
-                        print(f"INDstocks failed for mutual fund {ticker} on {target_date}: {e}")
-            else:
-                # Stock - use yfinance for historical price
-                try:
-                    import yfinance as yf
-                    
-                    # Determine which exchange suffix to try
-                    if ticker.endswith(('.NS', '.BO')):
-                        # Already has suffix, use as-is
-                        ticker_with_suffix = ticker
-                        stock = yf.Ticker(ticker_with_suffix)
-                        hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
-                    else:
-                        # Try NSE first (.NS)
-                        ticker_with_suffix = f"{ticker}.NS"
-                        stock = yf.Ticker(ticker_with_suffix)
-                        hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
-                        
-                        # If NSE fails, try BSE (.BO)
-                        if hist_data.empty:
-                            print(f"NSE data not found for {ticker}, trying BSE...")
-                            ticker_with_suffix = f"{ticker}.BO"
-                            stock = yf.Ticker(ticker_with_suffix)
-                            hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
-                    
-                    if not hist_data.empty:
-                        # Use closing price
-                        price = float(hist_data['Close'].iloc[0])
-                        price_source = 'yfinance'
-                    else:
-                        # If no data for exact date, try to get the closest available date
-                        hist_data = stock.history(start=target_date - timedelta(days=7), end=target_date + timedelta(days=7))
-                        if not hist_data.empty:
-                            # Use the closest date
-                            price = float(hist_data['Close'].iloc[-1])
-                            price_source = 'yfinance'
-                        
-                except Exception as e:
-                    print(f"YFinance failed for {ticker} on {target_date}: {e}")
-                    
-                    # Fallback to INDstocks for stocks
-                    if not price or price <= 0:
-                        try:
-                            from indstocks_api import get_indstocks_client
-                            api_client = get_indstocks_client()
-                            if api_client and api_client.available:
-                                price_data = api_client.get_historical_price(ticker, target_date_str)
-                                if price_data and price_data.get('price'):
-                                    price = float(price_data['price'])
-                                    price_source = 'indstocks'
-                        except Exception as e:
-                            print(f"INDstocks failed for stock {ticker} on {target_date}: {e}")
-            
-            # Save to database cache if we got a valid price
+            # Save to monthly cache if we got a valid price
             if price and price > 0:
-                save_monthly_stock_price_supabase(ticker, target_date_str, price, price_source)
+                save_monthly_stock_price_supabase(ticker, target_date_str, price, 'monthly_cache')
                 return price
             
             return None
@@ -651,107 +741,14 @@ class PortfolioAnalytics:
             return None
     
     def fetch_historical_price_for_week(self, ticker, week_date):
-        """Fetch historical price for a specific week - uses database cache first"""
+        """Fetch historical price for a specific week - uses comprehensive fetcher and database cache"""
         try:
             # Use the week date (Monday) as the target date
             target_date = week_date
-            target_date_str = target_date.strftime('%Y-%m-%d')
             
-            # First, try to get from database cache
-            from database_config_supabase import get_stock_price_supabase, save_stock_price_supabase
-            cached_price = get_stock_price_supabase(ticker, target_date_str)
-            if cached_price and cached_price > 0:
-                return float(cached_price)
-            
-            # If not in cache, fetch from API and save to database
-            price = None
-            price_source = 'unknown'
-            
-            # Check if it's a mutual fund (numerical ticker)
-            clean_ticker = str(ticker).strip().upper()
-            clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
-            
-            if clean_ticker.isdigit():
-                # Mutual fund - use mftool for historical price
-                try:
-                    from mf_price_fetcher import fetch_mutual_fund_price
-                    price = fetch_mutual_fund_price(ticker, target_date_str)
-                    price_source = 'mftool'
-                    if price and price > 0:
-                        price = float(price)
-                except Exception as e:
-                    print(f"MFTool failed for {ticker} on {target_date}: {e}")
-                
-                # Fallback to INDstocks for mutual funds
-                if not price or price <= 0:
-                    try:
-                        from indstocks_api import get_indstocks_client
-                        api_client = get_indstocks_client()
-                        if api_client and api_client.available:
-                            price_data = api_client.get_historical_price(ticker, target_date_str)
-                            if price_data and price_data.get('price'):
-                                price = float(price_data['price'])
-                                price_source = 'indstocks_mf'
-                    except Exception as e:
-                        print(f"INDstocks failed for mutual fund {ticker} on {target_date}: {e}")
-            else:
-                # Stock - use yfinance for historical price
-                try:
-                    import yfinance as yf
-                    
-                    # Determine which exchange suffix to try
-                    if ticker.endswith(('.NS', '.BO')):
-                        # Already has suffix, use as-is
-                        ticker_with_suffix = ticker
-                        stock = yf.Ticker(ticker_with_suffix)
-                        hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
-                    else:
-                        # Try NSE first (.NS)
-                        ticker_with_suffix = f"{ticker}.NS"
-                        stock = yf.Ticker(ticker_with_suffix)
-                        hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
-                        
-                        # If NSE fails, try BSE (.BO)
-                        if hist_data.empty:
-                            print(f"NSE data not found for {ticker}, trying BSE...")
-                            ticker_with_suffix = f"{ticker}.BO"
-                            stock = yf.Ticker(ticker_with_suffix)
-                            hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
-                    
-                    if not hist_data.empty:
-                        # Use closing price
-                        price = float(hist_data['Close'].iloc[0])
-                        price_source = 'yfinance'
-                    else:
-                        # If no data for exact date, try to get the closest available date
-                        hist_data = stock.history(start=target_date - timedelta(days=7), end=target_date + timedelta(days=7))
-                        if not hist_data.empty:
-                            # Use the closest date
-                            price = float(hist_data['Close'].iloc[-1])
-                            price_source = 'yfinance'
-                        
-                except Exception as e:
-                    print(f"YFinance failed for {ticker} on {target_date}: {e}")
-                    
-                    # Fallback to INDstocks for stocks
-                    if not price or price <= 0:
-                        try:
-                            from indstocks_api import get_indstocks_client
-                            api_client = get_indstocks_client()
-                            if api_client and api_client.available:
-                                price_data = api_client.get_historical_price(ticker, target_date_str)
-                                if price_data and price_data.get('price'):
-                                    price = float(price_data['price'])
-                                    price_source = 'indstocks'
-                        except Exception as e:
-                            print(f"INDstocks failed for stock {ticker} on {target_date}: {e}")
-            
-            # Save to database cache if we got a valid price
-            if price and price > 0:
-                save_stock_price_supabase(ticker, target_date_str, price, price_source)
-                return price
-            
-            return None
+            # Use comprehensive fetcher (which checks cache first and saves automatically)
+            price = self.fetch_historical_price_comprehensive(ticker, target_date)
+            return price
             
         except Exception as e:
             print(f"Error fetching historical price for {ticker} on {week_date}: {e}")
@@ -885,8 +882,13 @@ class PortfolioAnalytics:
         except Exception as e:
             st.error(f"Error initializing portfolio data: {e}")
     
-    def populate_monthly_prices_cache(self, user_id):
-        """Pre-populate monthly stock prices cache for 1-year buy stocks"""
+    def populate_weekly_and_monthly_cache(self, user_id):
+        """
+        INCREMENTAL weekly price cache update:
+        - Only fetches NEW weeks since last cache update
+        - Derives monthly from weekly data
+        - Smart detection of missing data
+        """
         try:
             # Get transactions for the user
             transactions = get_transactions_supabase(user_id)
@@ -897,82 +899,176 @@ class PortfolioAnalytics:
             df = pd.DataFrame(transactions)
             df['date'] = pd.to_datetime(df['date'])
             
-            # Get ALL buy transactions (not just last year) to cache historical data
+            # Get ALL buy transactions to cache historical data
             buy_transactions = df[df['transaction_type'] == 'buy'].copy()
             
             if buy_transactions.empty:
                 return
             
             # Get unique stocks
-            unique_stocks = buy_transactions['ticker'].unique()
+            unique_tickers = buy_transactions['ticker'].unique()
             
-            st.info(f"🔄 Pre-populating monthly price cache for {len(unique_stocks)} stocks...")
+            # Determine date range for incremental update
+            current_date = datetime.now()
+            two_years_ago = current_date - timedelta(days=730)  # 2 years
+            
+            # Check what's the latest cached date across all tickers
+            from database_config_supabase import get_stock_price_supabase
+            latest_cached_dates = {}
+            
+            for ticker in unique_tickers:
+                # Get ticker's purchase date
+                ticker_purchases = buy_transactions[buy_transactions['ticker'] == ticker]
+                purchase_date = ticker_purchases['date'].min()
+                start_date = max(purchase_date, two_years_ago)
+                
+                # Check the most recent cached week for this ticker
+                # Try current week, then go backwards
+                check_date = current_date
+                latest_cached = None
+                
+                for _ in range(10):  # Check last 10 weeks
+                    # Get Monday of the week
+                    monday = check_date - timedelta(days=check_date.weekday())
+                    cached_price = get_stock_price_supabase(ticker, monday.strftime('%Y-%m-%d'))
+                    if cached_price and cached_price > 0:
+                        latest_cached = monday
+                        break
+                    check_date -= timedelta(days=7)
+                
+                if latest_cached:
+                    # Start from next week after latest cached
+                    latest_cached_dates[ticker] = latest_cached + timedelta(days=7)
+                else:
+                    # No cache found, start from beginning
+                    latest_cached_dates[ticker] = start_date
+            
+            # Count total weeks to fetch
+            total_weeks_to_fetch = 0
+            for ticker, start_from in latest_cached_dates.items():
+                if start_from < current_date:
+                    weeks = len(pd.date_range(start=start_from, end=current_date, freq='W-MON'))
+                    total_weeks_to_fetch += weeks
+            
+            if total_weeks_to_fetch == 0:
+                st.info("✅ All weekly prices are up to date!")
+                return
+            
+            # Show appropriate message
+            if any(latest_cached_dates[t] > two_years_ago + timedelta(days=7) for t in unique_tickers):
+                st.info(f"🔄 Incremental update: Fetching {total_weeks_to_fetch} new weekly prices...")
+                st.caption("💡 Only fetching data for new weeks since last update!")
+            else:
+                st.info(f"🔄 Initial cache: Fetching weekly prices for {len(unique_tickers)} holdings (2 years)...")
+                st.caption("💡 This is a one-time process. Future updates will be incremental!")
             
             # Create progress bar
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            total_stocks = len(unique_stocks)
-            cached_count = 0
+            total_tickers = len(unique_tickers)
+            weekly_cached_count = 0
+            monthly_derived_count = 0
+            weeks_processed = 0
             
-            for idx, ticker in enumerate(unique_stocks):
+            for idx, ticker in enumerate(unique_tickers):
                 # Update progress
-                progress = (idx + 1) / total_stocks
+                progress = (idx + 1) / total_tickers
                 progress_bar.progress(progress)
-                status_text.text(f"Caching prices for {ticker} ({idx + 1}/{total_stocks})...")
                 
-                # Get stock's purchase date
-                stock_purchases = buy_transactions[buy_transactions['ticker'] == ticker]
-                purchase_date = stock_purchases['date'].min()
+                # === SKIP PMS/AIF - they don't have historical market prices ===
+                ticker_upper = str(ticker).upper()
+                is_pms_aif = any(keyword in ticker_upper for keyword in [
+                    'PMS', 'AIF', 'INP', 'BUOYANT', 'CARNELIAN', 'JULIUS', 
+                    'VALENTIS', 'UNIFI', 'PORTFOLIO', 'FUND'
+                ]) or ticker_upper.endswith('_PMS') or str(ticker).startswith('INP')
                 
-                # Generate monthly dates for last 2 years (to match weekly analysis)
-                current_date = datetime.now()
-                # Include current month by going to next month and then back
-                end_date = current_date.replace(day=1) + timedelta(days=32)
-                end_date = end_date.replace(day=1)
+                if is_pms_aif:
+                    status_text.text(f"⏭️ {ticker} ({idx + 1}/{total_tickers}) - PMS/AIF (uses transaction price)")
+                    continue
                 
-                # Start from 2 years ago or purchase date, whichever is later
-                two_years_ago = current_date - timedelta(days=730)  # 2 years
-                start_date = max(purchase_date.replace(day=1), two_years_ago.replace(day=1))
+                start_from = latest_cached_dates[ticker]
                 
-                monthly_dates = pd.date_range(
-                    start=start_date,
-                    end=end_date,  # Include current month
-                    freq='MS'
+                # Skip if already up to date
+                if start_from >= current_date:
+                    status_text.text(f"✅ {ticker} ({idx + 1}/{total_tickers}) - Already up to date")
+                    continue
+                
+                status_text.text(f"📊 Updating {ticker} ({idx + 1}/{total_tickers})...")
+                
+                # Generate weekly dates from last cached to now
+                weekly_dates = pd.date_range(
+                    start=start_from,
+                    end=current_date,
+                    freq='W-MON'
                 )
                 
-                # Check which months are already cached
-                for month_date in monthly_dates:
-                    if month_date.month == 12:
-                        last_day = month_date.replace(year=month_date.year + 1, month=1, day=1) - timedelta(days=1)
+                # Fetch and cache weekly prices (only missing ones)
+                weekly_prices = {}
+                for week_date in weekly_dates:
+                    week_date_str = week_date.strftime('%Y-%m-%d')
+                    weeks_processed += 1
+                    
+                    # Check if already cached (double-check)
+                    cached_price = get_stock_price_supabase(ticker, week_date_str)
+                    
+                    if cached_price and cached_price > 0:
+                        weekly_prices[week_date] = float(cached_price)
                     else:
-                        last_day = month_date.replace(month=month_date.month + 1, day=1) - timedelta(days=1)
-                    
-                    target_date_str = last_day.strftime('%Y-%m-%d')
-                    
-                    # Check if already cached
-                    cached_price = get_monthly_stock_price_supabase(ticker, target_date_str)
-                    if not cached_price or cached_price <= 0:
-                        # Fetch and cache the price
-                        price = self.fetch_historical_price_for_month(ticker, month_date)
+                        # Fetch using comprehensive method
+                        price = self.fetch_historical_price_comprehensive(ticker, week_date)
                         if price and price > 0:
-                            cached_count += 1
+                            weekly_prices[week_date] = price
+                            weekly_cached_count += 1
                 
-                # Small delay to avoid rate limiting
-                import time
-                time.sleep(0.1)
+                # Derive monthly prices from weekly data
+                if weekly_prices:
+                    # Group by month and take the last week's price of each month
+                    monthly_prices = {}
+                    for week_date, price in weekly_prices.items():
+                        month_key = (week_date.year, week_date.month)
+                        if month_key not in monthly_prices or week_date > monthly_prices[month_key]['date']:
+                            monthly_prices[month_key] = {'date': week_date, 'price': price}
+                    
+                    # Save monthly prices
+                    for month_key, data in monthly_prices.items():
+                        year, month = month_key
+                        # Get last day of month
+                        if month == 12:
+                            last_day = datetime(year + 1, 1, 1) - timedelta(days=1)
+                        else:
+                            last_day = datetime(year, month + 1, 1) - timedelta(days=1)
+                        
+                        last_day_str = last_day.strftime('%Y-%m-%d')
+                        
+                        # Check if monthly price already exists
+                        cached_monthly = get_monthly_stock_price_supabase(ticker, last_day_str)
+                        if not cached_monthly or cached_monthly <= 0:
+                            # Save derived monthly price
+                            save_monthly_stock_price_supabase(ticker, last_day_str, data['price'], 'derived_from_weekly')
+                            monthly_derived_count += 1
+                
+                # Small delay to avoid rate limiting (only if we fetched new data)
+                if weekly_cached_count > 0:
+                    import time
+                    time.sleep(0.05)
             
             # Clear progress indicators
             progress_bar.empty()
             status_text.empty()
             
-            if cached_count > 0:
-                st.success(f"✅ Cached {cached_count} new monthly price points!")
+            if weekly_cached_count > 0 or monthly_derived_count > 0:
+                st.success(f"✅ Updated: {weekly_cached_count} new weekly prices, {monthly_derived_count} monthly prices!")
             else:
-                st.info("ℹ️ All monthly prices were already cached.")
+                st.info("✅ All prices are already up to date!")
                 
         except Exception as e:
-            st.warning(f"⚠️ Error pre-populating price cache: {e}")
+            st.warning(f"⚠️ Error updating price cache: {e}")
+            print(f"Cache error: {e}")
+    
+    def populate_monthly_prices_cache(self, user_id):
+        """Legacy function - now redirects to comprehensive weekly+monthly caching"""
+        return self.populate_weekly_and_monthly_cache(user_id)
     
     def update_missing_historical_prices(self, user_id):
         """Update missing historical prices in database"""
@@ -1096,20 +1192,33 @@ class PortfolioAnalytics:
                                 
                                 if pms_data and pms_data.get('price'):
                                     live_price = pms_data['price']
-                                    sector = "PMS"
-                                    print(f"✅ PMS {ticker}: Calculated value ₹{live_price:,.2f} using SEBI returns")
+                                    # Set sector based on PMS/AIF type
+                                    if 'AIF' in ticker_str:
+                                        sector = "AIF"
+                                    else:
+                                        sector = "PMS"
+                                    print(f"✅ {sector} {ticker}: Calculated value ₹{live_price:,.2f} using SEBI returns")
                                 else:
                                     # Fallback: use transaction price (no growth)
                                     live_price = pms_trans['price']
-                                    sector = "PMS"
-                                    print(f"⚠️ PMS {ticker}: Using transaction price (SEBI data not available)")
+                                    if 'AIF' in ticker_str:
+                                        sector = "AIF"
+                                    else:
+                                        sector = "PMS"
+                                    print(f"⚠️ {sector} {ticker}: Using transaction price (SEBI data not available)")
                             except Exception as e:
-                                print(f"⚠️ PMS calculation failed for {ticker}: {e}")
+                                print(f"⚠️ PMS/AIF calculation failed for {ticker}: {e}")
                                 live_price = pms_trans['price']
-                                sector = "PMS"
+                                if 'AIF' in ticker_str:
+                                    sector = "AIF"
+                                else:
+                                    sector = "PMS"
                         else:
                             live_price = None
-                            sector = "PMS"
+                            if 'AIF' in ticker_str:
+                                sector = "AIF"
+                            else:
+                                sector = "PMS"
                     
                     elif str(ticker).isdigit() or ticker.startswith('MF_'):
                         # Mutual fund - use numerical scheme code and get fund category from mftool
@@ -1125,24 +1234,23 @@ class PortfolioAnalytics:
                             print(f"⚠️ MF {ticker}: No fund category available, using default 'Mutual Fund'")
                     
                     elif ticker_str.startswith('INF') and len(ticker_str) == 12:
-                        # Mutual fund ISIN - use indstocks
+                        # Mutual fund ISIN - try to get category from mftool or indstocks
                         print(f"🔍 MF ISIN detected: {ticker}")
-                        try:
-                            from indstocks_api import get_indstocks_client
-                            client = get_indstocks_client()
-                            result = client.get_stock_price(ticker, None)
-                            if result and result.get('price'):
-                                live_price = result['price']
-                                sector = "Mutual Fund"
-                                print(f"✅ MF ISIN {ticker}: NAV ₹{live_price} from indstocks")
-                            else:
-                                live_price = None
-                                sector = "Mutual Fund"
-                                print(f"⚠️ MF ISIN {ticker}: Could not fetch NAV from indstocks")
-                        except Exception as e:
-                            print(f"⚠️ indstocks failed for ISIN {ticker}: {e}")
-                            live_price = None
-                            sector = "Mutual Fund"
+                        
+                        # Try to get fund category along with price
+                        from unified_price_fetcher import get_mutual_fund_price_and_category
+                        live_price, fund_category = get_mutual_fund_price_and_category(ticker, ticker, user_id, None)
+                        
+                        # Use fund category if available
+                        if fund_category and fund_category != 'Unknown':
+                            sector = fund_category
+                            print(f"✅ MF ISIN {ticker}: NAV ₹{live_price} with category '{sector}'")
+                        else:
+                            sector = "Mutual Fund"  # Fallback
+                            print(f"✅ MF ISIN {ticker}: NAV ₹{live_price} (generic category)")
+                        
+                        if not live_price:
+                            print(f"⚠️ MF ISIN {ticker}: Could not fetch NAV")
                     
                     else:
                         # Stock - fetch price, sector, and market cap from yfinance
@@ -4003,8 +4111,8 @@ class PortfolioAnalytics:
                     with tab1:
                         st.subheader(f"{period_label}ly Performance Overview")
                         
-                        # Collect historical data for all tickers using bulk database queries
-                        st.info("📊 Loading historical data from database cache...")
+                        # Collect historical data for all tickers
+                        st.info("📊 Loading historical data (stocks from cache, PMS/MF calculated)...")
                         historical_data = []
                         progress_bar = st.progress(0)
                         status_text = st.empty()
@@ -4018,34 +4126,111 @@ class PortfolioAnalytics:
                             ticker_data = df[df['ticker'] == ticker].iloc[0]
                             stock_name = ticker_data.get('stock_name', ticker)
                             
-                            # Get all prices for this ticker in one bulk query
-                            start_date_str = date_range[0].strftime('%Y-%m-%d')
-                            end_date_str = date_range[-1].strftime('%Y-%m-%d')
+                            # === CHECK IF PMS/AIF ===
+                            ticker_upper = str(ticker).upper()
+                            is_pms_aif = any(keyword in ticker_upper for keyword in [
+                                'PMS', 'AIF', 'INP', 'BUOYANT', 'CARNELIAN', 'JULIUS', 
+                                'VALENTIS', 'UNIFI', 'PORTFOLIO', 'FUND'
+                            ]) or ticker_upper.endswith('_PMS') or str(ticker).startswith('INP')
                             
-                            cached_prices = get_stock_prices_range_supabase(ticker, start_date_str, end_date_str)
-                            
-                            if cached_prices:
-                                # Use cached data
-                                for price_record in cached_prices:
-                                    historical_data.append({
-                                        'Date': pd.to_datetime(price_record['price_date']),
-                                        'Ticker': ticker,
-                                        'Stock Name': stock_name,
-                                        'Price': float(price_record['price'])
-                                    })
-                            else:
-                                # Fallback: Fetch from API if not in cache
-                                st.warning(f"⚠️ No cached data for {ticker}, fetching from API...")
-                                for date in date_range:
-                                    hist_price = self.fetch_historical_price_for_month(ticker, date)
+                            if is_pms_aif:
+                                # For PMS/AIF, calculate value growth based on CAGR
+                                try:
+                                    # Get investment details
+                                    investment_date = pd.to_datetime(ticker_data.get('date', datetime.now()))
+                                    initial_investment = float(ticker_data.get('invested_value', 0))
                                     
-                                    if hist_price and hist_price > 0:
+                                    if initial_investment > 0:
+                                        # Get PMS returns data
+                                        from pms_aif_fetcher import get_pms_nav
+                                        pms_data = get_pms_nav(
+                                            ticker=ticker,
+                                            pms_name=stock_name,
+                                            investment_date=investment_date.strftime('%Y-%m-%d'),
+                                            investment_amount=initial_investment
+                                        )
+                                        
+                                        if pms_data and 'returns_data' in pms_data:
+                                            returns = pms_data['returns_data']
+                                            
+                                            # Calculate value for each date using appropriate CAGR
+                                            for date in date_range:
+                                                months_elapsed = (date.year - investment_date.year) * 12 + (date.month - investment_date.month)
+                                                
+                                                if months_elapsed >= 0:
+                                                    # Select appropriate return metric
+                                                    if months_elapsed >= 60:  # 5+ years
+                                                        cagr_str = returns.get('5Y CAGR', '0%')
+                                                    elif months_elapsed >= 36:  # 3+ years
+                                                        cagr_str = returns.get('3Y CAGR', '0%')
+                                                    elif months_elapsed >= 12:  # 1+ year
+                                                        cagr_str = returns.get('1Y Return', '0%')
+                                                    elif months_elapsed >= 1:  # 1+ month
+                                                        cagr_str = returns.get('1M Return', '0%')
+                                                    else:
+                                                        cagr_str = '0%'
+                                                    
+                                                    # Parse and calculate
+                                                    cagr = float(cagr_str.replace('%', '')) / 100
+                                                    years = months_elapsed / 12
+                                                    calculated_value = initial_investment * ((1 + cagr) ** years)
+                                                    
+                                                    # Normalize to show growth (1.0 = initial investment)
+                                                    normalized_value = calculated_value / initial_investment if initial_investment > 0 else 1
+                                                    
+                                                    historical_data.append({
+                                                        'Date': date,
+                                                        'Ticker': ticker,
+                                                        'Stock Name': stock_name,
+                                                        'Price': normalized_value
+                                                    })
+                                        else:
+                                            st.warning(f"⚠️ {ticker}: PMS data not available, skipping historical tracking")
+                                except Exception as e:
+                                    st.warning(f"⚠️ {ticker}: Error calculating PMS performance - {e}")
+                                    print(f"PMS calculation error for {ticker}: {e}")
+                            else:
+                                # Regular stock/MF - use cached prices
+                                start_date_str = date_range[0].strftime('%Y-%m-%d')
+                                end_date_str = date_range[-1].strftime('%Y-%m-%d')
+                                
+                                cached_prices = get_stock_prices_range_supabase(ticker, start_date_str, end_date_str)
+                                
+                                if cached_prices:
+                                    # Use cached data
+                                    for price_record in cached_prices:
                                         historical_data.append({
-                                            'Date': date,
+                                            'Date': pd.to_datetime(price_record['price_date']),
                                             'Ticker': ticker,
                                             'Stock Name': stock_name,
-                                            'Price': hist_price
+                                            'Price': float(price_record['price'])
                                         })
+                                else:
+                                    # Fallback: Fetch from API if not in cache
+                                    # Check if it's a mutual fund (numeric ticker)
+                                    clean_ticker = str(ticker).strip()
+                                    is_numeric = clean_ticker.replace('.', '').isdigit()
+                                    
+                                    if is_numeric and len(clean_ticker) >= 5:
+                                        st.info(f"📊 {ticker}: Mutual fund detected, fetching NAV history...")
+                                    else:
+                                        st.warning(f"⚠️ No cached data for {ticker}, fetching from API...")
+                                    
+                                    fetched_count = 0
+                                    for date in date_range:
+                                        hist_price = self.fetch_historical_price_for_month(ticker, date)
+                                        
+                                        if hist_price and hist_price > 0:
+                                            historical_data.append({
+                                                'Date': date,
+                                                'Ticker': ticker,
+                                                'Stock Name': stock_name,
+                                                'Price': hist_price
+                                            })
+                                            fetched_count += 1
+                                    
+                                    if fetched_count == 0:
+                                        st.warning(f"⚠️ {ticker}: Could not fetch any historical data. Please verify ticker is valid.")
                             
                             progress_bar.progress((idx + 1) / min(len(all_tickers), 20))
                         
