@@ -1498,6 +1498,48 @@ def get_stock_price_supabase(ticker: str, price_date: str) -> Optional[float]:
             print(f"❌ Error getting stock price for {ticker} on {price_date}: {e}")
             return None
 
+def get_stock_prices_bulk_supabase(tickers: List[str], price_date: str) -> Dict[str, float]:
+    """
+    Get stock prices for multiple tickers on a specific date using Supabase (BULK QUERY)
+    
+    Args:
+        tickers: List of ticker symbols
+        price_date: Date in YYYY-MM-DD format
+    
+    Returns:
+        Dictionary mapping ticker to price {ticker: price}
+    """
+    try:
+        if not tickers:
+            return {}
+        
+        # Try the new unified stock_prices table first
+        result = supabase.table('stock_prices').select('ticker,price').in_('ticker', tickers).eq('price_date', price_date).execute()
+        
+        if result.data:
+            # Convert to dictionary for O(1) lookup
+            return {row['ticker']: float(row['price']) for row in result.data}
+        return {}
+        
+    except Exception as e:
+        error_msg = str(e)
+        
+        # If stock_prices table doesn't exist, try using historical_prices table as fallback
+        if ("pgrst205" in error_msg.lower() or "stock_pric" in error_msg.lower()):
+            try:
+                result = supabase.table('historical_prices').select('ticker,historical_price').in_('ticker', tickers).eq('transaction_date', price_date).execute()
+                
+                if result.data:
+                    return {row['ticker']: float(row['historical_price']) for row in result.data}
+                return {}
+                
+            except Exception as fallback_error:
+                print(f"❌ Error getting bulk prices from historical_prices fallback: {fallback_error}")
+                return {}
+        else:
+            print(f"❌ Error getting bulk stock prices for {price_date}: {e}")
+            return {}
+
 def get_stock_prices_range_supabase(ticker: str, start_date: str, end_date: str) -> List[Dict]:
     """Get stock prices for a date range using Supabase"""
     try:

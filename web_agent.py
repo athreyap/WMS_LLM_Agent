@@ -32,7 +32,8 @@ from database_config_supabase import (
     save_monthly_stock_price_supabase,
     get_monthly_stock_price_supabase,
     get_monthly_stock_prices_range_supabase,
-    get_all_monthly_stock_prices_supabase
+    get_all_monthly_stock_prices_supabase,
+    get_stock_prices_bulk_supabase
 )
 
 # Try to import PDF functions (optional, may not exist in older deployments)
@@ -926,36 +927,47 @@ class PortfolioAnalytics:
             current_date = datetime.now()
             two_years_ago = current_date - timedelta(days=730)  # 2 years
             
-            # Check what's the latest cached date across all tickers
-            from database_config_supabase import get_stock_price_supabase
+            # Check what's the latest cached date across all tickers (BULK QUERY)
+            from database_config_supabase import get_stock_price_supabase, get_stock_prices_bulk_supabase
             latest_cached_dates = {}
             
+            # Get purchase dates for all tickers
+            ticker_purchase_dates = {}
             for ticker in unique_tickers:
-                # Get ticker's purchase date
                 ticker_purchases = buy_transactions[buy_transactions['ticker'] == ticker]
                 purchase_date = ticker_purchases['date'].min()
                 start_date = max(purchase_date, two_years_ago)
+                ticker_purchase_dates[ticker] = start_date
+            
+            # Check last 10 weeks for all tickers at once (bulk query)
+            check_date = current_date
+            ticker_latest_cached = {ticker: None for ticker in unique_tickers}
+            
+            for week_idx in range(10):  # Check last 10 weeks
+                # Get Monday of the week
+                monday = check_date - timedelta(days=check_date.weekday())
+                monday_str = monday.strftime('%Y-%m-%d')
                 
-                # Check the most recent cached week for this ticker
-                # Try current week, then go backwards
-                check_date = current_date
-                latest_cached = None
+                # Get cached prices for all remaining tickers at once (BULK)
+                tickers_to_check = [t for t in unique_tickers if ticker_latest_cached[t] is None]
+                if tickers_to_check:
+                    cached_prices = get_stock_prices_bulk_supabase(tickers_to_check, monday_str)
+                    
+                    # Update latest cached dates for tickers found
+                    for ticker, price in cached_prices.items():
+                        if price and price > 0:
+                            ticker_latest_cached[ticker] = monday
                 
-                for _ in range(10):  # Check last 10 weeks
-                    # Get Monday of the week
-                    monday = check_date - timedelta(days=check_date.weekday())
-                    cached_price = get_stock_price_supabase(ticker, monday.strftime('%Y-%m-%d'))
-                    if cached_price and cached_price > 0:
-                        latest_cached = monday
-                        break
-                    check_date -= timedelta(days=7)
-                
-                if latest_cached:
+                check_date -= timedelta(days=7)
+            
+            # Set start dates based on findings
+            for ticker in unique_tickers:
+                if ticker_latest_cached[ticker]:
                     # Start from next week after latest cached
-                    latest_cached_dates[ticker] = latest_cached + timedelta(days=7)
+                    latest_cached_dates[ticker] = ticker_latest_cached[ticker] + timedelta(days=7)
                 else:
                     # No cache found, start from beginning
-                    latest_cached_dates[ticker] = start_date
+                    latest_cached_dates[ticker] = ticker_purchase_dates[ticker]
             
             # Count total weeks to fetch
             total_weeks_to_fetch = 0
@@ -980,62 +992,79 @@ class PortfolioAnalytics:
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            total_tickers = len(unique_tickers)
+            # Filter out PMS/AIF tickers (they don't have historical market prices)
+            valid_tickers = []
+            for ticker in unique_tickers:
+                ticker_upper = str(ticker).upper()
+                is_pms_aif = (
+                    'PMS' in ticker_upper or 
+                    'AIF' in ticker_upper or
+                    ticker_upper.startswith('INP') or
+                    ticker_upper.endswith('_PMS') or
+                    ticker_upper in ['BUOYANT', 'CARNELIAN', 'JULIUS', 'VALENTIS', 'UNIFI']
+                )
+                # Don't skip numeric tickers (mutual funds)
+                if str(ticker).strip().replace('.', '').isdigit():
+                    is_pms_aif = False
+                
+                if not is_pms_aif and latest_cached_dates[ticker] < current_date:
+                    valid_tickers.append(ticker)
+            
+            if not valid_tickers:
+                st.info("✅ All prices are already up to date!")
+                return
+            
+            # Generate all weekly dates needed across all tickers
+            all_week_dates = set()
+            ticker_week_map = {}  # Map ticker to list of weeks it needs
+            for ticker in valid_tickers:
+                start_from = latest_cached_dates[ticker]
+                weekly_dates = pd.date_range(start=start_from, end=current_date, freq='W-MON')
+                ticker_week_map[ticker] = list(weekly_dates)
+                all_week_dates.update(weekly_dates)
+            
+            # Sort weeks chronologically
+            all_week_dates = sorted(list(all_week_dates))
+            total_weeks = len(all_week_dates)
+            
             weekly_cached_count = 0
             monthly_derived_count = 0
-            weeks_processed = 0
+            all_weekly_prices = {ticker: {} for ticker in valid_tickers}  # Store all prices per ticker
             
-            for idx, ticker in enumerate(unique_tickers):
+            # Process week by week (BULK FETCHING PER WEEK)
+            for week_idx, week_date in enumerate(all_week_dates):
                 # Update progress
-                progress = (idx + 1) / total_tickers
+                progress = (week_idx + 1) / total_weeks
                 progress_bar.progress(progress)
                 
-                # === SKIP PMS/AIF - they don't have historical market prices ===
-                ticker_upper = str(ticker).upper()
-                is_pms_aif = any(keyword in ticker_upper for keyword in [
-                    'PMS', 'AIF', 'INP', 'BUOYANT', 'CARNELIAN', 'JULIUS', 
-                    'VALENTIS', 'UNIFI', 'PORTFOLIO', 'FUND'
-                ]) or ticker_upper.endswith('_PMS') or str(ticker).startswith('INP')
+                week_date_str = week_date.strftime('%Y-%m-%d')
+                status_text.text(f"📊 Week {week_idx + 1}/{total_weeks}: {week_date_str}...")
                 
-                if is_pms_aif:
-                    status_text.text(f"⏭️ {ticker} ({idx + 1}/{total_tickers}) - PMS/AIF (uses transaction price)")
+                # Get tickers that need this week's data
+                tickers_for_week = [t for t in valid_tickers if week_date in ticker_week_map[t]]
+                
+                if not tickers_for_week:
                     continue
                 
-                start_from = latest_cached_dates[ticker]
+                # Bulk query: Check which prices are already cached
+                cached_prices = get_stock_prices_bulk_supabase(tickers_for_week, week_date_str)
                 
-                # Skip if already up to date
-                if start_from >= current_date:
-                    status_text.text(f"✅ {ticker} ({idx + 1}/{total_tickers}) - Already up to date")
-                    continue
-                
-                status_text.text(f"📊 Updating {ticker} ({idx + 1}/{total_tickers})...")
-                
-                # Generate weekly dates from last cached to now
-                weekly_dates = pd.date_range(
-                    start=start_from,
-                    end=current_date,
-                    freq='W-MON'
-                )
-                
-                # Fetch and cache weekly prices (only missing ones)
-                weekly_prices = {}
-                for week_date in weekly_dates:
-                    week_date_str = week_date.strftime('%Y-%m-%d')
-                    weeks_processed += 1
-                    
-                    # Check if already cached (double-check)
-                    cached_price = get_stock_price_supabase(ticker, week_date_str)
-                    
-                    if cached_price and cached_price > 0:
-                        weekly_prices[week_date] = float(cached_price)
+                # Fetch missing prices
+                for ticker in tickers_for_week:
+                    if ticker in cached_prices and cached_prices[ticker] > 0:
+                        # Already cached
+                        all_weekly_prices[ticker][week_date] = cached_prices[ticker]
                     else:
-                        # Fetch using comprehensive method
+                        # Need to fetch
                         price = self.fetch_historical_price_comprehensive(ticker, week_date)
                         if price and price > 0:
-                            weekly_prices[week_date] = price
+                            all_weekly_prices[ticker][week_date] = price
                             weekly_cached_count += 1
-                
-                # Derive monthly prices from weekly data
+            
+            # Derive and save monthly prices for all tickers
+            status_text.text("📊 Deriving monthly prices from weekly data...")
+            for ticker in valid_tickers:
+                weekly_prices = all_weekly_prices[ticker]
                 if weekly_prices:
                     # Group by month and take the last week's price of each month
                     monthly_prices = {}
@@ -1061,11 +1090,6 @@ class PortfolioAnalytics:
                             # Save derived monthly price
                             save_monthly_stock_price_supabase(ticker, last_day_str, data['price'], 'derived_from_weekly')
                             monthly_derived_count += 1
-                
-                # Small delay to avoid rate limiting (only if we fetched new data)
-                if weekly_cached_count > 0:
-                    import time
-                    time.sleep(0.05)
             
             # Clear progress indicators
             progress_bar.empty()
@@ -1193,6 +1217,9 @@ class PortfolioAnalytics:
             market_caps = {}
             
             # Fetch live prices and sectors for each ticker
+            # Note: Live prices are fetched from external APIs (yfinance, mftool, etc.)
+            # which don't support bulk operations. However, database cache operations
+            # in populate_weekly_and_monthly_cache() now use bulk queries for optimal performance.
             for ticker in unique_tickers:
                 try:
                     ticker_str = str(ticker).strip().upper()
@@ -4124,6 +4151,17 @@ class PortfolioAnalytics:
             st.subheader("📊 Historical Performance Tracking (All Holdings)")
             st.info("💡 Track monthly/weekly performance for all your stocks and mutual funds over the past year")
             
+            # Check if cache is still populating
+            user_id = self.session_state.user_id
+            cache_key = f'cache_populated_{user_id}'
+            cache_trigger_key = f'cache_trigger_{user_id}'
+            
+            if cache_trigger_key in st.session_state and st.session_state[cache_trigger_key]:
+                st.warning("⏳ **Historical cache is currently populating in the sidebar.** Charts will load faster once complete!")
+                st.caption("You can still view historical data, but it may take longer as data is fetched on-demand.")
+            elif cache_key in st.session_state and st.session_state[cache_key]:
+                st.success("✅ **Historical cache is ready!** Charts will load instantly from database.")
+            
             # Time period selection
             col1, col2 = st.columns([1, 3])
             with col1:
@@ -4287,6 +4325,7 @@ class PortfolioAnalytics:
                         
                         if historical_data:
                             hist_df = pd.DataFrame(historical_data)
+                            st.success(f"✅ Loaded {len(historical_data)} data points for {len(hist_df['Ticker'].unique())} holdings")
                             
                             # Create interactive line chart
                             fig = go.Figure()
@@ -5457,13 +5496,19 @@ class PortfolioAnalytics:
                                     st.warning(f"⚠️ Could not save {file.name}: {str(e)[:50]}")
                             
                             file_content += f"\n\n--- {file.name} ---\n{extracted_text}"
+                            
+                            # Show extraction stats
+                            if extracted_text and extracted_text != "[No text could be extracted from PDF]":
+                                st.success(f"✅ Extracted {len(extracted_text)} characters from {file.name}")
+                            else:
+                                st.warning(f"⚠️ Could not extract text from {file.name} - PDF might be image-based")
                         else:
                             # For text files
                             text = str(file.read(), "utf-8")
                             file_content += f"\n\n--- {file.name} ---\n{text}"
                     
                     if file_content:
-                        st.success(f"✅ Processed {len(uploaded_files)} document(s)")
+                        st.success(f"✅ Processed {len(uploaded_files)} document(s) - Total {len(file_content)} characters")
             
             # Load previously uploaded PDFs for this user (if available)
             if PDF_STORAGE_AVAILABLE:
@@ -5547,7 +5592,9 @@ You can also suggest creating charts/graphs based on this data."""
             # Add current user message
             current_message = user_query
             if file_content:
-                current_message += f"\n\n[UPLOADED DOCUMENTS CONTENT]:\n{file_content[:5000]}"  # Limit to 5000 chars
+                # Include more content and make it clear to AI
+                current_message += f"\n\n=== UPLOADED DOCUMENTS (MUST READ AND ANALYZE) ===\n{file_content[:15000]}"  # Increased to 15000 chars
+                current_message += "\n\n=== END OF DOCUMENTS ===\n\nIMPORTANT: The above documents contain detailed analysis, charts, and data. Please read and analyze them carefully to answer the user's question."
             
             conversation_messages.append({"role": "user", "content": current_message})
             
@@ -5786,8 +5833,8 @@ You can also suggest creating charts/graphs based on this data."""
             # Add AI response to chat history
             st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
             
-            # Rerun to update the chat display
-            st.rerun()
+            # Don't rerun - let Streamlit handle natural UI updates
+            # This prevents unnecessary page reloads when asking AI questions
             
         except Exception as e:
             st.error(f"❌ Error processing query: {e}")
