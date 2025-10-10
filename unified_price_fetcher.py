@@ -58,12 +58,10 @@ def get_mutual_fund_price_and_category(ticker: str, clean_ticker: str, user_id: 
                             print(f"⚠️ MF {ticker}: No transaction price within 30 days of {target_date}")
                             print(f"   📊 Closest available: {closest_days} days away (too far for accurate pricing)")
                 else:
-                    # For live prices, use average of all transaction prices
-                    prices = [t.get('price', 0) for t in mf_transactions if t.get('price') and t.get('price') > 0]
-                    if prices:
-                        price = sum(prices) / len(prices)
-                        print(f"✅ MF {ticker}: Live price ₹{price} from transaction data")
-                        return price, category
+                    # For live prices, DO NOT use transaction prices - fetch current NAV from mftool
+                    # Transaction prices are PURCHASE prices, not current NAV
+                    print(f"⚠️ MF {ticker}: Skipping transaction prices for live NAV (those are purchase prices)")
+                    pass  # Continue to mftool to get actual current NAV
     except Exception as e:
         print(f"⚠️ Could not get transaction price for MF {ticker}: {e}")
     
@@ -270,12 +268,10 @@ def get_mutual_fund_price(ticker: str, clean_ticker: str, user_id: int, target_d
                             print(f"⚠️ MF {ticker}: No transaction price within 30 days of {target_date}")
                             print(f"   📊 Closest available: {closest_days} days away (too far for accurate pricing)")
                 else:
-                    # For live prices, use average of all transaction prices
-                    prices = [t.get('price', 0) for t in mf_transactions if t.get('price') and t.get('price') > 0]
-                    if prices:
-                        price = sum(prices) / len(prices)
-                        print(f"✅ MF {ticker}: Live price ₹{price} from transaction data")
-                        return price
+                    # For live prices, DO NOT use transaction prices - fetch current NAV from mftool
+                    # Transaction prices are PURCHASE prices, not current NAV
+                    print(f"⚠️ MF {ticker}: Skipping transaction prices for live NAV (those are purchase prices)")
+                    pass  # Continue to mftool to get actual current NAV
     except Exception as e:
         print(f"⚠️ Could not get transaction price for MF {ticker}: {e}")
     

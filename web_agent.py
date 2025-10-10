@@ -32,7 +32,10 @@ from database_config_supabase import (
     save_monthly_stock_price_supabase,
     get_monthly_stock_price_supabase,
     get_monthly_stock_prices_range_supabase,
-    get_all_monthly_stock_prices_supabase
+    get_all_monthly_stock_prices_supabase,
+    save_pdf_document_supabase,
+    get_pdf_documents_supabase,
+    delete_pdf_document_supabase
 )
 
 # Password hashing - temporarily disabled due to login_system.py issues
@@ -1059,7 +1062,47 @@ class PortfolioAnalytics:
             # Fetch live prices and sectors for each ticker
             for ticker in unique_tickers:
                 try:
-                    if str(ticker).isdigit() or ticker.startswith('MF_'):
+                    ticker_str = str(ticker).strip().upper()
+                    
+                    # Check if PMS/AIF
+                    if (ticker_str.startswith('INP') or ticker_str.endswith('_PMS') or ticker_str.endswith('PMS') or 
+                        'AIF' in ticker_str or ticker_str.startswith('BUOYANT') or 
+                        ticker_str.startswith('CARNELIAN') or ticker_str.startswith('JULIUS') or
+                        ticker_str.startswith('VALENTIS') or ticker_str.startswith('UNIFI')):
+                        # PMS/AIF - calculate value using SEBI returns
+                        print(f"🔍 PMS/AIF detected: {ticker}")
+                        
+                        # Get transaction details for this PMS
+                        pms_transactions = df[df['ticker'] == ticker]
+                        if not pms_transactions.empty:
+                            pms_trans = pms_transactions.iloc[0]
+                            investment_date = pd.to_datetime(pms_trans['date']).strftime('%Y-%m-%d')
+                            investment_amount = float(pms_trans['quantity']) * float(pms_trans['price']) if pms_trans['price'] else 0
+                            
+                            # Try to fetch PMS data from SEBI and calculate current value
+                            try:
+                                from pms_aif_fetcher import get_pms_nav
+                                pms_name = pms_trans.get('stock_name', ticker).replace('_', ' ')
+                                pms_data = get_pms_nav(ticker, pms_name, investment_date, investment_amount)
+                                
+                                if pms_data and pms_data.get('price'):
+                                    live_price = pms_data['price']
+                                    sector = "PMS"
+                                    print(f"✅ PMS {ticker}: Calculated value ₹{live_price:,.2f} using SEBI returns")
+                                else:
+                                    # Fallback: use transaction price (no growth)
+                                    live_price = pms_trans['price']
+                                    sector = "PMS"
+                                    print(f"⚠️ PMS {ticker}: Using transaction price (SEBI data not available)")
+                            except Exception as e:
+                                print(f"⚠️ PMS calculation failed for {ticker}: {e}")
+                                live_price = pms_trans['price']
+                                sector = "PMS"
+                        else:
+                            live_price = None
+                            sector = "PMS"
+                    
+                    elif str(ticker).isdigit() or ticker.startswith('MF_'):
                         # Mutual fund - use numerical scheme code and get fund category from mftool
                         from unified_price_fetcher import get_mutual_fund_price_and_category
                         live_price, fund_category = get_mutual_fund_price_and_category(ticker, ticker, user_id, None)
@@ -1071,6 +1114,27 @@ class PortfolioAnalytics:
                         else:
                             sector = "Mutual Fund"  # Fallback if no category available
                             print(f"⚠️ MF {ticker}: No fund category available, using default 'Mutual Fund'")
+                    
+                    elif ticker_str.startswith('INF') and len(ticker_str) == 12:
+                        # Mutual fund ISIN - use indstocks
+                        print(f"🔍 MF ISIN detected: {ticker}")
+                        try:
+                            from indstocks_api import get_indstocks_client
+                            client = get_indstocks_client()
+                            result = client.get_stock_price(ticker, None)
+                            if result and result.get('price'):
+                                live_price = result['price']
+                                sector = "Mutual Fund"
+                                print(f"✅ MF ISIN {ticker}: NAV ₹{live_price} from indstocks")
+                            else:
+                                live_price = None
+                                sector = "Mutual Fund"
+                                print(f"⚠️ MF ISIN {ticker}: Could not fetch NAV from indstocks")
+                        except Exception as e:
+                            print(f"⚠️ indstocks failed for ISIN {ticker}: {e}")
+                            live_price = None
+                            sector = "Mutual Fund"
+                    
                     else:
                         # Stock - fetch price, sector, and market cap from yfinance
                         from unified_price_fetcher import get_stock_price_and_sector
@@ -1652,13 +1716,28 @@ class PortfolioAnalytics:
             st.sidebar.success("✅ Ready")
             
             # File upload in sidebar
-            with st.sidebar.expander("📁 Upload PDFs", expanded=False):
+            with st.sidebar.expander("📁 Document Library", expanded=False):
+                # Show stored PDFs
+                stored_pdfs = get_pdf_documents_supabase(self.session_state.user_id, include_global=True)
+                if stored_pdfs:
+                    st.markdown(f"**📚 {len(stored_pdfs)} Stored Document(s):**")
+                    for pdf in stored_pdfs:
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            st.text(f"📄 {pdf['filename']}")
+                        with col2:
+                            if st.button("🗑️", key=f"del_pdf_{pdf['id']}", help="Delete"):
+                                delete_pdf_document_supabase(pdf['id'])
+                                st.rerun()
+                    st.markdown("---")
+                
+                # Upload new PDFs
                 uploaded_files = st.file_uploader(
-                    "Stock analysis reports",
+                    "Upload new documents",
                     type=['pdf', 'txt'],
                     accept_multiple_files=True,
                     key="ai_sidebar_pdf_upload",
-                    label_visibility="collapsed"
+                    help="PDFs are saved and used in all future chats"
                 )
             
             # Chat input
@@ -5084,13 +5163,43 @@ class PortfolioAnalytics:
                     "channel_allocation": df.groupby('channel')['invested_amount'].sum().to_dict() if 'channel' in df.columns else {}
                 }
             
-            # Process uploaded files (PDFs)
+            # Process and save uploaded files (PDFs)
             file_content = ""
             if uploaded_files:
-                with st.spinner("📄 Processing uploaded documents..."):
-                    file_content = self.process_uploaded_files(uploaded_files)
+                with st.spinner("📄 Processing and saving documents..."):
+                    import base64
+                    for file in uploaded_files:
+                        # Extract text from file
+                        if file.type == "application/pdf":
+                            pdf_bytes = file.read()
+                            extracted_text = self.extract_text_from_pdf(pdf_bytes)
+                            
+                            # Save to database
+                            file_content_b64 = base64.b64encode(pdf_bytes).decode('utf-8')
+                            save_pdf_document_supabase(
+                                user_id=user_id,
+                                filename=file.name,
+                                file_content=file_content_b64,
+                                extracted_text=extracted_text,
+                                is_global=False
+                            )
+                            
+                            file_content += f"\n\n--- {file.name} ---\n{extracted_text}"
+                        else:
+                            # For text files
+                            text = str(file.read(), "utf-8")
+                            file_content += f"\n\n--- {file.name} ---\n{text}"
+                    
                     if file_content:
-                        st.success(f"✅ Processed {len(uploaded_files)} document(s)")
+                        st.success(f"✅ Processed and saved {len(uploaded_files)} document(s)")
+            
+            # Load previously uploaded PDFs for this user
+            stored_pdfs = get_pdf_documents_supabase(user_id, include_global=True)
+            if stored_pdfs:
+                st.info(f"📚 Using {len(stored_pdfs)} stored document(s) from your library")
+                for pdf in stored_pdfs:
+                    if pdf.get('extracted_text'):
+                        file_content += f"\n\n--- Stored: {pdf['filename']} ---\n{pdf['extracted_text'][:2000]}"  # Limit to 2000 chars per doc
             
             # Build conversation context for ChatGPT-style interaction
             conversation_messages = []
