@@ -32,9 +32,16 @@ from database_config_supabase import (
     save_monthly_stock_price_supabase,
     get_monthly_stock_price_supabase,
     get_monthly_stock_prices_range_supabase,
-    get_all_monthly_stock_prices_supabase,
-    get_stock_prices_bulk_supabase
+    get_all_monthly_stock_prices_supabase
 )
+
+# Try to import new bulk function (optional for backward compatibility)
+try:
+    from database_config_supabase import get_stock_prices_bulk_supabase
+    BULK_QUERY_AVAILABLE = True
+except ImportError:
+    BULK_QUERY_AVAILABLE = False
+    print("⚠️ Bulk query function not available - using fallback")
 
 # Try to import PDF functions (optional, may not exist in older deployments)
 try:
@@ -927,8 +934,8 @@ class PortfolioAnalytics:
             current_date = datetime.now()
             two_years_ago = current_date - timedelta(days=730)  # 2 years
             
-            # Check what's the latest cached date across all tickers (BULK QUERY)
-            from database_config_supabase import get_stock_price_supabase, get_stock_prices_bulk_supabase
+            # Check what's the latest cached date across all tickers (BULK QUERY if available)
+            from database_config_supabase import get_stock_price_supabase
             latest_cached_dates = {}
             
             # Get purchase dates for all tickers
@@ -939,26 +946,39 @@ class PortfolioAnalytics:
                 start_date = max(purchase_date, two_years_ago)
                 ticker_purchase_dates[ticker] = start_date
             
-            # Check last 10 weeks for all tickers at once (bulk query)
+            # Check last 10 weeks for all tickers
             check_date = current_date
             ticker_latest_cached = {ticker: None for ticker in unique_tickers}
             
-            for week_idx in range(10):  # Check last 10 weeks
-                # Get Monday of the week
-                monday = check_date - timedelta(days=check_date.weekday())
-                monday_str = monday.strftime('%Y-%m-%d')
-                
-                # Get cached prices for all remaining tickers at once (BULK)
-                tickers_to_check = [t for t in unique_tickers if ticker_latest_cached[t] is None]
-                if tickers_to_check:
-                    cached_prices = get_stock_prices_bulk_supabase(tickers_to_check, monday_str)
+            if BULK_QUERY_AVAILABLE:
+                # Use optimized bulk query method
+                for week_idx in range(10):  # Check last 10 weeks
+                    # Get Monday of the week
+                    monday = check_date - timedelta(days=check_date.weekday())
+                    monday_str = monday.strftime('%Y-%m-%d')
                     
-                    # Update latest cached dates for tickers found
-                    for ticker, price in cached_prices.items():
-                        if price and price > 0:
+                    # Get cached prices for all remaining tickers at once (BULK)
+                    tickers_to_check = [t for t in unique_tickers if ticker_latest_cached[t] is None]
+                    if tickers_to_check:
+                        cached_prices = get_stock_prices_bulk_supabase(tickers_to_check, monday_str)
+                        
+                        # Update latest cached dates for tickers found
+                        for ticker, price in cached_prices.items():
+                            if price and price > 0:
+                                ticker_latest_cached[ticker] = monday
+                    
+                    check_date -= timedelta(days=7)
+            else:
+                # Fallback to original sequential method
+                for ticker in unique_tickers:
+                    check_date_ticker = current_date
+                    for _ in range(10):  # Check last 10 weeks
+                        monday = check_date_ticker - timedelta(days=check_date_ticker.weekday())
+                        cached_price = get_stock_price_supabase(ticker, monday.strftime('%Y-%m-%d'))
+                        if cached_price and cached_price > 0:
                             ticker_latest_cached[ticker] = monday
-                
-                check_date -= timedelta(days=7)
+                            break
+                        check_date_ticker -= timedelta(days=7)
             
             # Set start dates based on findings
             for ticker in unique_tickers:
@@ -1031,7 +1051,7 @@ class PortfolioAnalytics:
             monthly_derived_count = 0
             all_weekly_prices = {ticker: {} for ticker in valid_tickers}  # Store all prices per ticker
             
-            # Process week by week (BULK FETCHING PER WEEK)
+            # Process week by week (BULK FETCHING PER WEEK if available)
             for week_idx, week_date in enumerate(all_week_dates):
                 # Update progress
                 progress = (week_idx + 1) / total_weeks
@@ -1046,20 +1066,35 @@ class PortfolioAnalytics:
                 if not tickers_for_week:
                     continue
                 
-                # Bulk query: Check which prices are already cached
-                cached_prices = get_stock_prices_bulk_supabase(tickers_for_week, week_date_str)
-                
-                # Fetch missing prices
-                for ticker in tickers_for_week:
-                    if ticker in cached_prices and cached_prices[ticker] > 0:
-                        # Already cached
-                        all_weekly_prices[ticker][week_date] = cached_prices[ticker]
-                    else:
-                        # Need to fetch
-                        price = self.fetch_historical_price_comprehensive(ticker, week_date)
-                        if price and price > 0:
-                            all_weekly_prices[ticker][week_date] = price
-                            weekly_cached_count += 1
+                if BULK_QUERY_AVAILABLE:
+                    # Optimized: Bulk query all tickers for this week at once
+                    cached_prices = get_stock_prices_bulk_supabase(tickers_for_week, week_date_str)
+                    
+                    # Fetch missing prices
+                    for ticker in tickers_for_week:
+                        if ticker in cached_prices and cached_prices[ticker] > 0:
+                            # Already cached
+                            all_weekly_prices[ticker][week_date] = cached_prices[ticker]
+                        else:
+                            # Need to fetch
+                            price = self.fetch_historical_price_comprehensive(ticker, week_date)
+                            if price and price > 0:
+                                all_weekly_prices[ticker][week_date] = price
+                                weekly_cached_count += 1
+                else:
+                    # Fallback: Check each ticker individually
+                    for ticker in tickers_for_week:
+                        from database_config_supabase import get_stock_price_supabase
+                        cached_price = get_stock_price_supabase(ticker, week_date_str)
+                        
+                        if cached_price and cached_price > 0:
+                            all_weekly_prices[ticker][week_date] = cached_price
+                        else:
+                            # Need to fetch
+                            price = self.fetch_historical_price_comprehensive(ticker, week_date)
+                            if price and price > 0:
+                                all_weekly_prices[ticker][week_date] = price
+                                weekly_cached_count += 1
             
             # Derive and save monthly prices for all tickers
             status_text.text("📊 Deriving monthly prices from weekly data...")
