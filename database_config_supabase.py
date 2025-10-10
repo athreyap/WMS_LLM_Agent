@@ -829,13 +829,35 @@ def save_transactions_bulk_supabase(df: pd.DataFrame, file_id: int, user_id: int
         # Prepare bulk data
         bulk_data = []
         for _, row in df.iterrows():
+            # Safely convert quantity to float, handling inf/nan
+            quantity = row.get('quantity', 0)
+            if pd.notna(quantity):
+                quantity_float = float(quantity)
+                # Check for inf/-inf and replace with 0
+                if not (-1e308 < quantity_float < 1e308):  # Check if within JSON float range
+                    print(f"⚠️ Invalid quantity value {quantity_float} for {row.get('ticker', 'unknown')}, using 0")
+                    quantity_float = 0
+            else:
+                quantity_float = 0
+            
+            # Safely convert price to float, handling inf/nan
+            price = row.get('price')
+            if pd.notna(price):
+                price_float = float(price)
+                # Check for inf/-inf and replace with None
+                if not (-1e308 < price_float < 1e308):  # Check if within JSON float range
+                    print(f"⚠️ Invalid price value {price_float} for {row.get('ticker', 'unknown')}, using None")
+                    price_float = None
+            else:
+                price_float = None
+            
             transaction_data = {
                 "user_id": user_id,
                 "file_id": file_id,
                 "stock_name": row.get('stock_name', ''),
                 "ticker": row.get('ticker', ''),
-                "quantity": float(row.get('quantity', 0)),
-                "price": float(row.get('price', 0)) if pd.notna(row.get('price')) else None,
+                "quantity": quantity_float,
+                "price": price_float,
                 "transaction_type": row.get('transaction_type', ''),
                 "date": str(row.get('date', '')),
                 "channel": row.get('channel', ''),
