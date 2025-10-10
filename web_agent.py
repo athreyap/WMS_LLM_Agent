@@ -847,12 +847,8 @@ class PortfolioAnalytics:
             df = pd.DataFrame(transactions)
             df['date'] = pd.to_datetime(df['date'])
             
-            # Filter for buy transactions in the last year
-            one_year_ago = datetime.now() - timedelta(days=365)
-            buy_transactions = df[
-                (df['transaction_type'] == 'buy') & 
-                (df['date'] >= one_year_ago)
-            ].copy()
+            # Get ALL buy transactions (not just last year) to cache historical data
+            buy_transactions = df[df['transaction_type'] == 'buy'].copy()
             
             if buy_transactions.empty:
                 return
@@ -879,14 +875,18 @@ class PortfolioAnalytics:
                 stock_purchases = buy_transactions[buy_transactions['ticker'] == ticker]
                 purchase_date = stock_purchases['date'].min()
                 
-                # Generate monthly dates from purchase date to current date
+                # Generate monthly dates for last 2 years (to match weekly analysis)
                 current_date = datetime.now()
                 # Include current month by going to next month and then back
                 end_date = current_date.replace(day=1) + timedelta(days=32)
                 end_date = end_date.replace(day=1)
                 
+                # Start from 2 years ago or purchase date, whichever is later
+                two_years_ago = current_date - timedelta(days=730)  # 2 years
+                start_date = max(purchase_date.replace(day=1), two_years_ago.replace(day=1))
+                
                 monthly_dates = pd.date_range(
-                    start=purchase_date.replace(day=1),
+                    start=start_date,
                     end=end_date,  # Include current month
                     freq='MS'
                 )
@@ -3340,6 +3340,16 @@ class PortfolioAnalytics:
             st.info("💡 **Note:** This analysis uses cached historical prices for fast performance. Prices are pre-fetched during login and stored in the database.")
             st.info(f"📅 **Date Range:** Analysis includes data from purchase date to current month ({datetime.now().strftime('%B %Y')})")
             
+            # Cache refresh button
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                if st.button("🔄 Refresh Historical Price Cache", type="secondary", help="Fetch and cache historical prices for all stocks"):
+                    user_id = self.session_state.user_id
+                    with st.spinner("🔄 Refreshing historical price cache... This may take a few minutes."):
+                        self.populate_monthly_prices_cache(user_id)
+                    st.success("✅ Historical price cache refreshed!")
+                    st.rerun()  # Refresh the page to show updated data
+            
             # Filter for buy transactions in the last year
             one_year_ago = datetime.now() - timedelta(days=365)
             buy_transactions = df[
@@ -3361,7 +3371,7 @@ class PortfolioAnalytics:
                     'sector': 'first'
                 }).reset_index()
                 
-                # Pre-check: Filter stocks that have historical data available in database
+                # Check for available historical data in database (informational only)
                 st.info("🔍 Checking for available historical data in database...")
                 from database_config_supabase import get_stock_prices_range_supabase
                 
@@ -3384,22 +3394,19 @@ class PortfolioAnalytics:
                         )
                         
                         if historical_data and len(historical_data) > 0:
-                            stocks_with_data.append(stock)
+                            stocks_with_data.append(ticker)
                         else:
                             stocks_without_data.append(ticker)
                     except Exception as e:
                         stocks_without_data.append(ticker)
                 
-                # Convert back to DataFrame
+                # Show status but don't filter out stocks - let them be processed
                 if stocks_with_data:
-                    stock_purchases = pd.DataFrame(stocks_with_data)
                     st.success(f"✅ Found historical data for {len(stocks_with_data)} stocks")
-                else:
-                    stock_purchases = pd.DataFrame()
                 
                 if stocks_without_data:
                     st.warning(f"⚠️ No historical data available for: {', '.join(stocks_without_data)}")
-                    st.info("💡 Historical data will be fetched and cached on first access. Please refresh after a few minutes.")
+                    st.info("💡 Historical data will be fetched and cached during processing. This may take a few minutes.")
                 
                 # Generate monthly data for each stock from purchase date to current date
                 if not stock_purchases.empty:
