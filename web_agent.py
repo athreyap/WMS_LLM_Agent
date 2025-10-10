@@ -548,16 +548,24 @@ class PortfolioAnalytics:
                 try:
                     import yfinance as yf
                     
-                    # Add .NS suffix for Indian stocks if not present
-                    if not ticker.endswith(('.NS', '.BO')):
-                        ticker_with_suffix = f"{ticker}.NS"
-                    else:
+                    # Determine which exchange suffix to try
+                    if ticker.endswith(('.NS', '.BO')):
+                        # Already has suffix, use as-is
                         ticker_with_suffix = ticker
-                    
-                    stock = yf.Ticker(ticker_with_suffix)
-                    
-                    # Get historical data for the specific date
-                    hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
+                        stock = yf.Ticker(ticker_with_suffix)
+                        hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
+                    else:
+                        # Try NSE first (.NS)
+                        ticker_with_suffix = f"{ticker}.NS"
+                        stock = yf.Ticker(ticker_with_suffix)
+                        hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
+                        
+                        # If NSE fails, try BSE (.BO)
+                        if hist_data.empty:
+                            st.debug(f"NSE data not found for {ticker}, trying BSE...")
+                            ticker_with_suffix = f"{ticker}.BO"
+                            stock = yf.Ticker(ticker_with_suffix)
+                            hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
                     
                     if not hist_data.empty:
                         # Use closing price
@@ -647,16 +655,24 @@ class PortfolioAnalytics:
                 try:
                     import yfinance as yf
                     
-                    # Add .NS suffix for Indian stocks if not present
-                    if not ticker.endswith(('.NS', '.BO')):
-                        ticker_with_suffix = f"{ticker}.NS"
-                    else:
+                    # Determine which exchange suffix to try
+                    if ticker.endswith(('.NS', '.BO')):
+                        # Already has suffix, use as-is
                         ticker_with_suffix = ticker
-                    
-                    stock = yf.Ticker(ticker_with_suffix)
-                    
-                    # Get historical data for the specific date
-                    hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
+                        stock = yf.Ticker(ticker_with_suffix)
+                        hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
+                    else:
+                        # Try NSE first (.NS)
+                        ticker_with_suffix = f"{ticker}.NS"
+                        stock = yf.Ticker(ticker_with_suffix)
+                        hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
+                        
+                        # If NSE fails, try BSE (.BO)
+                        if hist_data.empty:
+                            st.debug(f"NSE data not found for {ticker}, trying BSE...")
+                            ticker_with_suffix = f"{ticker}.BO"
+                            stock = yf.Ticker(ticker_with_suffix)
+                            hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
                     
                     if not hist_data.empty:
                         # Use closing price
@@ -3504,14 +3520,19 @@ class PortfolioAnalytics:
                     
                     for i, ticker in enumerate(unique_stocks):
                         stock_data = monthly_pnl_df[monthly_pnl_df['ticker'] == ticker]
-                        stock_name = stock_data['stock_name'].iloc[0]
+                        
+                        # Skip if no data for this ticker
+                        if stock_data.empty or len(stock_data) == 0:
+                            continue
+                        
+                        stock_name = stock_data['stock_name'].iloc[0] if 'stock_name' in stock_data.columns else ticker
                         
                         fig_price_overview.add_trace(go.Scatter(
                             x=stock_data['month'],
                             y=stock_data['historical_price'],
                             mode='lines+markers',
                             name=f'{ticker} - {stock_name}',
-                            line=dict(color=colors[i], width=2),
+                            line=dict(color=colors[i % len(colors)], width=2),
                             marker=dict(size=6),
                             hovertemplate=f'<b>{ticker}</b><br>Month: %{{x}}<br>Price: ₹%{{y:.2f}}<extra></extra>'
                         ))
@@ -3540,17 +3561,23 @@ class PortfolioAnalytics:
                     price_performance_data = []
                     for ticker in unique_stocks:
                         stock_data = monthly_pnl_df[monthly_pnl_df['ticker'] == ticker]
-                        if len(stock_data) > 1:
-                            initial_price = stock_data['historical_price'].iloc[0]
-                            final_price = stock_data['historical_price'].iloc[-1]
-                            price_change = final_price - initial_price
-                            price_change_pct = (price_change / initial_price) * 100
-                            
-                            price_performance_data.append({
-                                'ticker': ticker,
-                                'stock_name': stock_data['stock_name'].iloc[0],
-                                'initial_price': initial_price,
-                                'final_price': final_price,
+                        
+                        # Skip if insufficient data
+                        if stock_data.empty or len(stock_data) < 2:
+                            continue
+                        
+                        initial_price = stock_data['historical_price'].iloc[0]
+                        final_price = stock_data['historical_price'].iloc[-1]
+                        price_change = final_price - initial_price
+                        price_change_pct = (price_change / initial_price) * 100 if initial_price > 0 else 0
+                        
+                        stock_name = stock_data['stock_name'].iloc[0] if 'stock_name' in stock_data.columns else ticker
+                        
+                        price_performance_data.append({
+                            'ticker': ticker,
+                            'stock_name': stock_name,
+                            'initial_price': initial_price,
+                            'final_price': final_price,
                                 'price_change': price_change,
                                 'price_change_pct': price_change_pct
                             })
@@ -3616,10 +3643,21 @@ class PortfolioAnalytics:
                     
                     # Create dropdown for stock selection
                     unique_stocks = monthly_pnl_df['ticker'].unique()
+                    
+                    # Create a safe format function
+                    def format_stock_name(ticker):
+                        try:
+                            stock_data = monthly_pnl_df[monthly_pnl_df['ticker']==ticker]
+                            if not stock_data.empty and 'stock_name' in stock_data.columns:
+                                return f"{ticker} - {stock_data['stock_name'].iloc[0]}"
+                            return ticker
+                        except:
+                            return ticker
+                    
                     selected_stock = st.selectbox(
                         "Select a stock to view detailed monthly performance:",
                         unique_stocks,
-                        format_func=lambda x: f"{x} - {monthly_pnl_df[monthly_pnl_df['ticker']==x]['stock_name'].iloc[0]}"
+                        format_func=format_stock_name
                     )
                     
                     if selected_stock:
