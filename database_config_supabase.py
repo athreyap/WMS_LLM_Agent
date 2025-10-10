@@ -1,7 +1,8 @@
 """
 Database configuration and utilities for Supabase integration.
-Handles user management, transactions, file records, and stock price caching.
-Version: 2.0.0 - Enhanced float validation and fallback mechanisms
+Handles user management, transactions, file records, stock price caching, and PDF documents.
+Version: 2.0.1 - Added PDF document storage and enhanced mutual fund/PMS support
+Last Updated: 2025-10-10
 """
 
 import os
@@ -21,7 +22,8 @@ import socket
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 from supabase import create_client, Client
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
+# Module updated: 2025-10-10 - PDF storage + MF/PMS fixes
 
 # Supabase configuration
 SUPABASE_URL = os.getenv('SUPABASE_URL', 'https://rolcoegikoeblxzqgkix.supabase.co')
@@ -29,6 +31,77 @@ SUPABASE_KEY = os.getenv('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e
 
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# PDF Documents Storage Functions (defined after supabase client initialization)
+def save_pdf_document_supabase(user_id: int, filename: str, file_content: str, extracted_text: str, is_global: bool = False) -> Optional[Dict]:
+    """
+    Save PDF document to database for AI assistant access
+    
+    Args:
+        user_id: User ID who uploaded the document
+        filename: Name of the PDF file
+        file_content: Base64 encoded PDF content
+        extracted_text: Extracted text from PDF
+        is_global: If True, document is available to all users
+    
+    Returns:
+        dict with document record or None
+    """
+    try:
+        document_data = {
+            "user_id": user_id if not is_global else None,
+            "filename": filename,
+            "file_content": file_content,
+            "extracted_text": extracted_text,
+            "is_global": is_global,
+            "uploaded_at": datetime.utcnow().isoformat()
+        }
+        
+        result = supabase.table("pdf_documents").insert(document_data).execute()
+        
+        if result.data:
+            print(f"✅ Saved PDF document: {filename}")
+            return result.data[0]
+        
+        return None
+        
+    except Exception as e:
+        print(f"❌ Error saving PDF document: {e}")
+        return None
+
+def get_pdf_documents_supabase(user_id: int, include_global: bool = True) -> List[Dict]:
+    """
+    Get all PDF documents for a user
+    
+    Args:
+        user_id: User ID
+        include_global: If True, also include global documents
+    
+    Returns:
+        List of PDF document records
+    """
+    try:
+        if include_global:
+            # Get user's documents + global documents
+            result = supabase.table("pdf_documents").select("*").or_(f"user_id.eq.{user_id},is_global.eq.true").execute()
+        else:
+            # Get only user's documents
+            result = supabase.table("pdf_documents").select("*").eq("user_id", user_id).execute()
+        
+        return result.data if result.data else []
+        
+    except Exception as e:
+        print(f"❌ Error getting PDF documents: {e}")
+        return []
+
+def delete_pdf_document_supabase(document_id: int) -> bool:
+    """Delete a PDF document"""
+    try:
+        result = supabase.table("pdf_documents").delete().eq("id", document_id).execute()
+        return True if result.data else False
+    except Exception as e:
+        print(f"❌ Error deleting PDF document: {e}")
+        return False
 
 def convert_to_github_path(username: str, local_path: str = None) -> str:
     """

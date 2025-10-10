@@ -32,11 +32,20 @@ from database_config_supabase import (
     save_monthly_stock_price_supabase,
     get_monthly_stock_price_supabase,
     get_monthly_stock_prices_range_supabase,
-    get_all_monthly_stock_prices_supabase,
-    save_pdf_document_supabase,
-    get_pdf_documents_supabase,
-    delete_pdf_document_supabase
+    get_all_monthly_stock_prices_supabase
 )
+
+# Try to import PDF functions (optional, may not exist in older deployments)
+try:
+    from database_config_supabase import (
+        save_pdf_document_supabase,
+        get_pdf_documents_supabase,
+        delete_pdf_document_supabase
+    )
+    PDF_STORAGE_AVAILABLE = True
+except ImportError:
+    PDF_STORAGE_AVAILABLE = False
+    print("⚠️ PDF storage functions not available - using temporary PDF processing only")
 
 # Password hashing - temporarily disabled due to login_system.py issues
 # from login_system import hash_password, verify_password
@@ -1717,19 +1726,23 @@ class PortfolioAnalytics:
             
             # File upload in sidebar
             with st.sidebar.expander("📁 Document Library", expanded=False):
-                # Show stored PDFs
-                stored_pdfs = get_pdf_documents_supabase(self.session_state.user_id, include_global=True)
-                if stored_pdfs:
-                    st.markdown(f"**📚 {len(stored_pdfs)} Stored Document(s):**")
-                    for pdf in stored_pdfs:
-                        col1, col2 = st.columns([3, 1])
-                        with col1:
-                            st.text(f"📄 {pdf['filename']}")
-                        with col2:
-                            if st.button("🗑️", key=f"del_pdf_{pdf['id']}", help="Delete"):
-                                delete_pdf_document_supabase(pdf['id'])
-                                st.rerun()
-                    st.markdown("---")
+                # Show stored PDFs (if available)
+                if PDF_STORAGE_AVAILABLE:
+                    try:
+                        stored_pdfs = get_pdf_documents_supabase(self.session_state.user_id, include_global=True)
+                        if stored_pdfs:
+                            st.markdown(f"**📚 {len(stored_pdfs)} Stored Document(s):**")
+                            for pdf in stored_pdfs:
+                                col1, col2 = st.columns([3, 1])
+                                with col1:
+                                    st.text(f"📄 {pdf['filename']}")
+                                with col2:
+                                    if st.button("🗑️", key=f"del_pdf_{pdf['id']}", help="Delete"):
+                                        delete_pdf_document_supabase(pdf['id'])
+                                        st.rerun()
+                            st.markdown("---")
+                    except Exception as e:
+                        st.caption(f"⚠️ PDF storage: {str(e)[:50]}")
                 
                 # Upload new PDFs
                 uploaded_files = st.file_uploader(
@@ -1737,7 +1750,7 @@ class PortfolioAnalytics:
                     type=['pdf', 'txt'],
                     accept_multiple_files=True,
                     key="ai_sidebar_pdf_upload",
-                    help="PDFs are saved and used in all future chats"
+                    help="Upload PDFs for AI analysis" + (" (saved permanently)" if PDF_STORAGE_AVAILABLE else " (temporary)")
                 )
             
             # Chat input
@@ -5166,7 +5179,7 @@ class PortfolioAnalytics:
             # Process and save uploaded files (PDFs)
             file_content = ""
             if uploaded_files:
-                with st.spinner("📄 Processing and saving documents..."):
+                with st.spinner("📄 Processing documents..."):
                     import base64
                     for file in uploaded_files:
                         # Extract text from file
@@ -5174,15 +5187,20 @@ class PortfolioAnalytics:
                             pdf_bytes = file.read()
                             extracted_text = self.extract_text_from_pdf(pdf_bytes)
                             
-                            # Save to database
-                            file_content_b64 = base64.b64encode(pdf_bytes).decode('utf-8')
-                            save_pdf_document_supabase(
-                                user_id=user_id,
-                                filename=file.name,
-                                file_content=file_content_b64,
-                                extracted_text=extracted_text,
-                                is_global=False
-                            )
+                            # Save to database if PDF storage is available
+                            if PDF_STORAGE_AVAILABLE:
+                                try:
+                                    file_content_b64 = base64.b64encode(pdf_bytes).decode('utf-8')
+                                    save_pdf_document_supabase(
+                                        user_id=user_id,
+                                        filename=file.name,
+                                        file_content=file_content_b64,
+                                        extracted_text=extracted_text,
+                                        is_global=False
+                                    )
+                                    st.success(f"✅ Saved {file.name} to library")
+                                except Exception as e:
+                                    st.warning(f"⚠️ Could not save {file.name}: {str(e)[:50]}")
                             
                             file_content += f"\n\n--- {file.name} ---\n{extracted_text}"
                         else:
@@ -5191,15 +5209,19 @@ class PortfolioAnalytics:
                             file_content += f"\n\n--- {file.name} ---\n{text}"
                     
                     if file_content:
-                        st.success(f"✅ Processed and saved {len(uploaded_files)} document(s)")
+                        st.success(f"✅ Processed {len(uploaded_files)} document(s)")
             
-            # Load previously uploaded PDFs for this user
-            stored_pdfs = get_pdf_documents_supabase(user_id, include_global=True)
-            if stored_pdfs:
-                st.info(f"📚 Using {len(stored_pdfs)} stored document(s) from your library")
-                for pdf in stored_pdfs:
-                    if pdf.get('extracted_text'):
-                        file_content += f"\n\n--- Stored: {pdf['filename']} ---\n{pdf['extracted_text'][:2000]}"  # Limit to 2000 chars per doc
+            # Load previously uploaded PDFs for this user (if available)
+            if PDF_STORAGE_AVAILABLE:
+                try:
+                    stored_pdfs = get_pdf_documents_supabase(user_id, include_global=True)
+                    if stored_pdfs:
+                        st.info(f"📚 Using {len(stored_pdfs)} stored document(s) from your library")
+                        for pdf in stored_pdfs:
+                            if pdf.get('extracted_text'):
+                                file_content += f"\n\n--- Stored: {pdf['filename']} ---\n{pdf['extracted_text'][:2000]}"  # Limit to 2000 chars per doc
+                except Exception as e:
+                    print(f"⚠️ Could not load stored PDFs: {e}")
             
             # Build conversation context for ChatGPT-style interaction
             conversation_messages = []
