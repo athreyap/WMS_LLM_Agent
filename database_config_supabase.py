@@ -874,16 +874,36 @@ def save_transactions_bulk_supabase(df: pd.DataFrame, file_id: int, user_id: int
             else:
                 price_float = None
             
+            # Safely convert date to string
+            date_value = row.get('date', '')
+            if pd.notna(date_value):
+                try:
+                    if isinstance(date_value, pd.Timestamp):
+                        date_str = date_value.strftime('%Y-%m-%d')
+                    else:
+                        date_str = str(date_value)
+                except Exception as e:
+                    print(f"⚠️ Could not convert date {date_value} for {row.get('ticker', 'unknown')}: {e}, using empty string")
+                    date_str = ''
+            else:
+                date_str = ''
+            
+            # Safely convert string fields, handling NaN
+            def safe_str(value, default=''):
+                if pd.notna(value):
+                    return str(value)
+                return default
+            
             transaction_data = {
                 "user_id": user_id,
                 "file_id": file_id,
-                "stock_name": row.get('stock_name', ''),
-                "ticker": row.get('ticker', ''),
+                "stock_name": safe_str(row.get('stock_name', '')),
+                "ticker": safe_str(row.get('ticker', '')),
                 "quantity": quantity_float,
                 "price": price_float,
-                "transaction_type": row.get('transaction_type', ''),
-                "date": str(row.get('date', '')),
-                "channel": row.get('channel', ''),
+                "transaction_type": safe_str(row.get('transaction_type', '')),
+                "date": date_str,
+                "channel": safe_str(row.get('channel', '')),
                 "created_at": datetime.utcnow().isoformat()
             }
             bulk_data.append(transaction_data)
@@ -898,6 +918,15 @@ def save_transactions_bulk_supabase(df: pd.DataFrame, file_id: int, user_id: int
             except (TypeError, ValueError, OverflowError) as json_error:
                 print(f"❌ Transaction {idx} failed JSON validation: {json_error}")
                 print(f"❌ Problematic transaction: {transaction}")
+                
+                # Check each field individually to identify the problem
+                for field_name, field_value in transaction.items():
+                    try:
+                        json.dumps({field_name: field_value})
+                    except Exception as field_error:
+                        print(f"❌ Problem field: {field_name} = {field_value} (type: {type(field_value).__name__})")
+                        print(f"❌ Field error: {field_error}")
+                
                 raise ValueError(f"Invalid data in transaction {idx}: {json_error}")
         
         print(f"✅ All transactions passed validation")

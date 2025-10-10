@@ -1126,7 +1126,25 @@ class PortfolioAnalytics:
             if not transactions:
                 return
             
+            # Debug: Check raw transaction data
+            print(f"🔍 DEBUG: Loaded {len(transactions)} raw transactions")
+            if transactions:
+                print(f"🔍 DEBUG: First transaction keys: {transactions[0].keys()}")
+                print(f"🔍 DEBUG: First transaction: {transactions[0]}")
+            
             df = pd.DataFrame(transactions)
+            
+            # Debug: Check quantity values
+            print(f"🔍 DEBUG: DataFrame shape: {df.shape}")
+            print(f"🔍 DEBUG: DataFrame columns: {df.columns.tolist()}")
+            if 'quantity' in df.columns:
+                print(f"🔍 DEBUG: Quantity column type: {df['quantity'].dtype}")
+                print(f"🔍 DEBUG: Quantity sample: {df['quantity'].head(10).tolist()}")
+                print(f"🔍 DEBUG: Quantity stats: min={df['quantity'].min()}, max={df['quantity'].max()}, mean={df['quantity'].mean()}")
+                print(f"🔍 DEBUG: NaN quantities: {df['quantity'].isna().sum()}")
+                print(f"🔍 DEBUG: Zero quantities: {(df['quantity'] == 0).sum()}")
+            else:
+                print(f"❌ DEBUG: 'quantity' column not found in DataFrame!")
             
             # Add live prices to transactions
             df['live_price'] = df['ticker'].map(self.session_state.live_prices)
@@ -3948,28 +3966,49 @@ class PortfolioAnalytics:
                     with tab1:
                         st.subheader(f"{period_label}ly Performance Overview")
                         
-                        # Collect historical data for all tickers
+                        # Collect historical data for all tickers using bulk database queries
+                        st.info("📊 Loading historical data from database cache...")
                         historical_data = []
                         progress_bar = st.progress(0)
                         status_text = st.empty()
                         
+                        # Import database function for bulk queries
+                        from database_config_supabase import get_stock_prices_range_supabase
+                        
                         for idx, ticker in enumerate(all_tickers[:20]):  # Limit to first 20 for performance
-                            status_text.text(f"Fetching data for {ticker}... ({idx+1}/{min(len(all_tickers), 20)})")
+                            status_text.text(f"Loading data for {ticker}... ({idx+1}/{min(len(all_tickers), 20)})")
                             
                             ticker_data = df[df['ticker'] == ticker].iloc[0]
                             stock_name = ticker_data.get('stock_name', ticker)
                             
-                            for date in date_range:
-                                # Fetch historical price for this date
-                                hist_price = self.fetch_historical_price_for_month(ticker, date)
-                                
-                                if hist_price and hist_price > 0:
+                            # Get all prices for this ticker in one bulk query
+                            start_date_str = date_range[0].strftime('%Y-%m-%d')
+                            end_date_str = date_range[-1].strftime('%Y-%m-%d')
+                            
+                            cached_prices = get_stock_prices_range_supabase(ticker, start_date_str, end_date_str)
+                            
+                            if cached_prices:
+                                # Use cached data
+                                for price_record in cached_prices:
                                     historical_data.append({
-                                        'Date': date,
+                                        'Date': pd.to_datetime(price_record['price_date']),
                                         'Ticker': ticker,
                                         'Stock Name': stock_name,
-                                        'Price': hist_price
+                                        'Price': float(price_record['price'])
                                     })
+                            else:
+                                # Fallback: Fetch from API if not in cache
+                                st.warning(f"⚠️ No cached data for {ticker}, fetching from API...")
+                                for date in date_range:
+                                    hist_price = self.fetch_historical_price_for_month(ticker, date)
+                                    
+                                    if hist_price and hist_price > 0:
+                                        historical_data.append({
+                                            'Date': date,
+                                            'Ticker': ticker,
+                                            'Stock Name': stock_name,
+                                            'Price': hist_price
+                                        })
                             
                             progress_bar.progress((idx + 1) / min(len(all_tickers), 20))
                         
