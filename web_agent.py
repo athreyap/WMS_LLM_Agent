@@ -1488,7 +1488,8 @@ class PortfolioAnalytics:
         st.sidebar.title("Navigation")
         page = st.sidebar.selectbox(
             "Choose a page:",
-            ["🏠 Overview", "📈 Performance", "📊 Allocation", "💰 P&L Analysis", "🤖 AI Assistant", "📁 Files", "⚙️ Settings"]
+            ["🏠 Overview", "📈 Performance", "📊 Allocation", "💰 P&L Analysis", "🤖 AI Assistant", "📁 Files", "⚙️ Settings"],
+            key="main_navigation"
         )
         
         # User info in sidebar
@@ -1548,7 +1549,8 @@ class PortfolioAnalytics:
         ai_model = st.sidebar.selectbox(
             "🤖 Choose AI Model",
             ["Google Gemini 2.5 Flash (Fast)", "Google Gemini 2.5 Pro (Advanced)", "OpenAI GPT-3.5"],
-            help="Gemini 2.5 Flash: Fast & efficient. Gemini 2.5 Pro: Advanced analysis. OpenAI: 3/min limit"
+            help="Gemini 2.5 Flash: Fast & efficient. Gemini 2.5 Pro: Advanced analysis. OpenAI: 3/min limit",
+            key="ai_model_select"
         )
         
         if ai_model == "Google Gemini 2.5 Flash (Fast)":
@@ -3359,72 +3361,91 @@ class PortfolioAnalytics:
                     'sector': 'first'
                 }).reset_index()
                 
-                # Generate monthly data for each stock from purchase date to current date
-                st.info("🔄 Loading monthly P&L data from cache...")
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+                # Pre-check: Filter stocks that have historical data available in database
+                st.info("🔍 Checking for available historical data in database...")
+                from database_config_supabase import get_stock_prices_range_supabase
                 
-                total_stocks = len(stock_purchases)
+                stocks_with_data = []
+                stocks_without_data = []
                 
-                for idx, (_, stock) in enumerate(stock_purchases.iterrows()):
+                for _, stock in stock_purchases.iterrows():
                     ticker = stock['ticker']
                     purchase_date = stock['date']
-                    purchase_price = stock['price']
-                    quantity = stock['quantity']
-                    invested_amount = stock['invested_amount']
-                    stock_name = stock['stock_name']
-                    sector = stock['sector']
                     
-                    # Update progress
-                    progress = (idx + 1) / total_stocks
-                    progress_bar.progress(progress)
-                    status_text.text(f"Processing {ticker} ({idx + 1}/{total_stocks})...")
+                    # Check if we have any historical data for this ticker
+                    try:
+                        # Try to get data for the last month as a test
+                        test_date = datetime.now().replace(day=1)
+                        test_date_str = test_date.strftime('%Y-%m-%d')
+                        historical_data = get_stock_prices_range_supabase(
+                            ticker, 
+                            purchase_date.strftime('%Y-%m-%d'),
+                            test_date_str
+                        )
+                        
+                        if historical_data and len(historical_data) > 0:
+                            stocks_with_data.append(stock)
+                        else:
+                            stocks_without_data.append(ticker)
+                    except Exception as e:
+                        stocks_without_data.append(ticker)
+                
+                # Convert back to DataFrame
+                if stocks_with_data:
+                    stock_purchases = pd.DataFrame(stocks_with_data)
+                    st.success(f"✅ Found historical data for {len(stocks_with_data)} stocks")
+                else:
+                    stock_purchases = pd.DataFrame()
+                
+                if stocks_without_data:
+                    st.warning(f"⚠️ No historical data available for: {', '.join(stocks_without_data)}")
+                    st.info("💡 Historical data will be fetched and cached on first access. Please refresh after a few minutes.")
+                
+                # Generate monthly data for each stock from purchase date to current date
+                if not stock_purchases.empty:
+                    st.info("🔄 Loading monthly P&L data from cache...")
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
                     
-                    # Generate monthly data points from purchase date to current date
-                    current_date = datetime.now()
-                    # Include current month by going to next month and then back
-                    end_date = current_date.replace(day=1) + timedelta(days=32)
-                    end_date = end_date.replace(day=1)
+                    total_stocks = len(stock_purchases)
                     
-                    monthly_dates = pd.date_range(
-                        start=purchase_date.replace(day=1),  # Start from first day of purchase month
-                        end=end_date,  # Include current month
-                        freq='MS'  # Month start frequency
-                    )
-                    
-                    # Fetch historical prices for each month
-                    for month_date in monthly_dates:
-                        try:
-                            # Fetch historical price for this specific month
-                            historical_price = self.fetch_historical_price_for_month(ticker, month_date)
-                            
-                            if historical_price and historical_price > 0:
-                                # Calculate P&L values
-                                current_value = quantity * historical_price
-                                unrealized_pnl = (historical_price - purchase_price) * quantity
-                                pnl_percentage = ((historical_price - purchase_price) / purchase_price) * 100
+                    for idx, (_, stock) in enumerate(stock_purchases.iterrows()):
+                        ticker = stock['ticker']
+                        purchase_date = stock['date']
+                        purchase_price = stock['price']
+                        quantity = stock['quantity']
+                        invested_amount = stock['invested_amount']
+                        stock_name = stock['stock_name']
+                        sector = stock['sector']
+                        
+                        # Update progress
+                        progress = (idx + 1) / total_stocks
+                        progress_bar.progress(progress)
+                        status_text.text(f"Processing {ticker} ({idx + 1}/{total_stocks})...")
+                        
+                        # Generate monthly data points from purchase date to current date
+                        current_date = datetime.now()
+                        # Include current month by going to next month and then back
+                        end_date = current_date.replace(day=1) + timedelta(days=32)
+                        end_date = end_date.replace(day=1)
+                        
+                        monthly_dates = pd.date_range(
+                            start=purchase_date.replace(day=1),  # Start from first day of purchase month
+                            end=end_date,  # Include current month
+                            freq='MS'  # Month start frequency
+                        )
+                        
+                        # Fetch historical prices for each month
+                        for month_date in monthly_dates:
+                            try:
+                                # Fetch historical price for this specific month
+                                historical_price = self.fetch_historical_price_for_month(ticker, month_date)
                                 
-                                monthly_pnl_data.append({
-                                    'ticker': ticker,
-                                    'stock_name': stock_name,
-                                    'sector': sector,
-                                    'month': month_date,
-                                    'purchase_price': purchase_price,
-                                    'historical_price': historical_price,
-                                    'quantity': quantity,
-                                    'invested_amount': invested_amount,
-                                    'current_value': current_value,
-                                    'unrealized_pnl': unrealized_pnl,
-                                    'pnl_percentage': pnl_percentage
-                                })
-                            else:
-                                # Fallback to current price if historical price not available
-                                current_price = df[df['ticker'] == ticker]['current_price'].iloc[0] if 'current_price' in df.columns else None
-                                if current_price and current_price > 0:
-                                    # Calculate P&L values for fallback
-                                    current_value = quantity * current_price
-                                    unrealized_pnl = (current_price - purchase_price) * quantity
-                                    pnl_percentage = ((current_price - purchase_price) / purchase_price) * 100
+                                if historical_price and historical_price > 0:
+                                    # Calculate P&L values
+                                    current_value = quantity * historical_price
+                                    unrealized_pnl = (historical_price - purchase_price) * quantity
+                                    pnl_percentage = ((historical_price - purchase_price) / purchase_price) * 100
                                     
                                     monthly_pnl_data.append({
                                         'ticker': ticker,
@@ -3432,20 +3453,42 @@ class PortfolioAnalytics:
                                         'sector': sector,
                                         'month': month_date,
                                         'purchase_price': purchase_price,
-                                        'historical_price': current_price,
+                                        'historical_price': historical_price,
                                         'quantity': quantity,
                                         'invested_amount': invested_amount,
                                         'current_value': current_value,
                                         'unrealized_pnl': unrealized_pnl,
                                         'pnl_percentage': pnl_percentage
                                     })
-                        except Exception as e:
-                            st.warning(f"⚠️ Could not fetch historical price for {ticker} on {month_date}: {e}")
-                            continue
-                
-                # Clear progress indicators
-                progress_bar.empty()
-                status_text.empty()
+                                else:
+                                    # Fallback to current price if historical price not available
+                                    current_price = df[df['ticker'] == ticker]['current_price'].iloc[0] if 'current_price' in df.columns else None
+                                    if current_price and current_price > 0:
+                                        # Calculate P&L values for fallback
+                                        current_value = quantity * current_price
+                                        unrealized_pnl = (current_price - purchase_price) * quantity
+                                        pnl_percentage = ((current_price - purchase_price) / purchase_price) * 100
+                                        
+                                        monthly_pnl_data.append({
+                                            'ticker': ticker,
+                                            'stock_name': stock_name,
+                                            'sector': sector,
+                                            'month': month_date,
+                                            'purchase_price': purchase_price,
+                                            'historical_price': current_price,
+                                            'quantity': quantity,
+                                            'invested_amount': invested_amount,
+                                            'current_value': current_value,
+                                            'unrealized_pnl': unrealized_pnl,
+                                            'pnl_percentage': pnl_percentage
+                                        })
+                            except Exception as e:
+                                st.warning(f"⚠️ Could not fetch historical price for {ticker} on {month_date}: {e}")
+                                continue
+                    
+                    # Clear progress indicators
+                    progress_bar.empty()
+                    status_text.empty()
                 
                 if monthly_pnl_data:
                     st.success(f"✅ Successfully loaded {len(monthly_pnl_data)} monthly data points across {len(stock_purchases)} stocks from cache!")
@@ -3620,22 +3663,26 @@ class PortfolioAnalytics:
                             st.subheader("📈 Best Price Performers")
                             best_performers = price_perf_df.head(3)
                             for _, stock in best_performers.iterrows():
+                                # Determine color based on actual percentage value
+                                change_color = "normal" if stock['price_change_pct'] > 0 else "inverse" if stock['price_change_pct'] < 0 else "off"
                                 st.metric(
                                     f"{stock['ticker']} - {stock['stock_name']}",
                                     f"₹{stock['final_price']:.2f}",
                                     delta=f"{stock['price_change_pct']:+.2f}%",
-                                    delta_color="normal"
+                                    delta_color=change_color
                                 )
                         
                         with col2:
                             st.subheader("📉 Worst Price Performers")
                             worst_performers = price_perf_df.tail(3)
                             for _, stock in worst_performers.iterrows():
+                                # Determine color based on actual percentage value
+                                change_color = "normal" if stock['price_change_pct'] > 0 else "inverse" if stock['price_change_pct'] < 0 else "off"
                                 st.metric(
                                     f"{stock['ticker']} - {stock['stock_name']}",
                                     f"₹{stock['final_price']:.2f}",
                                     delta=f"{stock['price_change_pct']:+.2f}%",
-                                    delta_color="inverse"
+                                    delta_color=change_color
                                 )
                     
                     # Individual stock performance
@@ -3657,7 +3704,8 @@ class PortfolioAnalytics:
                     selected_stock = st.selectbox(
                         "Select a stock to view detailed monthly performance:",
                         unique_stocks,
-                        format_func=format_stock_name
+                        format_func=format_stock_name,
+                        key="monthly_stock_select"
                     )
                     
                     if selected_stock:
@@ -3858,7 +3906,8 @@ class PortfolioAnalytics:
                 tracking_period = st.selectbox(
                     "Select Tracking Period",
                     ["Monthly", "Weekly"],
-                    help="Choose how frequently to track performance"
+                    help="Choose how frequently to track performance",
+                    key="tracking_period_select"
                 )
             
             try:
@@ -4019,7 +4068,8 @@ class PortfolioAnalytics:
                         selected_ticker = st.selectbox(
                             "Select a stock/MF to analyze",
                             all_tickers,
-                            format_func=lambda x: f"{df[df['ticker']==x]['stock_name'].iloc[0]} ({x})" if len(df[df['ticker']==x]) > 0 else x
+                            format_func=lambda x: f"{df[df['ticker']==x]['stock_name'].iloc[0]} ({x})" if len(df[df['ticker']==x]) > 0 else x,
+                            key="historical_ticker_select"
                         )
                         
                         if selected_ticker and historical_data:
