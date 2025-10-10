@@ -1675,16 +1675,19 @@ class PortfolioAnalytics:
                         self.process_ai_query_with_db_access(user_query, uploaded_files if 'uploaded_files' in locals() else None)
                     st.rerun()
             
-            # Show recent chat
+            # Show recent chat (latest first)
             if st.session_state.chat_history:
                 with st.sidebar.expander("💬 Chat History", expanded=True):
-                    for i, msg in enumerate(st.session_state.chat_history[-5:]):  # Show last 5 messages
+                    # Reverse to show latest first
+                    recent_messages = list(reversed(st.session_state.chat_history[-5:]))
+                    
+                    for i, msg in enumerate(recent_messages):
                         if msg["role"] == "user":
                             st.markdown(f"**You:** {msg['content']}")
                         else:
                             st.markdown(f"**AI:** {msg['content']}")
                         
-                        if i < len(st.session_state.chat_history[-5:]) - 1:
+                        if i < len(recent_messages) - 1:
                             st.markdown("---")
                     
                     if st.button("🗑️ Clear Chat", key="clear_chat"):
@@ -5092,8 +5095,39 @@ class PortfolioAnalytics:
             # Build conversation context for ChatGPT-style interaction
             conversation_messages = []
             
-            # System message with portfolio context
-            system_prompt = f"""You are an expert financial advisor and portfolio analyst with access to real-time portfolio data.
+            # Build detailed portfolio context with ACTUAL data
+            holdings_list = ""
+            if context_data['portfolio_summary'].get('holdings'):
+                holdings_list = "\n\nCOMPLETE HOLDINGS LIST:\n"
+                for holding in context_data['portfolio_summary']['holdings']:
+                    holdings_list += f"- {holding.get('ticker', 'N/A')} ({holding.get('stock_name', 'N/A')}): "
+                    holdings_list += f"Qty: {holding.get('quantity', 0):.2f}, "
+                    holdings_list += f"Invested: ₹{holding.get('invested_amount', 0):,.2f}, "
+                    holdings_list += f"Current: ₹{holding.get('current_value', 0):,.2f}, "
+                    holdings_list += f"P&L: ₹{holding.get('unrealized_pnl', 0):,.2f} ({holding.get('pnl_percentage', 0):.2f}%)\n"
+            
+            top_performers_text = ""
+            if context_data['portfolio_summary'].get('top_performers'):
+                top_performers_text = "\n\nTOP 5 PERFORMERS:\n"
+                for i, stock in enumerate(context_data['portfolio_summary']['top_performers'], 1):
+                    top_performers_text += f"{i}. {stock.get('ticker')} ({stock.get('stock_name', 'N/A')}): "
+                    top_performers_text += f"P&L: ₹{stock.get('unrealized_pnl', 0):,.2f} ({stock.get('pnl_percentage', 0):.2f}%)\n"
+            
+            worst_performers_text = ""
+            if context_data['portfolio_summary'].get('worst_performers'):
+                worst_performers_text = "\n\nWORST 5 PERFORMERS:\n"
+                for i, stock in enumerate(context_data['portfolio_summary']['worst_performers'], 1):
+                    worst_performers_text += f"{i}. {stock.get('ticker')} ({stock.get('stock_name', 'N/A')}): "
+                    worst_performers_text += f"P&L: ₹{stock.get('unrealized_pnl', 0):,.2f} ({stock.get('pnl_percentage', 0):.2f}%)\n"
+            
+            sector_text = ""
+            if context_data['portfolio_summary'].get('sector_allocation'):
+                sector_text = "\n\nSECTOR ALLOCATION:\n"
+                for sector, amount in context_data['portfolio_summary']['sector_allocation'].items():
+                    sector_text += f"- {sector}: ₹{amount:,.2f}\n"
+            
+            # System message with COMPLETE portfolio context
+            system_prompt = f"""You are an expert financial advisor and portfolio analyst with COMPLETE ACCESS to real-time portfolio data.
 
 PORTFOLIO SUMMARY:
 - Total Invested: ₹{context_data['portfolio_summary'].get('total_invested', 0):,.2f}
@@ -5101,14 +5135,23 @@ PORTFOLIO SUMMARY:
 - Total P&L: ₹{context_data['portfolio_summary'].get('total_pnl', 0):,.2f} ({context_data['portfolio_summary'].get('pnl_percentage', 0):.2f}%)
 - Number of Holdings: {context_data['portfolio_summary'].get('total_stocks', 0)}
 
-You have access to:
-1. Complete portfolio data (all holdings, transactions, P&L)
-2. Sector and channel allocation
-3. Top and worst performers
-4. Uploaded PDF documents (if any)
-5. Internet search capability (mention if you need current market data)
+{holdings_list}
 
-Provide detailed, actionable insights. Reference specific stocks and numbers from the portfolio data."""
+{top_performers_text}
+
+{worst_performers_text}
+
+{sector_text}
+
+IMPORTANT INSTRUCTIONS:
+1. Use the ACTUAL stock names, tickers, and numbers provided above
+2. When asked about "best performers", reference the TOP 5 PERFORMERS list
+3. When asked about "worst performers", reference the WORST 5 PERFORMERS list
+4. Always cite specific numbers from the data
+5. Do NOT use generic placeholders like "Stock XYZ" - use the REAL ticker symbols
+6. Provide actionable insights based on the actual portfolio data
+
+You can also suggest creating charts/graphs based on this data."""
 
             conversation_messages.append({"role": "system", "content": system_prompt})
             
