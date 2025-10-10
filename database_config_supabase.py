@@ -1250,6 +1250,7 @@ def diagnose_database_issues():
 def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_source: str = 'yfinance') -> bool:
     """Save stock price to database using Supabase"""
     try:
+        # Try the new unified stock_prices table first
         result = supabase.table('stock_prices').upsert({
             'ticker': ticker,
             'price_date': price_date,
@@ -1260,12 +1261,38 @@ def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_
         return True
         
     except Exception as e:
-        print(f"❌ Error saving stock price for {ticker} on {price_date}: {e}")
-        return False
+        error_msg = str(e)
+        
+        # If stock_prices table doesn't exist, try using historical_prices table as fallback
+        # Check for PGRST205 error code (table not found) or any error mentioning stock_prices
+        if ("pgrst205" in error_msg.lower() or "stock_pric" in error_msg.lower()):
+            print(f"⚠️ stock_prices table not found, trying historical_prices as fallback...")
+            try:
+                # Map to historical_prices table structure
+                result = supabase.table('historical_prices').insert({
+                    'ticker': ticker,
+                    'transaction_date': price_date,
+                    'historical_price': price,
+                    'current_price': price,
+                    'price_source': price_source,
+                    'transaction_id': None,  # Not applicable for cached prices
+                    'file_id': None  # Not applicable for cached prices
+                }).execute()
+                
+                print(f"✅ Saved to historical_prices table as fallback")
+                return True
+                
+            except Exception as fallback_error:
+                print(f"❌ Error saving to historical_prices fallback: {fallback_error}")
+                return False
+        else:
+            print(f"❌ Error saving stock price for {ticker} on {price_date}: {e}")
+            return False
 
 def get_stock_price_supabase(ticker: str, price_date: str) -> Optional[float]:
     """Get stock price from database using Supabase"""
     try:
+        # Try the new unified stock_prices table first
         result = supabase.table('stock_prices').select('price').eq('ticker', ticker).eq('price_date', price_date).execute()
         
         if result.data:
@@ -1273,30 +1300,103 @@ def get_stock_price_supabase(ticker: str, price_date: str) -> Optional[float]:
         return None
         
     except Exception as e:
-        print(f"❌ Error getting stock price for {ticker} on {price_date}: {e}")
-        return None
+        error_msg = str(e)
+        
+        # If stock_prices table doesn't exist, try using historical_prices table as fallback
+        # Check for PGRST205 error code (table not found) or any error mentioning stock_prices
+        if ("pgrst205" in error_msg.lower() or "stock_pric" in error_msg.lower()):
+            try:
+                # Map to historical_prices table structure
+                result = supabase.table('historical_prices').select('historical_price').eq('ticker', ticker).eq('transaction_date', price_date).execute()
+                
+                if result.data:
+                    return float(result.data[0]['historical_price'])
+                return None
+                
+            except Exception as fallback_error:
+                print(f"❌ Error getting from historical_prices fallback: {fallback_error}")
+                return None
+        else:
+            print(f"❌ Error getting stock price for {ticker} on {price_date}: {e}")
+            return None
 
 def get_stock_prices_range_supabase(ticker: str, start_date: str, end_date: str) -> List[Dict]:
     """Get stock prices for a date range using Supabase"""
     try:
+        # Try the new unified stock_prices table first
         result = supabase.table('stock_prices').select('*').eq('ticker', ticker).gte('price_date', start_date).lte('price_date', end_date).order('price_date').execute()
         
         return result.data if result.data else []
         
     except Exception as e:
-        print(f"❌ Error getting stock prices range for {ticker}: {e}")
-        return []
+        error_msg = str(e)
+        
+        # If stock_prices table doesn't exist, try using historical_prices table as fallback
+        # Check for PGRST205 error code (table not found) or any error mentioning stock_prices
+        if ("pgrst205" in error_msg.lower() or "stock_pric" in error_msg.lower()):
+            try:
+                # Map to historical_prices table structure
+                result = supabase.table('historical_prices').select('ticker,transaction_date,historical_price,price_source').eq('ticker', ticker).gte('transaction_date', start_date).lte('transaction_date', end_date).order('transaction_date').execute()
+                
+                # Map the results to match the expected structure
+                if result.data:
+                    mapped_data = []
+                    for row in result.data:
+                        mapped_data.append({
+                            'ticker': row['ticker'],
+                            'price_date': row['transaction_date'],
+                            'price': row['historical_price'],
+                            'price_source': row['price_source']
+                        })
+                    return mapped_data
+                
+                return []
+                
+            except Exception as fallback_error:
+                print(f"❌ Error getting range from historical_prices fallback: {fallback_error}")
+                return []
+        else:
+            print(f"❌ Error getting stock prices range for {ticker}: {e}")
+            return []
 
 def get_all_stock_prices_supabase() -> List[Dict]:
     """Get all stock prices using Supabase"""
     try:
+        # Try the new unified stock_prices table first
         result = supabase.table('stock_prices').select('*').order('ticker', 'price_date').execute()
         
         return result.data if result.data else []
         
     except Exception as e:
-        print(f"❌ Error getting all stock prices: {e}")
-        return []
+        error_msg = str(e)
+        
+        # If stock_prices table doesn't exist, try using historical_prices table as fallback
+        # Check for PGRST205 error code (table not found) or any error mentioning stock_prices
+        if ("pgrst205" in error_msg.lower() or "stock_pric" in error_msg.lower()):
+            try:
+                # Map to historical_prices table structure
+                result = supabase.table('historical_prices').select('ticker,transaction_date,historical_price,price_source').order('ticker', 'transaction_date').execute()
+                
+                # Map the results to match the expected structure
+                if result.data:
+                    mapped_data = []
+                    for row in result.data:
+                        mapped_data.append({
+                            'ticker': row['ticker'],
+                            'price_date': row['transaction_date'],
+                            'price': row['historical_price'],
+                            'price_source': row['price_source']
+                        })
+                    return mapped_data
+                
+                return []
+                
+            except Exception as fallback_error:
+                print(f"❌ Error getting all from historical_prices fallback: {fallback_error}")
+                return []
+        else:
+            print(f"❌ Error getting all stock prices: {e}")
+            return []
 
 def delete_old_stock_prices_supabase(days_old: int = 730) -> bool:
     """Delete stock prices older than specified days using Supabase (default: 2 years)"""
