@@ -2034,23 +2034,40 @@ class PortfolioAnalytics:
                 
                 # Add calculated columns for rendering (invested_amount, current_value, unrealized_pnl, pnl_percentage)
                 # Identify PMS/AIF tickers for special handling
-                df['is_pms'] = df['ticker'].apply(lambda t: 
-                    str(t).upper().endswith('_PMS') or 
-                    str(t).upper().endswith('PMS') or 
-                    'AIF' in str(t).upper() or
-                    str(t).upper().startswith(('BUOYANT', 'CARNELIAN', 'JULIUS', 'VALENTIS', 'UNIFI', 'INP'))
-                )
+                from pms_aif_fetcher import is_pms_code, is_aif_code
+                
+                def detect_pms_aif(ticker):
+                    ticker_str = str(ticker).strip()
+                    ticker_upper = ticker_str.upper()
+                    return (
+                        is_pms_code(ticker_str) or
+                        is_aif_code(ticker_str) or
+                        'PMS' in ticker_upper or
+                        'AIF' in ticker_upper or
+                        any(keyword in ticker_upper for keyword in [
+                            'BUOYANT', 'CARNELIAN', 'JULIUS', 'VALENTIS', 
+                            'UNIFI', 'NUVAMA', 'PORTFOLIO MANAGEMENT'
+                        ])
+                    )
+                
+                df['is_pms'] = df['ticker'].apply(detect_pms_aif)
                 
                 # Debug PMS detection
                 pms_tickers = df[df['is_pms']]['ticker'].unique()
                 if len(pms_tickers) > 0:
                     print(f"🔍 DEBUG: Detected {len(pms_tickers)} PMS/AIF tickers: {pms_tickers}")
                 
-                # Map live prices from session state or use transaction price as fallback
-                if hasattr(self.session_state, 'live_prices') and self.session_state.live_prices:
+                # Map live prices - use live_price_db from database first, then session state
+                if 'live_price_db' in df.columns:
+                    # Use live_price_db from database (already joined from stock_data table)
+                    df['live_price'] = df['live_price_db']
+                    print(f"🔍 DEBUG: Using live_price_db from database")
+                elif hasattr(self.session_state, 'live_prices') and self.session_state.live_prices:
                     df['live_price'] = df['ticker'].map(self.session_state.live_prices)
+                    print(f"🔍 DEBUG: Using live_prices from session state")
                 else:
                     df['live_price'] = None
+                    print(f"⚠️ DEBUG: No live prices available")
                 
                 # Calculate portfolio metrics
                 # Use invested_amount from file if available (for PMS), otherwise calculate
@@ -2185,8 +2202,22 @@ class PortfolioAnalytics:
                     # Priority 6: Default to Unknown
                     return "Unknown"
                 
-                if 'sector' not in df.columns:
+                # Handle sector column - use sector_db from database if available
+                if 'sector_db' in df.columns and 'sector' not in df.columns:
+                    df['sector'] = df['sector_db']
+                    print(f"🔍 DEBUG: Using sector_db from database")
+                elif 'sector' not in df.columns:
                     df['sector'] = df.apply(lambda row: get_sector(row['ticker'], row['is_pms']), axis=1)
+                    print(f"🔍 DEBUG: Calculating sectors from ticker patterns")
+                
+                # Fill missing sectors with calculated values
+                if 'sector' in df.columns:
+                    missing_sectors = df['sector'].isna() | (df['sector'] == 'Unknown') | (df['sector'] == '')
+                    if missing_sectors.any():
+                        print(f"🔍 DEBUG: Filling {missing_sectors.sum()} missing sectors")
+                        df.loc[missing_sectors, 'sector'] = df[missing_sectors].apply(
+                            lambda row: get_sector(row['ticker'], row['is_pms']), axis=1
+                        )
                 
                 # Ensure channel column exists (from transactions)
                 if 'channel' not in df.columns:
