@@ -1426,66 +1426,64 @@ def diagnose_database_issues():
 
 # Stock Prices Functions (unified for both weekly and monthly data)
 def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_source: str = 'yfinance') -> bool:
-    """Save stock price to database using Supabase"""
+    """
+    Save live stock price to database using Supabase
+    
+    Note: Since stock_prices table doesn't exist, we store live prices in historical_prices
+    with today's date. This is different from transaction prices which use the purchase date.
+    """
     try:
-        print(f"💾 Attempting to save {ticker} price for {price_date} (₹{price}) to stock_prices table...")
-
-        # Try the new unified stock_prices table first
-        result = supabase.table('stock_prices').upsert({
-            'ticker': ticker,
-            'price_date': price_date,
-            'price': price,
-            'price_source': price_source
-        }).execute()
-
-        # Verify the save was successful
-        if result.data and len(result.data) > 0:
-            print(f"✅ Successfully saved {ticker} price for {price_date} to stock_prices table")
-            print(f"   Saved data: {result.data[0]}")
-            return True
-        else:
-            print(f"⚠️ Save returned no data for {ticker} on {price_date}")
-            print(f"   Result object: {result}")
-            print(f"   Result.data: {result.data}")
-            print(f"   Result.data type: {type(result.data)}")
-            print(f"   Result.data length: {len(result.data) if result.data else 'None'}")
-            return False
-
-    except Exception as e:
-        error_msg = str(e)
-        print(f"❌ Exception in stock_prices save for {ticker} on {price_date}: {error_msg}")
-
-        # If stock_prices table doesn't exist, try using historical_prices table as fallback
-        # Check for PGRST205 error code (table not found) or any error mentioning stock_prices
-        if ("pgrst205" in error_msg.lower() or "stock_pric" in error_msg.lower()):
-            print(f"⚠️ stock_prices table not found, trying historical_prices as fallback...")
-            try:
-                # Map to historical_prices table structure
-                result = supabase.table('historical_prices').insert({
-                    'ticker': ticker,
-                    'transaction_date': price_date,
-                    'historical_price': price,
-                    'current_price': price,
-                    'price_source': price_source,
-                    'transaction_id': None,  # Not applicable for cached prices
-                    'file_id': None  # Not applicable for cached prices
-                }).execute()
-
-                if result.data and len(result.data) > 0:
-                    print(f"✅ Saved to historical_prices table as fallback")
-                    print(f"   Fallback data: {result.data[0]}")
-                    return True
-                else:
-                    print(f"❌ Fallback save returned no data for {ticker}")
-                    return False
-
-            except Exception as fallback_error:
-                print(f"❌ Error saving to historical_prices fallback for {ticker}: {fallback_error}")
+        # Since stock_prices table doesn't exist in our schema, go directly to historical_prices
+        # Live prices are stored with today's date, not transaction dates
+        
+        # Check if this is a live price fetch (price_source indicates current fetch)
+        is_live_price = price_source in ['live_fetch', 'yfinance', 'indstocks', 'mftool']
+        
+        if is_live_price:
+            # For live prices, always use today's date
+            from datetime import datetime
+            today = datetime.now().strftime('%Y-%m-%d')
+            print(f"💾 Saving live price for {ticker} (₹{price}) with today's date: {today}")
+            
+            # Upsert to historical_prices with today's date
+            # This creates a daily price history for each ticker
+            result = supabase.table('historical_prices').upsert({
+                'ticker': ticker,
+                'transaction_date': today,  # Use today's date for live prices
+                'historical_price': price,
+                'current_price': price,
+                'price_source': price_source
+            }, on_conflict='ticker,transaction_date').execute()
+            
+            if result.data and len(result.data) > 0:
+                print(f"✅ Live price saved to historical_prices with date {today}")
+                return True
+            else:
+                print(f"⚠️ Live price save returned no data for {ticker}")
                 return False
         else:
-            print(f"❌ Error saving stock price for {ticker} on {price_date}: {e}")
-            print(f"   Error type: {type(e).__name__}")
-            return False
+            # For historical transaction prices, use the provided date
+            print(f"💾 Saving historical price for {ticker} (₹{price}) for date: {price_date}")
+            
+            result = supabase.table('historical_prices').upsert({
+                'ticker': ticker,
+                'transaction_date': price_date,
+                'historical_price': price,
+                'current_price': price,
+                'price_source': price_source
+            }, on_conflict='ticker,transaction_date').execute()
+            
+            if result.data and len(result.data) > 0:
+                print(f"✅ Historical price saved to historical_prices")
+                return True
+            else:
+                print(f"⚠️ Historical price save returned no data for {ticker}")
+                return False
+
+    except Exception as e:
+        print(f"❌ Error saving price for {ticker} on {price_date}: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        return False
 
 def get_stock_price_supabase(ticker: str, price_date: str) -> Optional[float]:
     """Get stock price from database using Supabase"""

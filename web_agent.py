@@ -2030,39 +2030,50 @@ class PortfolioAnalytics:
                     invested = row['invested_amount']
                     
                     if row['is_pms']:
-                        # PMS: Calculate based on NAV percentage change from purchase date to now
-                        # Try to get percentage change from database or calculate from transaction history
+                        # PMS: Calculate based on live_price (current value) vs invested_amount
                         ticker = row['ticker']
-                        purchase_date = row['date']
                         
-                        # Get PMS percentage change (stored in stock_name or fetched from transactions)
-                        # For now, check if there's a 'pnl_percentage' or 'nav_change' in the row
-                        if 'nav_change_percent' in row and pd.notna(row['nav_change_percent']):
-                            pct_change = float(row['nav_change_percent'])
-                        elif 'pnl_percentage' in row and pd.notna(row['pnl_percentage']) and row['pnl_percentage'] != 0:
-                            # Use existing pnl_percentage if available
-                            pct_change = float(row['pnl_percentage'])
+                        # Check if we have a live_price from PMS fetch
+                        if pd.notna(row['live_price']) and row['live_price'] > 0:
+                            # live_price for PMS is the current NAV/value (already calculated by pms_aif_fetcher)
+                            # For PMS, live_price is stored as total current value, not per-unit NAV
+                            # We need to determine if it's total value or per-unit
+                            
+                            # If live_price is much larger than price, it's likely total value
+                            # Otherwise it might be per-unit NAV that needs to be multiplied by quantity
+                            if row['live_price'] > row['price'] * 100:  # Heuristic: if live_price >> price, it's total value
+                                current_value = row['live_price']
+                            else:
+                                # It's per-unit NAV, multiply by quantity
+                                current_value = row['quantity'] * row['live_price']
                         else:
-                            # Try to get from latest vs earliest transaction prices for this PMS
+                            # Fallback: Try to calculate from transaction history
+                            # Get all transactions for this PMS and calculate based on latest NAV if available
                             try:
                                 pms_transactions = df[df['ticker'] == ticker].sort_values('date')
-                                if len(pms_transactions) > 1:
+                                
+                                # Check if there's NAV change info in any transaction
+                                if 'nav_change_percent' in row and pd.notna(row['nav_change_percent']):
+                                    pct_change = float(row['nav_change_percent'])
+                                    current_value = invested * (1 + pct_change / 100)
+                                elif len(pms_transactions) > 1:
+                                    # Calculate based on earliest vs latest price
                                     earliest_price = pms_transactions.iloc[0]['price']
                                     latest_price = pms_transactions.iloc[-1]['price']
                                     if earliest_price > 0:
                                         pct_change = ((latest_price - earliest_price) / earliest_price) * 100
+                                        current_value = invested * (1 + pct_change / 100)
                                     else:
-                                        pct_change = 0
+                                        current_value = invested  # No change
                                 else:
-                                    # Single transaction, no change yet
-                                    pct_change = 0
-                            except:
-                                pct_change = 0
+                                    # Single transaction, no change data - assume no growth
+                                    current_value = invested
+                            except Exception as e:
+                                print(f"⚠️ PMS calculation error for {ticker}: {e}")
+                                current_value = invested  # Fallback to break-even
                         
-                        # Calculate current value: invested_amount * (1 + percentage_change/100)
-                        current_value = invested * (1 + pct_change / 100)
                         pnl = current_value - invested
-                        pnl_pct = pct_change
+                        pnl_pct = (pnl / invested * 100) if invested > 0 else 0
                         
                         return pd.Series({
                             'current_value': current_value,
@@ -2090,29 +2101,36 @@ class PortfolioAnalytics:
                 
                 # Map sector - use from metadata, or from session state, or default based on type
                 def get_sector(ticker, is_pms):
-                    if is_pms:
-                        return "PMS/AIF"
-                    
-                    # Try stock_metadata first
-                    sector = stock_metadata.get(ticker, {}).get('sector')
-                    if sector and sector != 'Unknown':
-                        return sector
-                    
-                    # Try session state
-                    if hasattr(self.session_state, 'sectors') and self.session_state.sectors:
-                        sector = self.session_state.sectors.get(ticker)
-                        if sector and sector != 'Unknown':
-                            return sector
-                    
-                    # Check if it's a mutual fund
                     ticker_str = str(ticker).strip()
+                    ticker_upper = ticker_str.upper()
+                    
+                    # Priority 1: PMS/AIF
+                    if is_pms:
+                        if 'AIF' in ticker_upper:
+                            return "AIF"
+                        else:
+                            return "PMS"
+                    
+                    # Priority 2: Mutual Funds (by ticker pattern)
                     if (ticker_str.isdigit() and len(ticker_str) >= 5 and len(ticker_str) <= 6) or ticker_str.startswith('MF_'):
                         return "Mutual Fund"
                     
-                    # Check if it's an ETF
-                    if ticker_str.upper().endswith('BEES') or ticker_str.upper().endswith('ETF'):
+                    # Priority 3: ETFs (by ticker pattern)
+                    if ticker_upper.endswith('BEES') or ticker_upper.endswith('ETF'):
                         return "ETF"
                     
+                    # Priority 4: Try stock_metadata from database
+                    sector = stock_metadata.get(ticker, {}).get('sector')
+                    if sector and sector not in ['Unknown', None, '']:
+                        return sector
+                    
+                    # Priority 5: Try session state (from live fetch)
+                    if hasattr(self.session_state, 'sectors') and self.session_state.sectors:
+                        sector = self.session_state.sectors.get(ticker)
+                        if sector and sector not in ['Unknown', None, '']:
+                            return sector
+                    
+                    # Priority 6: Default to Unknown
                     return "Unknown"
                 
                 if 'sector' not in df.columns:
