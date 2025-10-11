@@ -354,7 +354,12 @@ class PortfolioAnalytics:
                 'Channel': 'channel',
                 'channel': 'channel',
                 'Sector': 'sector',
-                'sector': 'sector'
+                'sector': 'sector',
+                'Invested Amount': 'invested_amount',
+                'Invested_Amount': 'invested_amount',
+                'invested_amount': 'invested_amount',
+                'Amount': 'invested_amount',
+                'amount': 'invested_amount'
             }
             
             # Rename columns
@@ -1351,7 +1356,7 @@ class PortfolioAnalytics:
             # Sort weeks chronologically
             all_week_dates = sorted(list(all_week_dates))
             total_weeks = len(all_week_dates)
-
+            
             # Additional safeguard: if too many weeks, limit to prevent system hanging
             max_total_weeks = 200  # Reasonable limit for batch processing
             if total_weeks > max_total_weeks:
@@ -1595,7 +1600,7 @@ class PortfolioAnalytics:
     def fetch_live_prices_and_sectors(self, user_id, force_refresh=False):
         """
         Fetch live prices and sectors for all tickers
-
+        
         Args:
             user_id: User ID
             force_refresh: If True, force refresh even if already fetched this session
@@ -1622,7 +1627,7 @@ class PortfolioAnalytics:
                             time_diff = datetime.now() - last_fetch
                             if time_diff.total_seconds() < 300:  # Less than 5 minutes
                                 print(f"Prices fetched recently ({time_diff.total_seconds():.0f}s ago) for user {user_id}, skipping...")
-                                return
+                    return
 
                     print(f"Prices already fetched this session for user {user_id}, but may be stale, refetching...")
                 else:
@@ -1666,10 +1671,10 @@ class PortfolioAnalytics:
                     time.sleep(0.5)  # 500ms between requests
                 try:
                     ticker_str = str(ticker).strip().upper()
-
+                    
                     # Check if PMS/AIF
-                    if (ticker_str.startswith('INP') or ticker_str.endswith('_PMS') or ticker_str.endswith('PMS') or
-                        'AIF' in ticker_str or ticker_str.startswith('BUOYANT') or
+                    if (ticker_str.startswith('INP') or ticker_str.endswith('_PMS') or ticker_str.endswith('PMS') or 
+                        'AIF' in ticker_str or ticker_str.startswith('BUOYANT') or 
                         ticker_str.startswith('CARNELIAN') or ticker_str.startswith('JULIUS') or
                         ticker_str.startswith('VALENTIS') or ticker_str.startswith('UNIFI')):
                         # PMS/AIF - calculate value using SEBI returns
@@ -1744,22 +1749,28 @@ class PortfolioAnalytics:
                             print(f"💡 Try installing: pip install mftool yfinance pandas")
                             live_price = None
                             sector = "Mutual Fund"
-                        except Exception as e:
-                            print(f"⚠️ MF {ticker}: get_mutual_fund_price_and_category failed: {e}")
-                            print(f"💡 This might be due to missing dependencies. Try: pip install mftool beautifulsoup4 html5lib")
-                            # For mutual funds, use transaction price as fallback (they don't have market prices like stocks)
-                            live_price = pms_trans['price'] if 'pms_trans' in locals() and pms_trans['price'] else None
-                            if live_price:
-                                print(f"✅ MF {ticker}: Using transaction price as fallback - ₹{live_price}")
-                            else:
-                                print(f"⚠️ MF {ticker}: No transaction price available, skipping")
-                                live_price = None
-                            sector = "Mutual Fund"
-                    
+                except Exception as e:
+                    print(f"⚠️ MF {ticker}: get_mutual_fund_price_and_category failed: {e}")
+                    print(f"💡 This might be due to missing dependencies. Try: pip install mftool beautifulsoup4 html5lib")
+                    # For mutual funds, use transaction price as fallback (they don't have market prices like stocks)
+                    live_price = pms_trans['price'] if 'pms_trans' in locals() and pms_trans['price'] else None
+                    if live_price:
+                        print(f"✅ MF {ticker}: Using transaction price as fallback - ₹{live_price}")
                     else:
+                        print(f"⚠️ MF {ticker}: No transaction price available, skipping")
+                        live_price = None
+                    sector = "Mutual Fund"
+
+                else:
                         # Unknown ticker type or stock ticker - try yfinance
                         print(f"🔍 {ticker}: Stock ticker, fetching from yfinance")
                         try:
+                            # Check if ticker is an ETF (BEES, BANKBEES, etc.)
+                            is_etf = ticker.upper().endswith('BEES') or ticker.upper().endswith('ETF')
+                            
+                            if is_etf:
+                                print(f"🔍 {ticker}: Detected as ETF, trying with exchange suffix")
+                            
                             live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
 
                             print(f"🔍 DEBUG: {ticker} -> live_price={live_price}, sector={sector}, market_cap={market_cap}")
@@ -1770,25 +1781,41 @@ class PortfolioAnalytics:
                                     self.session_state.market_caps = {}
                                 self.session_state.market_caps[ticker] = market_cap
 
-                            # For stocks that don't have live prices, try alternative approaches
+                            # For stocks/ETFs that don't have live prices, try alternative approaches
                             if not live_price or live_price <= 0:
                                 print(f"⚠️ {ticker}: No live price from yfinance, trying alternative sources")
-                                # Try with different ticker formats
-                                alternative_tickers = [
-                                    f"{ticker}.NS",
-                                    f"{ticker}.BO",
-                                    ticker.replace('.NS', '').replace('.BO', '')
-                                ]
+                                
+                                # Build alternative ticker list with priority for ETFs
+                                if is_etf:
+                                    # ETFs are typically on NSE
+                                    alternative_tickers = [
+                                        f"{ticker}.NS",
+                                        f"{ticker}.BO",
+                                        ticker.replace('.NS', '').replace('.BO', ''),
+                                        f"{ticker.upper()}.NS",  # Try uppercase
+                                        f"{ticker.upper()}.BO"
+                                    ]
+                                else:
+                                    # Regular stocks
+                                    alternative_tickers = [
+                                        f"{ticker}.NS",
+                                        f"{ticker}.BO",
+                                        ticker.replace('.NS', '').replace('.BO', '')
+                                    ]
 
                                 for alt_ticker in alternative_tickers:
                                     if alt_ticker != ticker:
                                         try:
+                                            print(f"   Trying: {alt_ticker}")
                                             alt_price, _, _ = get_stock_price_and_sector(alt_ticker, alt_ticker, None)
                                             if alt_price and alt_price > 0:
                                                 live_price = alt_price
+                                                if is_etf:
+                                                    sector = "ETF"  # Set sector for ETFs
                                                 print(f"✅ {ticker}: Got price ₹{live_price} using alternative ticker {alt_ticker}")
                                                 break
-                                        except:
+                                        except Exception as alt_error:
+                                            print(f"   ❌ {alt_ticker} failed: {alt_error}")
                                             continue
 
                             # If no sector from yfinance, try to get it from stock data table
@@ -1843,20 +1870,20 @@ class PortfolioAnalytics:
                                 else:
                                     sector = 'Other Stocks'
 
-                        except Exception as e:
+                    except Exception as e:
                             print(f"⚠️ {ticker}: yfinance fallback failed: {e}")
                             live_price = None
                             sector = 'Unknown'
-                
+
                 except Exception as e:
                     print(f"❌ Error processing {ticker}: {e}")
                     consecutive_failures += 1
                     continue
 
                 print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
-                if live_price and live_price > 0:
-                    live_prices[ticker] = live_price
-                    sectors[ticker] = sector
+            if live_price and live_price > 0:
+                live_prices[ticker] = live_price
+                sectors[ticker] = sector
                     successful_fetches += 1
                     consecutive_failures = 0
                     print(f"✅ STORED: {ticker} -> ₹{live_price}")
@@ -1888,7 +1915,7 @@ class PortfolioAnalytics:
             # Store in session state
             self.session_state.live_prices = live_prices
             self.session_state.sectors = sectors
-
+            
             # Store the fetch timestamp for cache management
             fetch_key = f'prices_fetched_{user_id}'
             last_fetch_key = f'prices_last_fetch_{user_id}'
@@ -1965,6 +1992,14 @@ class PortfolioAnalytics:
                 df = pd.DataFrame(portfolio_data['transactions'])
                 
                 # Add calculated columns for rendering (invested_amount, current_value, unrealized_pnl, pnl_percentage)
+                # Identify PMS/AIF tickers for special handling
+                df['is_pms'] = df['ticker'].apply(lambda t: 
+                    str(t).upper().endswith('_PMS') or 
+                    str(t).upper().endswith('PMS') or 
+                    'AIF' in str(t).upper() or
+                    str(t).upper().startswith(('BUOYANT', 'CARNELIAN', 'JULIUS', 'VALENTIS', 'UNIFI', 'INP'))
+                )
+                
                 # Map live prices from session state or use transaction price as fallback
                 if hasattr(self.session_state, 'live_prices') and self.session_state.live_prices:
                     df['live_price'] = df['ticker'].map(self.session_state.live_prices)
@@ -1972,16 +2007,110 @@ class PortfolioAnalytics:
                     df['live_price'] = None
                 
                 # Calculate portfolio metrics
-                df['invested_amount'] = df['quantity'] * df['price']
-                df['current_value'] = df['quantity'] * df['live_price'].fillna(df['price'])
-                df['unrealized_pnl'] = df['current_value'] - df['invested_amount']
-                df['pnl_percentage'] = (df['unrealized_pnl'] / df['invested_amount']) * 100
+                # Use invested_amount from file if available (for PMS), otherwise calculate
+                if 'invested_amount' not in df.columns or df['invested_amount'].isna().all():
+                    df['invested_amount'] = df['quantity'] * df['price']
+                else:
+                    # Fill missing invested_amount values with calculated values
+                    df['invested_amount'] = df['invested_amount'].fillna(df['quantity'] * df['price'])
                 
-                # Add sector information if not present
+                # For PMS: Calculate current value based on NAV percentage change
+                # For others: Use live_price or transaction price
+                def calculate_current_value_and_pnl(row):
+                    invested = row['invested_amount']
+                    
+                    if row['is_pms']:
+                        # PMS: Calculate based on NAV percentage change from purchase date to now
+                        # Try to get percentage change from database or calculate from transaction history
+                        ticker = row['ticker']
+                        purchase_date = row['date']
+                        
+                        # Get PMS percentage change (stored in stock_name or fetched from transactions)
+                        # For now, check if there's a 'pnl_percentage' or 'nav_change' in the row
+                        if 'nav_change_percent' in row and pd.notna(row['nav_change_percent']):
+                            pct_change = float(row['nav_change_percent'])
+                        elif 'pnl_percentage' in row and pd.notna(row['pnl_percentage']) and row['pnl_percentage'] != 0:
+                            # Use existing pnl_percentage if available
+                            pct_change = float(row['pnl_percentage'])
+                        else:
+                            # Try to get from latest vs earliest transaction prices for this PMS
+                            try:
+                                pms_transactions = df[df['ticker'] == ticker].sort_values('date')
+                                if len(pms_transactions) > 1:
+                                    earliest_price = pms_transactions.iloc[0]['price']
+                                    latest_price = pms_transactions.iloc[-1]['price']
+                                    if earliest_price > 0:
+                                        pct_change = ((latest_price - earliest_price) / earliest_price) * 100
+                                    else:
+                                        pct_change = 0
+                                else:
+                                    # Single transaction, no change yet
+                                    pct_change = 0
+                            except:
+                                pct_change = 0
+                        
+                        # Calculate current value: invested_amount * (1 + percentage_change/100)
+                        current_value = invested * (1 + pct_change / 100)
+                        pnl = current_value - invested
+                        pnl_pct = pct_change
+                        
+                        return pd.Series({
+                            'current_value': current_value,
+                            'unrealized_pnl': pnl,
+                            'pnl_percentage': pnl_pct
+                        })
+                    else:
+                        # Stocks/MF/ETF: Use live price or fallback to transaction price
+                        live_price = row['live_price'] if pd.notna(row['live_price']) else row['price']
+                        current_value = row['quantity'] * live_price
+                        pnl = current_value - invested
+                        pnl_pct = (pnl / invested * 100) if invested > 0 else 0
+                        
+                        return pd.Series({
+                            'current_value': current_value,
+                            'unrealized_pnl': pnl,
+                            'pnl_percentage': pnl_pct
+                        })
+                
+                # Apply the calculation
+                df[['current_value', 'unrealized_pnl', 'pnl_percentage']] = df.apply(calculate_current_value_and_pnl, axis=1)
+                
+                # Add sector and channel information
+                stock_metadata = portfolio_data.get('stock_metadata', {})
+                
+                # Map sector - use from metadata, or from session state, or default based on type
+                def get_sector(ticker, is_pms):
+                    if is_pms:
+                        return "PMS/AIF"
+                    
+                    # Try stock_metadata first
+                    sector = stock_metadata.get(ticker, {}).get('sector')
+                    if sector and sector != 'Unknown':
+                        return sector
+                    
+                    # Try session state
+                    if hasattr(self.session_state, 'sectors') and self.session_state.sectors:
+                        sector = self.session_state.sectors.get(ticker)
+                        if sector and sector != 'Unknown':
+                            return sector
+                    
+                    # Check if it's a mutual fund
+                    ticker_str = str(ticker).strip()
+                    if (ticker_str.isdigit() and len(ticker_str) >= 5 and len(ticker_str) <= 6) or ticker_str.startswith('MF_'):
+                        return "Mutual Fund"
+                    
+                    # Check if it's an ETF
+                    if ticker_str.upper().endswith('BEES') or ticker_str.upper().endswith('ETF'):
+                        return "ETF"
+                    
+                    return "Unknown"
+                
                 if 'sector' not in df.columns:
-                    # Map sectors from stock_metadata
-                    stock_metadata = portfolio_data.get('stock_metadata', {})
-                    df['sector'] = df['ticker'].apply(lambda t: stock_metadata.get(t, {}).get('sector', 'Unknown'))
+                    df['sector'] = df.apply(lambda row: get_sector(row['ticker'], row['is_pms']), axis=1)
+                
+                # Ensure channel column exists (from transactions)
+                if 'channel' not in df.columns:
+                    df['channel'] = 'Unknown'
                 
                 # Store in session state for use by other parts of the app
                 self.session_state.portfolio_data = df  # Store as DataFrame, not dict
@@ -4122,13 +4251,13 @@ class PortfolioAnalytics:
                         status_text.text(f"Processing {idx+1}/{len(uploaded_files)}: {uploaded_file.name}")
                         progress_bar.progress((idx) / len(uploaded_files))
                         
-                        with st.spinner(f"Processing {uploaded_file.name}..."):
-                            success = self.process_csv_file(uploaded_file, self.session_state.user_id)
-                            if success:
-                                st.success(f"✅ {uploaded_file.name} processed successfully!")
+                    with st.spinner(f"Processing {uploaded_file.name}..."):
+                        success = self.process_csv_file(uploaded_file, self.session_state.user_id)
+                        if success:
+                            st.success(f"✅ {uploaded_file.name} processed successfully!")
                                 processed_count += 1
-                            else:
-                                st.error(f"❌ Failed to process {uploaded_file.name}")
+                        else:
+                            st.error(f"❌ Failed to process {uploaded_file.name}")
                                 failed_count += 1
                                 failed_files.append(uploaded_file.name)
                                 
