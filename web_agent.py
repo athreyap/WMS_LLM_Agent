@@ -516,129 +516,6 @@ class PortfolioAnalytics:
             st.error(f"Traceback: {traceback.format_exc()}")
             return False
     
-    def cache_transaction_historical_prices(self, df, user_id):
-        """
-        Fetch and cache historical prices for all transaction dates.
-        Saves prices to database to avoid re-fetching.
-        """
-        from database_config_supabase import save_stock_price_supabase
-        from datetime import datetime
-        
-        try:
-            unique_ticker_dates = df[['ticker', 'date']].drop_duplicates()
-            total_count = len(unique_ticker_dates)
-            cached_count = 0
-            fetched_count = 0
-            
-            st.info(f"📊 Processing {total_count} unique ticker-date combinations...")
-            
-            for idx, row in unique_ticker_dates.iterrows():
-                ticker = row['ticker']
-                transaction_date = pd.to_datetime(row['date']).strftime('%Y-%m-%d')
-                
-                # Detect ticker type
-                ticker_str = str(ticker).strip()
-                is_mutual_fund = (
-                    (ticker_str.isdigit() and len(ticker_str) >= 5 and len(ticker_str) <= 6) or
-                    ticker_str.startswith('MF_')
-                )
-                
-                # Fetch price (this will check DB cache first, then fetch from API)
-                if is_mutual_fund:
-                    price = get_mutual_fund_price(ticker, ticker, user_id, transaction_date)
-                else:
-                    price = get_stock_price(ticker, ticker, transaction_date)
-                
-                # Save to database if fetched successfully
-                if price and price > 0:
-                    try:
-                        save_stock_price_supabase(ticker, transaction_date, price, 'transaction_date')
-                        fetched_count += 1
-                        print(f"💾 Cached: {ticker} @ {transaction_date} = ₹{price}")
-                    except Exception as save_error:
-                        print(f"⚠️ Could not save price for {ticker} @ {transaction_date}: {save_error}")
-                        cached_count += 1  # Count as cached even if save fails
-                else:
-                    print(f"⚠️ No price found for {ticker} @ {transaction_date}")
-            
-            st.info(f"✅ Cached {fetched_count}/{total_count} transaction prices to database")
-            
-        except Exception as e:
-            st.warning(f"Error caching transaction prices: {e}")
-            print(f"Error in cache_transaction_historical_prices: {e}")
-    
-    def cache_weekly_prices_for_file(self, df, user_id):
-        """
-        Build weekly price cache for all tickers in the uploaded file.
-        This ensures charts and analytics have pre-cached data.
-        """
-        from database_config_supabase import save_stock_price_supabase
-        from datetime import datetime, timedelta
-        import pandas as pd
-        
-        try:
-            unique_tickers = df['ticker'].unique()
-            st.info(f"📊 Building weekly cache for {len(unique_tickers)} tickers...")
-            
-            # Get date range from transactions
-            min_date = pd.to_datetime(df['date'].min())
-            max_date = datetime.now()
-            
-            # Generate weekly dates
-            date_range = pd.date_range(start=min_date, end=max_date, freq='W-MON')
-            total_weeks = len(date_range)
-            
-            st.info(f"📅 Date range: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')} ({total_weeks} weeks)")
-            
-            # Limit to prevent overload - cache only last 52 weeks for new files
-            if total_weeks > 52:
-                date_range = date_range[-52:]
-                st.info(f"⚡ Limiting to last 52 weeks for initial cache ({len(date_range)} weeks)")
-            
-            fetched_count = 0
-            total_requests = len(unique_tickers) * len(date_range)
-            
-            # Process in small batches to show progress
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for week_idx, week_date in enumerate(date_range):
-                week_str = week_date.strftime('%Y-%m-%d')
-                
-                for ticker_idx, ticker in enumerate(unique_tickers):
-                    # Detect ticker type
-                    ticker_str = str(ticker).strip()
-                    is_mutual_fund = (
-                        (ticker_str.isdigit() and len(ticker_str) >= 5 and len(ticker_str) <= 6) or
-                        ticker_str.startswith('MF_')
-                    )
-                    
-                    # Fetch price
-                    try:
-                        if is_mutual_fund:
-                            price = get_mutual_fund_price(ticker, ticker, user_id, week_str)
-                        else:
-                            price = get_stock_price(ticker, ticker, week_str)
-                        
-                        if price and price > 0:
-                            save_stock_price_supabase(ticker, week_str, price, 'weekly_cache')
-                            fetched_count += 1
-                    except Exception as e:
-                        pass  # Continue on errors
-                
-                # Update progress
-                progress = (week_idx + 1) / len(date_range)
-                progress_bar.progress(progress)
-                status_text.text(f"📊 Week {week_idx + 1}/{len(date_range)}: {week_str} | Cached {fetched_count} prices")
-            
-            progress_bar.empty()
-            status_text.empty()
-            st.info(f"✅ Cached {fetched_count} weekly prices for {len(unique_tickers)} tickers")
-            
-        except Exception as e:
-            st.warning(f"Error caching weekly prices: {e}")
-            print(f"Error in cache_weekly_prices_for_file: {e}")
-    
     def fetch_historical_prices_for_transactions(self, df):
         """Fetch historical prices for transactions"""
         try:
@@ -2025,13 +1902,36 @@ class PortfolioAnalytics:
             total_tickers = len(unique_tickers)
             successful_tickers = len(live_prices)
             success_rate = (successful_tickers / total_tickers * 100) if total_tickers > 0 else 0
+            
+            # Find failed tickers
+            failed_tickers = [ticker for ticker in unique_tickers if ticker not in live_prices]
 
             if successful_tickers > 0:
                 st.success(f"✅ Fetched live prices for {successful_tickers}/{total_tickers} tickers ({success_rate:.1f}%)")
                 print(f"📊 Live price fetch summary: {successful_tickers}/{total_tickers} successful ({success_rate:.1f}%)")
+                
+                # Print failed tickers
+                if failed_tickers:
+                    st.warning(f"⚠️ Failed to fetch prices for {len(failed_tickers)} ticker(s)")
+                    print(f"\n❌ Failed to fetch live prices for {len(failed_tickers)} ticker(s):")
+                    for ticker in failed_tickers:
+                        print(f"   • {ticker}")
+                    print("")
+                    
+                    # Show in expandable section in UI
+                    with st.expander(f"🔍 Show {len(failed_tickers)} Failed Ticker(s)"):
+                        st.write("**Could not fetch live prices for:**")
+                        for idx, ticker in enumerate(failed_tickers, 1):
+                            st.write(f"{idx}. `{ticker}`")
+                        st.info("💡 These tickers will use historical transaction prices as fallback")
             else:
                 st.warning("⚠️ No live prices could be fetched. Portfolio will use historical prices.")
                 print("⚠️ No live prices fetched - all tickers failed or were invalid")
+                if failed_tickers:
+                    print(f"\n❌ All {len(failed_tickers)} tickers failed:")
+                    for ticker in failed_tickers:
+                        print(f"   • {ticker}")
+                    print("")
             
         except Exception as e:
             st.error(f"Error fetching live prices: {e}")
@@ -2063,6 +1963,25 @@ class PortfolioAnalytics:
                 
                 # Convert transactions to DataFrame for use by rendering code
                 df = pd.DataFrame(portfolio_data['transactions'])
+                
+                # Add calculated columns for rendering (invested_amount, current_value, unrealized_pnl, pnl_percentage)
+                # Map live prices from session state or use transaction price as fallback
+                if hasattr(self.session_state, 'live_prices') and self.session_state.live_prices:
+                    df['live_price'] = df['ticker'].map(self.session_state.live_prices)
+                else:
+                    df['live_price'] = None
+                
+                # Calculate portfolio metrics
+                df['invested_amount'] = df['quantity'] * df['price']
+                df['current_value'] = df['quantity'] * df['live_price'].fillna(df['price'])
+                df['unrealized_pnl'] = df['current_value'] - df['invested_amount']
+                df['pnl_percentage'] = (df['unrealized_pnl'] / df['invested_amount']) * 100
+                
+                # Add sector information if not present
+                if 'sector' not in df.columns:
+                    # Map sectors from stock_metadata
+                    stock_metadata = portfolio_data.get('stock_metadata', {})
+                    df['sector'] = df['ticker'].apply(lambda t: stock_metadata.get(t, {}).get('sector', 'Unknown'))
                 
                 # Store in session state for use by other parts of the app
                 self.session_state.portfolio_data = df  # Store as DataFrame, not dict
