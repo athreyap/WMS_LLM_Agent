@@ -254,7 +254,7 @@ class PortfolioAnalytics:
                     st.error("❌ Password must be at least 6 characters")
                 elif not uploaded_files:
                     st.error("❌ Please upload at least one CSV file")
-                else:
+                    else:
                     # Start registration flow with files
                     self.session_state.registration_in_progress = True
                     self.session_state.registration_username = new_username
@@ -551,8 +551,10 @@ class PortfolioAnalytics:
                 # Detect if this is a mutual fund (ISIN code or numeric scheme code)
                 ticker_str = str(ticker).strip()
                 # More accurate MF detection - only numeric scheme codes or MF_ prefix
+                # Exclude BSE codes (6 digits starting with 5, e.g., 500414)
+                is_bse_code = (ticker_str.isdigit() and len(ticker_str) == 6 and ticker_str.startswith('5'))
                 is_mutual_fund = (
-                    (ticker_str.isdigit() and len(ticker_str) >= 5 and len(ticker_str) <= 6) or
+                    (ticker_str.isdigit() and len(ticker_str) >= 5 and len(ticker_str) <= 6 and not is_bse_code) or
                     ticker_str.startswith('MF_')
                 )
                 
@@ -636,8 +638,10 @@ class PortfolioAnalytics:
             # Check if it's a mutual fund scheme code first (priority over stock detection)
             # Mutual fund scheme codes are typically 5-6 digits (not traded on NSE/BSE)
             # Valid MF scheme codes are usually 5-6 digits starting with 1-2
+            # Exclude BSE codes (6 digits starting with 5, e.g., 500414)
+            is_bse_code = (clean_ticker.isdigit() and len(clean_ticker) == 6 and clean_ticker.startswith('5'))
             is_mutual_fund = (
-                (clean_ticker.isdigit() and len(clean_ticker) >= 5 and len(clean_ticker) <= 6) or
+                (clean_ticker.isdigit() and len(clean_ticker) >= 5 and len(clean_ticker) <= 6 and not is_bse_code) or
                 clean_ticker.startswith('MF_')
             )
 
@@ -969,7 +973,16 @@ class PortfolioAnalytics:
                 except Exception as e:
                     st.warning(f"⚠️ Live price update had warnings: {e}")
                 
-                # STEP 3: Refresh portfolio data to include new transactions
+                # STEP 3: Cache weekly price data for charts (in background, non-blocking)
+                try:
+                    # Set a flag to trigger cache population in background
+                    cache_trigger_key = f'cache_trigger_{user_id}'
+                    st.session_state[cache_trigger_key] = True
+                    st.info("💡 Weekly price data will be cached automatically for chart display")
+                except Exception as e:
+                    st.warning(f"⚠️ Cache trigger had warnings: {e}")
+                
+                # STEP 4: Refresh portfolio data to include new transactions
                 st.info("🔄 Refreshing portfolio data...")
                 try:
                     self.load_portfolio_data(user_id)
@@ -1406,7 +1419,7 @@ class PortfolioAnalytics:
                                 def fetch_with_timeout():
                                     nonlocal price, exception
                                     try:
-                                        price = self.fetch_historical_price_comprehensive(ticker, week_date)
+                            price = self.fetch_historical_price_comprehensive(ticker, week_date)
                                     except Exception as e:
                                         exception = e
 
@@ -1427,8 +1440,8 @@ class PortfolioAnalytics:
                                     # Continue with next ticker
                                     pass
                                 elif price and price > 0:
-                                    all_weekly_prices[ticker][week_date] = price
-                                    weekly_cached_count += 1
+                                all_weekly_prices[ticker][week_date] = price
+                                weekly_cached_count += 1
 
                             except Exception as e:
                                 print(f"⚠️ Error in timeout handling for {ticker} on {week_date_str}: {e}")
@@ -1454,7 +1467,7 @@ class PortfolioAnalytics:
                                 def fetch_with_timeout():
                                     nonlocal price, exception
                                     try:
-                                        price = self.fetch_historical_price_comprehensive(ticker, week_date)
+                            price = self.fetch_historical_price_comprehensive(ticker, week_date)
                                     except Exception as e:
                                         exception = e
 
@@ -1475,8 +1488,8 @@ class PortfolioAnalytics:
                                     # Continue with next ticker
                                     pass
                                 elif price and price > 0:
-                                    all_weekly_prices[ticker][week_date] = price
-                                    weekly_cached_count += 1
+                                all_weekly_prices[ticker][week_date] = price
+                                weekly_cached_count += 1
 
                             except Exception as e:
                                 print(f"⚠️ Error in timeout handling for {ticker} on {week_date_str}: {e}")
@@ -1551,15 +1564,15 @@ class PortfolioAnalytics:
             error_count = 0
             
             for _, row in unique_transactions.iterrows():
-                ticker = row['ticker']
-                transaction_date = pd.to_datetime(row['date'])
+                        ticker = row['ticker']
+                        transaction_date = pd.to_datetime(row['date'])
                 date_str = transaction_date.strftime('%Y-%m-%d')
                 
                 try:
                     # Fetch historical price using comprehensive fetcher
                     historical_price = self.fetch_historical_price_comprehensive(ticker, transaction_date)
-                    
-                    if historical_price and historical_price > 0:
+                        
+                        if historical_price and historical_price > 0:
                         success_count += 1
                     else:
                         skip_count += 1
@@ -1570,8 +1583,8 @@ class PortfolioAnalytics:
             
             print(f"📊 Historical price caching: {success_count} cached, {skip_count} skipped, {error_count} errors")
             return success_count
-                            
-        except Exception as e:
+                    
+                except Exception as e:
             print(f"❌ Error in cache_transaction_historical_prices: {e}")
             raise
     
@@ -1626,7 +1639,7 @@ class PortfolioAnalytics:
 
                     print(f"Prices already fetched this session for user {user_id}, but may be stale, refetching...")
                 else:
-                    st.session_state[fetch_key] = True
+                st.session_state[fetch_key] = True
             
             st.info("🔄 Fetching live prices and sectors...")
             
@@ -1708,11 +1721,11 @@ class PortfolioAnalytics:
                                     print(f"   - Investment Amount: ₹{investment_amount:,.0f}")
                                     pms_data = get_aif_nav(ticker, pms_name, investment_date, investment_amount)
                                 else:
-                                    print(f"🔍 PMS FETCH: Calling get_pms_nav for {ticker}")
-                                    print(f"   - PMS Name: {pms_name}")
-                                    print(f"   - Investment Date: {investment_date}")
-                                    print(f"   - Investment Amount: ₹{investment_amount:,.0f}")
-                                    pms_data = get_pms_nav(ticker, pms_name, investment_date, investment_amount)
+                                print(f"🔍 PMS FETCH: Calling get_pms_nav for {ticker}")
+                                print(f"   - PMS Name: {pms_name}")
+                                print(f"   - Investment Date: {investment_date}")
+                                print(f"   - Investment Amount: ₹{investment_amount:,.0f}")
+                                pms_data = get_pms_nav(ticker, pms_name, investment_date, investment_amount)
                                 
                                 print(f"🔍 PMS/AIF FETCH RESULT: {pms_data}")
 
@@ -1777,25 +1790,16 @@ class PortfolioAnalytics:
                                 print(f"✅ MF {ticker}: NAV ₹{live_price}, Category: '{sector}'")
                             else:
                                 print(f"✅ MF {ticker}: NAV ₹{live_price} (no category)")
-                        except Exception as e:
-                            print(f"⚠️ MF {ticker}: mftool failed ({e}), using intelligent default")
-                            # Use intelligent default based on typical NAV ranges
+                except Exception as e:
+                            print(f"⚠️ MF {ticker}: mftool failed ({e}), using transaction price as fallback")
+                            # Use transaction price as fallback (shows 0% return, better than fake data)
                             mf_trans = df[df['ticker'] == ticker].iloc[0] if not df[df['ticker'] == ticker].empty else None
                             if mf_trans is not None and 'price' in mf_trans:
-                                trans_price = float(mf_trans['price'])
-                                # Use transaction price as reference for default
-                                if trans_price < 20:
-                                    live_price = 10.0  # Low NAV funds
-                                elif trans_price < 60:
-                                    live_price = 50.0  # Medium NAV funds
-                                elif trans_price < 90:
-                                    live_price = 75.0  # High NAV funds
-                                else:
-                                    live_price = 100.0  # Very high NAV funds
-                                print(f"   📊 Fallback: Using ₹{live_price} based on transaction price ₹{trans_price}")
-                            else:
-                                live_price = 50.0  # Default for unknown MFs
-                                print(f"   📊 Fallback: Default NAV ₹{live_price}")
+                                live_price = float(mf_trans['price'])
+                                print(f"   📊 Fallback: Using transaction price ₹{live_price} (MF data unavailable)")
+                    else:
+                                live_price = None  # No data available
+                                print(f"   ❌ Fallback: No transaction price available for {ticker}")
 
                     else:
                         # Stock or ETF - use improved priority order
@@ -1817,7 +1821,7 @@ class PortfolioAnalytics:
                             
                             if not live_price or live_price <= 0:
                                 # Priority 3: Try without suffix
-                                live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
+                            live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
 
                             print(f"🔍 DEBUG: {ticker} -> live_price={live_price}, sector={sector}, market_cap={market_cap}")
 
@@ -1901,7 +1905,7 @@ class PortfolioAnalytics:
                                     sector = 'Power & Energy'
                                 else:
                                     sector = 'Other Stocks'
-                        except Exception as e:
+                    except Exception as e:
                             print(f"⚠️ {ticker}: yfinance failed: {e}")
                             live_price = None
                             sector = 'Unknown'
@@ -1914,9 +1918,9 @@ class PortfolioAnalytics:
                 print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
 
                 # Store successful fetch (MUST be inside the for loop)
-                if live_price and live_price > 0:
-                    live_prices[ticker] = live_price
-                    sectors[ticker] = sector
+            if live_price and live_price > 0:
+                live_prices[ticker] = live_price
+                sectors[ticker] = sector
                     successful_fetches += 1
                     consecutive_failures = 0
                     print(f"✅ STORED: {ticker} -> ₹{live_price}")
@@ -2096,11 +2100,17 @@ class PortfolioAnalytics:
                         
                         # Check if we have a live_price from PMS fetch
                         if pd.notna(row['live_price']) and row['live_price'] > 0:
-                            # Check if live_price is the same as original price (means no growth data available)
-                            if abs(row['live_price'] - row['price']) < 0.01:
-                                # No growth data - use original investment amount
-                                print(f"⚠️ {ticker}: No growth data available, using original investment")
+                            # Check if live_price is NOT the same as original price
+                            # (If they're the same, SEBI fetch likely failed and fell back to transaction price)
+                            price_diff_percent = abs((row['live_price'] - row['price']) / row['price'] * 100) if row['price'] > 0 else 0
+                            
+                            if price_diff_percent < 0.01:  # Less than 0.01% difference
+                                # SEBI data not available - use transaction price (shows 0% return)
+                                # This is more honest than showing fake estimated returns
                                 current_value = invested
+                                print(f"⚠️ {ticker}: SEBI data unavailable, using transaction value (0% return)")
+                                print(f"   💡 Real-time PMS/AIF NAV data could not be fetched from SEBI")
+                                print(f"   💰 Showing invested amount: ₹{invested:,.0f} (no growth calculated)")
                             else:
                                 # We have actual NAV data
                                 # For PMS, live_price from pms_aif_fetcher is the TOTAL current value (not per unit)
@@ -2181,7 +2191,10 @@ class PortfolioAnalytics:
                             return "PMS"
                     
                     # Priority 2: Mutual Funds (by ticker pattern)
-                    if (ticker_str.isdigit() and len(ticker_str) >= 5 and len(ticker_str) <= 6) or ticker_str.startswith('MF_'):
+                    # Exclude BSE codes (6 digits starting with 5, e.g., 500414)
+                    is_bse_code = (ticker_str.isdigit() and len(ticker_str) == 6 and ticker_str.startswith('5'))
+                    if ((ticker_str.isdigit() and len(ticker_str) >= 5 and len(ticker_str) <= 6 and not is_bse_code) or 
+                        ticker_str.startswith('MF_')):
                         return "Mutual Fund"
                     
                     # Priority 3: ETFs (by ticker pattern)
@@ -3080,7 +3093,7 @@ class PortfolioAnalytics:
                 # Get top 5 performers
                 top_performers = performer_data.nlargest(5, 'pnl_percentage')
                 
-                if not top_performers.empty:
+                    if not top_performers.empty:
                     # Sort by pnl_percentage ascending for better visual (top at bottom)
                     top_performers = top_performers.sort_values('pnl_percentage', ascending=True)
                     
@@ -3093,7 +3106,7 @@ class PortfolioAnalytics:
                     fig_top.add_trace(go.Bar(
                         x=top_performers['pnl_percentage'],
                         y=top_performers['display_label'],
-                        orientation='h',
+                            orientation='h',
                         marker=dict(
                             color=top_performers['pnl_percentage'],
                             colorscale='Greens',
@@ -3107,7 +3120,7 @@ class PortfolioAnalytics:
                     ))
                     
                     fig_top.update_layout(
-                        title="Top 5 Performers by Return %",
+                            title="Top 5 Performers by Return %",
                         xaxis_title="Return %",
                         yaxis_title="",
                         height=300,
@@ -3116,8 +3129,8 @@ class PortfolioAnalytics:
                     )
                     
                     st.plotly_chart(fig_top, use_container_width=True, key="top_performers_chart")
-                else:
-                    st.info("No performance data available")
+                    else:
+                        st.info("No performance data available")
             else:
                 st.info("Performance data not available")
         
@@ -3139,7 +3152,7 @@ class PortfolioAnalytics:
                 # Get bottom 5 performers
                 underperformers = performer_data.nsmallest(5, 'pnl_percentage')
                 
-                if not underperformers.empty:
+                    if not underperformers.empty:
                     # Sort by pnl_percentage descending for better visual (worst at bottom)
                     underperformers = underperformers.sort_values('pnl_percentage', ascending=False)
                     
@@ -3152,7 +3165,7 @@ class PortfolioAnalytics:
                     fig_bottom.add_trace(go.Bar(
                         x=underperformers['pnl_percentage'],
                         y=underperformers['display_label'],
-                        orientation='h',
+                            orientation='h',
                         marker=dict(
                             color=underperformers['pnl_percentage'],
                             colorscale='Reds',
@@ -3167,7 +3180,7 @@ class PortfolioAnalytics:
                     ))
                     
                     fig_bottom.update_layout(
-                        title="Bottom 5 Performers by Return %",
+                            title="Bottom 5 Performers by Return %",
                         xaxis_title="Return %",
                         yaxis_title="",
                         height=300,
@@ -3176,8 +3189,8 @@ class PortfolioAnalytics:
                     )
                     
                     st.plotly_chart(fig_bottom, use_container_width=True, key="underperformers_chart")
-                else:
-                    st.info("No performance data available")
+                    else:
+                        st.info("No performance data available")
             else:
                 st.info("Performance data not available")
         
@@ -3693,7 +3706,7 @@ class PortfolioAnalytics:
                     st.metric("Channels", f"{num_channels}")
             
             st.markdown("---")
-            
+
             # Display top performers
             st.subheader("🏆 Top Performers (1-Year Buy Transactions)")
 
@@ -3802,13 +3815,13 @@ class PortfolioAnalytics:
             # Sector and Channel Analysis with Interactive Drill-Down
             st.markdown("---")
             st.subheader("📊 Sector & Channel Drill-Down Analysis (1-Year Buy Transactions)")
-            
+
             # Create tabs for Sector and Channel analysis
             tab1, tab2 = st.tabs(["🏭 By Sector", "📡 By Channel"])
-            
+
             with tab1:
                 st.subheader("🏭 Sector Performance Analysis")
-                
+
                 # Group by sector and calculate metrics
                 sector_performance = stock_and_mf_buys.groupby('sector').agg({
                     'invested_amount': 'sum',
@@ -3855,23 +3868,23 @@ class PortfolioAnalytics:
                     if not selected_sectors_1y or len(selected_sectors_1y) == 0:
                         # Show all sectors summary
                         st.markdown("#### 📊 All Sectors Summary")
-                        sector_table_data = []
-                        for _, row in sector_performance.iterrows():
-                            sector = row['sector']
-                            sector_stocks = stock_and_mf_buys[stock_and_mf_buys['sector'] == sector]
-                            sector_count = len(sector_stocks['ticker'].unique())
-                            
-                            sector_table_data.append({
-                                'Sector': sector,
-                                'Holdings': sector_count,
+                    sector_table_data = []
+                    for _, row in sector_performance.iterrows():
+                        sector = row['sector']
+                        sector_stocks = stock_and_mf_buys[stock_and_mf_buys['sector'] == sector]
+                        sector_count = len(sector_stocks['ticker'].unique())
+
+                        sector_table_data.append({
+                            'Sector': sector,
+                            'Holdings': sector_count,
                                 'Invested (₹)': f"₹{row['invested_amount']:,.0f}",
                                 'Current Value (₹)': f"₹{row['current_value']:,.0f}",
                                 'P&L (₹)': f"₹{row['unrealized_pnl']:,.0f}",
                                 'P&L %': f"{row['pnl_percentage']:.2f}%"
-                            })
-                        
-                        sector_df = pd.DataFrame(sector_table_data)
-                        st.dataframe(sector_df, use_container_width=True, hide_index=True)
+                        })
+
+                    sector_df = pd.DataFrame(sector_table_data)
+                    st.dataframe(sector_df, use_container_width=True, hide_index=True)
                     
                     else:
                         # Show holdings in selected sectors
@@ -3906,8 +3919,8 @@ class PortfolioAnalytics:
                                         use_container_width=True,
                                         hide_index=True
                                     )
-                                
-                                with col2:
+
+            with col2:
                                     # Bar chart comparing sectors
                                     fig_sector_compare = px.bar(
                                         sector_breakdown,
@@ -3982,7 +3995,7 @@ class PortfolioAnalytics:
             
             with tab2:
                 st.subheader("📡 Channel Performance Analysis")
-                
+
                 # Group by channel and calculate metrics
                 channel_performance = stock_and_mf_buys.groupby('channel').agg({
                     'invested_amount': 'sum',
@@ -4029,23 +4042,23 @@ class PortfolioAnalytics:
                     if not selected_channels_1y or len(selected_channels_1y) == 0:
                         # Show all channels summary
                         st.markdown("#### 📊 All Channels Summary")
-                        channel_table_data = []
-                        for _, row in channel_performance.iterrows():
-                            channel = row['channel']
-                            channel_stocks = stock_and_mf_buys[stock_and_mf_buys['channel'] == channel]
-                            channel_count = len(channel_stocks['ticker'].unique())
-                            
-                            channel_table_data.append({
-                                'Channel': channel,
-                                'Holdings': channel_count,
+                    channel_table_data = []
+                    for _, row in channel_performance.iterrows():
+                        channel = row['channel']
+                        channel_stocks = stock_and_mf_buys[stock_and_mf_buys['channel'] == channel]
+                        channel_count = len(channel_stocks['ticker'].unique())
+
+                        channel_table_data.append({
+                            'Channel': channel,
+                            'Holdings': channel_count,
                                 'Invested (₹)': f"₹{row['invested_amount']:,.0f}",
                                 'Current Value (₹)': f"₹{row['current_value']:,.0f}",
                                 'P&L (₹)': f"₹{row['unrealized_pnl']:,.0f}",
                                 'P&L %': f"{row['pnl_percentage']:.2f}%"
-                            })
-                        
-                        channel_df = pd.DataFrame(channel_table_data)
-                        st.dataframe(channel_df, use_container_width=True, hide_index=True)
+                        })
+
+                    channel_df = pd.DataFrame(channel_table_data)
+                    st.dataframe(channel_df, use_container_width=True, hide_index=True)
                     
                     else:
                         # Show holdings in selected channels
@@ -4240,7 +4253,7 @@ class PortfolioAnalytics:
             
             with col1:
                 st.metric("💰 Total Invested", f"₹{total_invested:,.0f}")
-            
+
             with col2:
                 st.metric("📈 Current Value", f"₹{total_current:,.0f}")
             
@@ -4258,7 +4271,7 @@ class PortfolioAnalytics:
             st.subheader("📈 Performance Distribution")
             
             col1, col2 = st.columns(2)
-            
+
             with col1:
                 # Asset allocation by current value
                 if 'sector' in df.columns and not df['sector'].isna().all():
@@ -4276,7 +4289,7 @@ class PortfolioAnalytics:
                         hole=0.3
                     )
                     st.plotly_chart(fig_allocation, use_container_width=True, key="overall_sector_allocation_pie")
-            
+
             with col2:
                 # P&L Distribution
                 holdings_pnl = df.groupby('ticker').agg({
@@ -4320,10 +4333,10 @@ class PortfolioAnalytics:
                             st.markdown(f"💰 P&L: ₹{row['unrealized_pnl']:,.0f} | 📊 {row['pnl_percentage']:.2f}%")
                             st.progress(min(row['pnl_percentage'] / 100, 1.0))
                             st.markdown("---")
-                else:
+                    else:
                     st.info("No gainers yet")
-            
-            with col2:
+
+                    with col2:
                 st.subheader("📉 Top 10 Losers")
                 losers = df.groupby('ticker').agg({
                     'stock_name': 'first',
@@ -4514,11 +4527,11 @@ class PortfolioAnalytics:
         tab1, tab2 = st.tabs(["🏢 By Sector", "📡 By Channel"])
         
         with tab1:
-            st.subheader("🏢 Sector-Wise Performance")
-            
-            try:
-                # Debug: Check what's in the sector column
-                print(f"🔍 DEBUG: df.columns = {df.columns.tolist()}")
+        st.subheader("🏢 Sector-Wise Performance")
+        
+        try:
+            # Debug: Check what's in the sector column
+            print(f"🔍 DEBUG: df.columns = {df.columns.tolist()}")
             
                 # Check for sector column - try multiple variations
                 sector_col = None
@@ -4539,47 +4552,47 @@ class PortfolioAnalytics:
                 if not sector_col or df['sector'].isna().all():
                     st.warning("⚠️ Sector information not available in portfolio data")
                     st.info("💡 Sectors are automatically fetched when prices are loaded. Reload data to populate sectors.")
-                    # Show what we have for debugging
-                    with st.expander("🔍 Debug: Show available columns"):
+                # Show what we have for debugging
+                with st.expander("🔍 Debug: Show available columns"):
                         st.json(df.columns.tolist())
-                    return
-                
-                # Group by sector (exclude Unknown if there are other sectors)
-                sector_data = df.groupby('sector').agg({
-                    'invested_amount': 'sum',
-                    'current_value': 'sum',
-                    'unrealized_pnl': 'sum'
-                }).reset_index()
-                
-                # Filter out 'Unknown' if we have other sectors
-                if len(sector_data) > 1 and 'Unknown' in sector_data['sector'].values:
-                    print(f"🔍 DEBUG: Filtering out 'Unknown' sector, keeping {len(sector_data)-1} known sectors")
-                    sector_data = sector_data[sector_data['sector'] != 'Unknown']
-                
-                sector_data['pnl_percentage'] = (sector_data['unrealized_pnl'] / sector_data['invested_amount'] * 100)
-                sector_data = sector_data.sort_values('pnl_percentage', ascending=False)
-                
-                print(f"🔍 DEBUG: Final sector_data:\n{sector_data}")
-                
-                # Display sector performance table
-                st.dataframe(
-                    sector_data.style.format({
-                        'invested_amount': '₹{:,.0f}',
-                        'current_value': '₹{:,.0f}',
-                        'unrealized_pnl': '₹{:,.0f}',
-                        'pnl_percentage': '{:.2f}%'
-                    }),
-                    use_container_width=True
-                )
-                
-                # Sector pie chart
-                import plotly.express as px
-                fig = px.pie(
-                    sector_data,
-                    values='current_value',
-                    names='sector',
-                    title='Portfolio Allocation by Sector'
-                )
+                return
+            
+            # Group by sector (exclude Unknown if there are other sectors)
+            sector_data = df.groupby('sector').agg({
+                'invested_amount': 'sum',
+                'current_value': 'sum',
+                'unrealized_pnl': 'sum'
+            }).reset_index()
+            
+            # Filter out 'Unknown' if we have other sectors
+            if len(sector_data) > 1 and 'Unknown' in sector_data['sector'].values:
+                print(f"🔍 DEBUG: Filtering out 'Unknown' sector, keeping {len(sector_data)-1} known sectors")
+                sector_data = sector_data[sector_data['sector'] != 'Unknown']
+            
+            sector_data['pnl_percentage'] = (sector_data['unrealized_pnl'] / sector_data['invested_amount'] * 100)
+            sector_data = sector_data.sort_values('pnl_percentage', ascending=False)
+            
+            print(f"🔍 DEBUG: Final sector_data:\n{sector_data}")
+            
+            # Display sector performance table
+            st.dataframe(
+                sector_data.style.format({
+                    'invested_amount': '₹{:,.0f}',
+                    'current_value': '₹{:,.0f}',
+                    'unrealized_pnl': '₹{:,.0f}',
+                    'pnl_percentage': '{:.2f}%'
+                }),
+                use_container_width=True
+            )
+            
+            # Sector pie chart
+            import plotly.express as px
+            fig = px.pie(
+                sector_data,
+                values='current_value',
+                names='sector',
+                title='Portfolio Allocation by Sector'
+            )
                 st.plotly_chart(fig, use_container_width=True, key="sector_analysis_pie")
                 
                 # ===== NEW: Sector Multi-Select Filter =====
@@ -4686,49 +4699,49 @@ class PortfolioAnalytics:
                         
                         if selected_stocks and len(selected_stocks) > 0:
                             self.render_weekly_values_multi(selected_stocks, self.session_state.user_id, context="sector_analysis")
-                    
-            except Exception as e:
-                st.error(f"Error in sector analysis: {e}")
-        
+            
+        except Exception as e:
+            st.error(f"Error in sector analysis: {e}")
+    
         with tab2:
-            st.subheader("📡 Channel-Wise Performance")
+        st.subheader("📡 Channel-Wise Performance")
+        
+        try:
+            if 'channel' not in df.columns or df['channel'].isna().all():
+                st.warning("Channel information not available")
+                return
             
-            try:
-                if 'channel' not in df.columns or df['channel'].isna().all():
-                    st.warning("Channel information not available")
-                    return
+            # Group by channel
+            channel_data = df.groupby('channel').agg({
+                'invested_amount': 'sum',
+                'current_value': 'sum',
+                'unrealized_pnl': 'sum'
+            }).reset_index()
             
-                # Group by channel
-                channel_data = df.groupby('channel').agg({
-                    'invested_amount': 'sum',
-                    'current_value': 'sum',
-                    'unrealized_pnl': 'sum'
-                }).reset_index()
-                
-                channel_data['pnl_percentage'] = (channel_data['unrealized_pnl'] / channel_data['invested_amount'] * 100)
-                channel_data = channel_data.sort_values('pnl_percentage', ascending=False)
-                
-                # Display channel performance table
-                st.dataframe(
-                    channel_data.style.format({
-                        'invested_amount': '₹{:,.0f}',
-                        'current_value': '₹{:,.0f}',
-                        'unrealized_pnl': '₹{:,.0f}',
-                        'pnl_percentage': '{:.2f}%'
-                    }),
-                    use_container_width=True
-                )
-                
-                # Channel bar chart
-                import plotly.express as px
-                fig = px.bar(
-                    channel_data,
-                    x='channel',
-                    y='pnl_percentage',
-                    title='Performance by Channel (%)',
-                    color='pnl_percentage',
-                    color_continuous_scale=['red', 'yellow', 'green']
-                )
+            channel_data['pnl_percentage'] = (channel_data['unrealized_pnl'] / channel_data['invested_amount'] * 100)
+            channel_data = channel_data.sort_values('pnl_percentage', ascending=False)
+            
+            # Display channel performance table
+            st.dataframe(
+                channel_data.style.format({
+                    'invested_amount': '₹{:,.0f}',
+                    'current_value': '₹{:,.0f}',
+                    'unrealized_pnl': '₹{:,.0f}',
+                    'pnl_percentage': '{:.2f}%'
+                }),
+                use_container_width=True
+            )
+            
+            # Channel bar chart
+            import plotly.express as px
+            fig = px.bar(
+                channel_data,
+                x='channel',
+                y='pnl_percentage',
+                title='Performance by Channel (%)',
+                color='pnl_percentage',
+                color_continuous_scale=['red', 'yellow', 'green']
+            )
                 st.plotly_chart(fig, use_container_width=True, key="channel_analysis_bar")
                 
                 # ===== NEW: Hierarchical Channel > Sector > Holding Multi-Select =====
@@ -5157,8 +5170,8 @@ class PortfolioAnalytics:
                                 use_container_width=True
                             )
             
-            except Exception as e:
-                st.error(f"Error in channel analysis: {e}")
+        except Exception as e:
+            st.error(f"Error in channel analysis: {e}")
                 import traceback
                 st.error(f"Details: {traceback.format_exc()}")
     
@@ -5476,13 +5489,13 @@ class PortfolioAnalytics:
                         status_text.text(f"Processing {idx+1}/{len(uploaded_files)}: {uploaded_file.name}")
                         progress_bar.progress((idx) / len(uploaded_files))
                         
-                        with st.spinner(f"Processing {uploaded_file.name}..."):
-                            success = self.process_csv_file(uploaded_file, self.session_state.user_id)
-                            if success:
-                                st.success(f"✅ {uploaded_file.name} processed successfully!")
+                    with st.spinner(f"Processing {uploaded_file.name}..."):
+                        success = self.process_csv_file(uploaded_file, self.session_state.user_id)
+                        if success:
+                            st.success(f"✅ {uploaded_file.name} processed successfully!")
                                 processed_count += 1
-                            else:
-                                st.error(f"❌ Failed to process {uploaded_file.name}")
+                        else:
+                            st.error(f"❌ Failed to process {uploaded_file.name}")
                                 failed_count += 1
                                 failed_files.append(uploaded_file.name)
                                 
@@ -7416,9 +7429,11 @@ class PortfolioAnalytics:
                                 else:
                                     # Fallback: Fetch from API if not in cache
                                     # Check if it's a mutual fund (numeric ticker or starts with MF_)
+                                    # Exclude BSE codes (6 digits starting with 5, e.g., 500414)
                                     clean_ticker = str(ticker).strip()
+                                    is_bse_code = (clean_ticker.isdigit() and len(clean_ticker) == 6 and clean_ticker.startswith('5'))
                                     is_mutual_fund = (
-                                        (clean_ticker.isdigit() and len(clean_ticker) >= 5) or
+                                        (clean_ticker.isdigit() and len(clean_ticker) >= 5 and len(clean_ticker) <= 6 and not is_bse_code) or
                                         clean_ticker.startswith('MF_')
                                     )
 
@@ -9825,8 +9840,16 @@ You can also suggest creating charts/graphs based on this data."""
                 tickers_with_data.append(ticker)
             
             if len(tickers_with_data) == 0:
-                st.error("❌ No price data available for any selected holdings")
-                st.info("💡 Price data is cached when you first upload a file. Make sure the tickers have been processed.")
+                st.error("❌ No weekly price data available for selected holdings")
+                st.info("""
+                💡 **To populate weekly price data for charts:**
+                1. Go to **⚙️ Settings** in the sidebar
+                2. Click **"🔄 Refresh Price Data"** button
+                3. Wait for the cache to populate (~30 seconds)
+                4. Return to this page to see the chart
+                
+                **Note:** Weekly price data is cached automatically after file upload, but may take a moment to populate.
+                """)
                 return
             
             # Update layout with better text visibility
