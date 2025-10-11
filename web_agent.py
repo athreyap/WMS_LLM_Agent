@@ -944,7 +944,8 @@ class PortfolioAnalytics:
                 return
             
             # Fetch live prices and sectors (essential for current portfolio view)
-            self.fetch_live_prices_and_sectors(user_id)
+            # Always fetch live prices for portfolio calculations, but don't force refresh unless needed
+            self.fetch_live_prices_and_sectors(user_id, force_refresh=False)
             
             # Load portfolio data (essential for dashboard)
             self.load_portfolio_data(user_id)
@@ -1283,10 +1284,28 @@ class PortfolioAnalytics:
             # Check if already fetched this session (unless force refresh)
             if not force_refresh:
                 fetch_key = f'prices_fetched_{user_id}'
+                last_fetch_key = f'prices_last_fetch_{user_id}'
+
+                # If we have a last fetch time, check if it's been more than 5 minutes
                 if fetch_key in st.session_state and st.session_state[fetch_key]:
-                    print(f"Prices already fetched this session for user {user_id}, skipping...")
-                    return
-                st.session_state[fetch_key] = True
+                    if last_fetch_key in st.session_state:
+                        last_fetch = st.session_state[last_fetch_key]
+                        if isinstance(last_fetch, str):
+                            from datetime import datetime
+                            try:
+                                last_fetch = datetime.fromisoformat(last_fetch)
+                            except:
+                                last_fetch = None
+
+                        if last_fetch:
+                            time_diff = datetime.now() - last_fetch
+                            if time_diff.total_seconds() < 300:  # Less than 5 minutes
+                                print(f"Prices fetched recently ({time_diff.total_seconds():.0f}s ago) for user {user_id}, skipping...")
+                                return
+
+                    print(f"Prices already fetched this session for user {user_id}, but may be stale, refetching...")
+                else:
+                    st.session_state[fetch_key] = True
             
             st.info("🔄 Fetching live prices and sectors...")
             
@@ -1484,7 +1503,16 @@ class PortfolioAnalytics:
             # Store in session state
             self.session_state.live_prices = live_prices
             self.session_state.sectors = sectors
-            
+
+            # Store the fetch timestamp for cache management
+            fetch_key = f'prices_fetched_{user_id}'
+            last_fetch_key = f'prices_last_fetch_{user_id}'
+            st.session_state[last_fetch_key] = datetime.now().isoformat()
+
+            # Mark that portfolio data should be refreshed since we have new live prices
+            portfolio_refresh_key = f'portfolio_needs_refresh_{user_id}'
+            st.session_state[portfolio_refresh_key] = True
+
             st.success(f"✅ Fetched live prices for {len(live_prices)} tickers and sectors for {len(sectors)} tickers")
             
         except Exception as e:
@@ -1495,6 +1523,14 @@ class PortfolioAnalytics:
         from datetime import datetime
 
         try:
+            # Check if portfolio needs refresh due to updated live prices
+            portfolio_refresh_key = f'portfolio_needs_refresh_{user_id}'
+            if portfolio_refresh_key in st.session_state and st.session_state[portfolio_refresh_key]:
+                print(f"🔄 Portfolio refresh triggered for user {user_id}")
+                del st.session_state[portfolio_refresh_key]
+            else:
+                print(f"📊 Loading portfolio data for user {user_id}")
+
             transactions = get_transactions_supabase(user_id=user_id)
             if not transactions:
                 return
@@ -7471,7 +7507,13 @@ You can also suggest creating charts/graphs based on this data."""
             if st.button("🧹 Clear Cache"):
                 if 'live_prices' in self.session_state:
                     del self.session_state['live_prices']
-                st.success("Cache cleared!")
+
+                # Also clear the fetch flags and timestamps so prices will be refetched
+                fetch_keys_to_clear = [key for key in self.session_state.keys() if key.startswith('prices_fetched_') or key.startswith('prices_last_fetch_')]
+                for key in fetch_keys_to_clear:
+                    del self.session_state[key]
+
+                st.success("Cache and fetch flags cleared!")
         
         # Debug section
         st.markdown("---")
