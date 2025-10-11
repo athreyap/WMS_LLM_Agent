@@ -692,8 +692,13 @@ class PortfolioAnalytics:
                         price = float(mf_price)
                         price_source = 'mftool'
                         print(f"✅ {ticker}: mftool - ₹{price}")
+                    else:
+                        print(f"⚠️ MF {ticker}: mftool returned no price or zero price")
+                except ImportError as ie:
+                    print(f"⚠️ MF {ticker}: mftool import failed: {ie}")
                 except Exception as e:
-                    pass
+                    print(f"⚠️ MF {ticker}: mftool error: {e}")
+                    # Don't pass - let other strategies try
             
             # === STRATEGY 6: Try PMS/AIF (if ticker suggests it) ===
             if not price:
@@ -701,13 +706,15 @@ class PortfolioAnalytics:
                 if any(keyword in ticker_upper for keyword in ['PMS', 'AIF', 'INP', 'BUOYANT', 'CARNELIAN', 'JULIUS', 'VALENTIS', 'UNIFI']) or ticker_upper.endswith('_PMS'):
                     try:
                         from pms_aif_fetcher import get_pms_nav, get_aif_nav, is_pms_code, is_aif_code
-                        
-                        # For PMS/AIF, we need investment date and amount
-                        # This is a historical price fetch, so we can't calculate value
-                        # Just skip for now - PMS/AIF values are calculated at portfolio level
-                        pass
+                        print(f"🔍 {ticker}: PMS/AIF detected - using transaction price for historical data")
+                        # For PMS/AIF, we use the TRANSACTION PRICE as historical price
+                        # The actual NAV calculation happens at portfolio level using CAGR
+                        # Don't try to fetch live prices for historical dates
+                    except ImportError as ie:
+                        print(f"⚠️ PMS {ticker}: pms_aif_fetcher import failed: {ie}")
                     except Exception as e:
-                        pass
+                        print(f"⚠️ PMS {ticker}: PMS/AIF fetcher error: {e}")
+                        # Don't pass - let transaction price be used
             
             # === FALLBACK: Try yfinance with 7-day window ===
             if not price:
@@ -1351,7 +1358,7 @@ class PortfolioAnalytics:
                                 from pms_aif_fetcher import get_pms_nav
                                 pms_name = pms_trans.get('stock_name', ticker).replace('_', ' ')
                                 pms_data = get_pms_nav(ticker, pms_name, investment_date, investment_amount)
-                                
+
                                 if pms_data and pms_data.get('price'):
                                     live_price = pms_data['price']
                                     # Set sector based on PMS/AIF type
@@ -1368,8 +1375,17 @@ class PortfolioAnalytics:
                                     else:
                                         sector = "PMS"
                                     print(f"⚠️ {sector} {ticker}: Using transaction price (SEBI data not available)")
+                            except ImportError as ie:
+                                print(f"⚠️ PMS {ticker}: pms_aif_fetcher import failed: {ie}")
+                                print(f"💡 Try installing: pip install pandas requests beautifulsoup4 html5lib")
+                                live_price = pms_trans['price']
+                                if 'AIF' in ticker_str:
+                                    sector = "AIF"
+                                else:
+                                    sector = "PMS"
                             except Exception as e:
                                 print(f"⚠️ PMS/AIF calculation failed for {ticker}: {e}")
+                                print(f"💡 This might be due to missing html5lib dependency. Try: pip install html5lib")
                                 live_price = pms_trans['price']
                                 if 'AIF' in ticker_str:
                                     sector = "AIF"
@@ -1384,16 +1400,27 @@ class PortfolioAnalytics:
                     
                     elif str(ticker).isdigit() or ticker.startswith('MF_'):
                         # Mutual fund - use numerical scheme code and get fund category from mftool
-                        from unified_price_fetcher import get_mutual_fund_price_and_category
-                        live_price, fund_category = get_mutual_fund_price_and_category(ticker, ticker, user_id, None)
-                        
-                        # Use fund category from mftool if available, otherwise default to "Mutual Fund"
-                        if fund_category and fund_category != 'Unknown':
-                            sector = fund_category
-                            print(f"✅ MF {ticker}: Using fund category '{sector}' from mftool")
-                        else:
-                            sector = "Mutual Fund"  # Fallback if no category available
-                            print(f"⚠️ MF {ticker}: No fund category available, using default 'Mutual Fund'")
+                        try:
+                            from unified_price_fetcher import get_mutual_fund_price_and_category
+                            live_price, fund_category = get_mutual_fund_price_and_category(ticker, ticker, user_id, None)
+
+                            # Use fund category from mftool if available, otherwise default to "Mutual Fund"
+                            if fund_category and fund_category != 'Unknown':
+                                sector = fund_category
+                                print(f"✅ MF {ticker}: Using fund category '{sector}' from mftool")
+                            else:
+                                sector = "Mutual Fund"  # Fallback if no category available
+                                print(f"⚠️ MF {ticker}: No fund category available, using default 'Mutual Fund'")
+                        except ImportError as ie:
+                            print(f"⚠️ MF {ticker}: unified_price_fetcher import failed: {ie}")
+                            print(f"💡 Try installing: pip install mftool yfinance pandas")
+                            live_price = None
+                            sector = "Mutual Fund"
+                        except Exception as e:
+                            print(f"⚠️ MF {ticker}: get_mutual_fund_price_and_category failed: {e}")
+                            print(f"💡 This might be due to missing dependencies. Try: pip install mftool")
+                            live_price = None
+                            sector = "Mutual Fund"
                     
                     elif ticker_str.startswith('INF') and len(ticker_str) == 12:
                         # Mutual fund ISIN - try to get category from mftool or indstocks
