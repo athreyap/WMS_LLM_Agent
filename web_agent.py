@@ -2459,7 +2459,334 @@ class PortfolioAnalytics:
             return
 
         df = self.session_state.portfolio_data
-        
+
+        # Create tabs for different performance views
+        tab1, tab2, tab3 = st.tabs(["📊 Portfolio Overview", "📈 1-Year Buy Performance", "📋 Overall Portfolio Performance"])
+
+        with tab1:
+            self.render_portfolio_overview(df)
+
+        with tab2:
+            self.render_one_year_buy_performance(df)
+
+        with tab3:
+            self.render_overall_portfolio_performance(df)
+
+    def render_one_year_buy_performance(self, df):
+        """Render 1-year buy performance analysis for stocks and mutual funds"""
+        from datetime import datetime, timedelta
+
+        st.subheader("📈 Stock and Mutual Fund Performance Analysis (1-Year Buy Transactions)")
+
+        # Filter for stocks and mutual funds (exclude PMS/AIF) with buy transactions in the last 1 year
+        one_year_ago = datetime.now() - timedelta(days=365)
+
+        def is_pms_aif(ticker):
+            ticker_upper = str(ticker).upper()
+            return any(keyword in ticker_upper for keyword in [
+                'PMS', 'AIF', 'INP', 'BUOYANT', 'CARNELIAN', 'JULIUS',
+                'VALENTIS', 'UNIFI', 'PORTFOLIO', 'FUND'
+            ]) or ticker_upper.endswith('_PMS') or str(ticker).startswith('INP')
+
+        stock_and_mf_buys = df[
+            (~df['ticker'].apply(is_pms_aif)) &  # Exclude PMS/AIF
+            (df['transaction_type'] == 'buy') &
+            (df['date'] >= one_year_ago)
+        ].copy()
+
+        if not stock_and_mf_buys.empty:
+            # Group by ticker and calculate performance metrics
+            stock_performance = stock_and_mf_buys.groupby('ticker').agg({
+                'invested_amount': 'sum',
+                'current_value': 'sum',
+                'unrealized_pnl': 'sum',
+                'quantity': 'sum',
+                'date': 'max'  # Latest buy date
+            }).reset_index()
+
+            # Calculate additional metrics
+            stock_performance['pnl_percentage'] = (stock_performance['unrealized_pnl'] / stock_performance['invested_amount']) * 100
+            stock_performance['avg_price'] = stock_performance['invested_amount'] / stock_performance['quantity']
+
+            # Add stock ratings based on performance
+            def get_stock_rating(pnl_pct):
+                if pnl_pct >= 20:
+                    return '⭐⭐⭐ Excellent'
+                elif pnl_pct >= 10:
+                    return '⭐⭐ Good'
+                elif pnl_pct >= 0:
+                    return '⭐ Fair'
+                elif pnl_pct >= -10:
+                    return '⚠️ Poor'
+                else:
+                    return '❌ Very Poor'
+
+            stock_performance['rating'] = stock_performance['pnl_percentage'].apply(get_stock_rating)
+            stock_performance['rating_color'] = stock_performance['pnl_percentage'].apply(
+                lambda x: 'green' if x >= 10 else 'orange' if x >= 0 else 'red'
+            )
+
+            # Sort by P&L percentage
+            stock_performance = stock_performance.sort_values('pnl_percentage', ascending=False)
+
+            # Display top performers
+            st.subheader("🏆 Top Performers (1-Year Buy Transactions)")
+
+            # Create performance chart
+            fig_stock_performance = go.Figure()
+            fig_stock_performance.add_trace(go.Bar(
+                x=stock_performance.head(10)['ticker'],
+                y=stock_performance.head(10)['pnl_percentage'],
+                marker_color=stock_performance.head(10)['rating_color'],
+                text=stock_performance.head(10)['pnl_percentage'].round(2),
+                textposition='auto',
+            ))
+
+            fig_stock_performance.update_layout(
+                title="Top 10 Performing Stocks & Mutual Funds (1-Year)",
+                xaxis_title="Ticker",
+                yaxis_title="P&L Percentage (%)",
+                height=400
+            )
+
+            st.plotly_chart(fig_stock_performance, config={'displayModeBar': True, 'responsive': True})
+
+            # Performance Table
+            st.subheader("📊 Detailed Performance Table (1-Year Buy Transactions)")
+
+            # Create a comprehensive table
+            table_data = []
+            for _, row in stock_performance.iterrows():
+                ticker = row['ticker']
+                # Get additional details from original data
+                ticker_data = stock_and_mf_buys[stock_and_mf_buys['ticker'] == ticker].iloc[0]
+
+                table_row = {
+                    'Ticker': ticker,
+                    'Stock Name': ticker_data.get('stock_name', 'N/A'),
+                    'Sector': ticker_data.get('sector', 'Unknown'),
+                    'Invested (₹)': f"{row['invested_amount']:,.2f}",
+                    'Current Value (₹)': f"{row['current_value']:,.2f}",
+                    'P&L (₹)': f"{row['unrealized_pnl']:,.2f}",
+                    'P&L %': f"{row['pnl_percentage']:.2f}%",
+                    'Rating': row['rating'],
+                    'Quantity': f"{row['quantity']:.0f}",
+                    'Avg Price (₹)': f"{row['avg_price']:.2f}",
+                    'Latest Buy Date': row['date'].strftime('%Y-%m-%d') if pd.notna(row['date']) else 'N/A'
+                }
+                table_data.append(table_row)
+
+            performance_df = pd.DataFrame(table_data)
+            st.dataframe(performance_df, use_container_width=True, hide_index=True)
+
+            # Quarterly Analysis for Individual Stocks
+            st.subheader("📊 Quarterly Analysis (1-Year Buy Transactions)")
+
+            # Create quarterly data for each stock
+            quarterly_data = []
+
+            for _, row in stock_performance.iterrows():
+                ticker = row['ticker']
+                ticker_transactions = stock_and_mf_buys[stock_and_mf_buys['ticker'] == ticker].copy()
+
+                # Convert date to datetime if it's not already
+                if not pd.api.types.is_datetime64_any_dtype(ticker_transactions['date']):
+                    ticker_transactions['date'] = pd.to_datetime(ticker_transactions['date'])
+
+                # Group by quarter
+                ticker_transactions['quarter'] = ticker_transactions['date'].dt.to_period('Q')
+                quarterly_perf = ticker_transactions.groupby('quarter').agg({
+                    'invested_amount': 'sum',
+                    'current_value': 'sum',
+                    'unrealized_pnl': 'sum'
+                }).reset_index()
+
+                quarterly_perf['pnl_percentage'] = (quarterly_perf['unrealized_pnl'] / quarterly_perf['invested_amount']) * 100
+
+                for _, q_row in quarterly_perf.iterrows():
+                    quarterly_data.append({
+                        'Ticker': ticker,
+                        'Quarter': str(q_row['quarter']),
+                        'Invested (₹)': q_row['invested_amount'],
+                        'Current Value (₹)': q_row['current_value'],
+                        'P&L (₹)': q_row['unrealized_pnl'],
+                        'P&L %': q_row['pnl_percentage']
+                    })
+
+            if quarterly_data:
+                quarterly_df = pd.DataFrame(quarterly_data)
+
+                # Create quarterly performance chart
+                fig_quarterly = px.line(
+                    quarterly_df,
+                    x='Quarter',
+                    y='P&L %',
+                    color='Ticker',
+                    title='Quarterly Performance Trends (1-Year Buy Transactions)',
+                    markers=True
+                )
+
+                st.plotly_chart(fig_quarterly, config={'displayModeBar': True, 'responsive': True})
+
+                # Quarterly table
+                st.subheader("📋 Quarterly Performance Details")
+                st.dataframe(quarterly_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No quarterly data available for analysis")
+
+            # Sector and Channel Analysis
+            st.subheader("📊 Sector & Channel Analysis (1-Year Buy Transactions - Stocks & Mutual Funds)")
+
+            # Create two columns for charts
+            col1, col2 = st.columns(2)
+
+            with col1:
+                # Sector Performance Chart
+                st.subheader("🏭 Sector Performance Analysis")
+
+                # Group by sector and calculate metrics
+                sector_performance = stock_and_mf_buys.groupby('sector').agg({
+                    'invested_amount': 'sum',
+                    'current_value': 'sum',
+                    'unrealized_pnl': 'sum',
+                    'quantity': 'sum'
+                }).reset_index()
+
+                if not sector_performance.empty:
+                    sector_performance['pnl_percentage'] = (sector_performance['unrealized_pnl'] / sector_performance['invested_amount']) * 100
+
+                    # Create sector performance chart
+                    fig_sector = go.Figure()
+                    fig_sector.add_trace(go.Bar(
+                        x=sector_performance['sector'],
+                        y=sector_performance['pnl_percentage'],
+                        marker_color=['green' if x >= 0 else 'red' for x in sector_performance['pnl_percentage']],
+                        text=sector_performance['pnl_percentage'].round(2),
+                        textposition='auto',
+                    ))
+
+                    fig_sector.update_layout(
+                        title="Sector Performance (1-Year)",
+                        xaxis_title="Sector",
+                        yaxis_title="P&L Percentage (%)",
+                        height=400
+                    )
+
+                    st.plotly_chart(fig_sector, config={'displayModeBar': True, 'responsive': True})
+
+                    # Sector performance table
+                    sector_table_data = []
+                    for _, row in sector_performance.iterrows():
+                        sector = row['sector']
+                        value = row['current_value']
+                        # Get sector-specific data
+                        sector_stocks = stock_and_mf_buys[stock_and_mf_buys['sector'] == sector]
+                        sector_count = len(sector_stocks['ticker'].unique())
+                        sector_pnl = sector_stocks['unrealized_pnl'].sum() if 'unrealized_pnl' in sector_stocks.columns else 0
+                        sector_pnl_pct = (sector_pnl / value * 100) if value > 0 else 0
+
+                        sector_table_data.append({
+                            'Sector': sector,
+                            'Holdings': sector_count,
+                            'Invested (₹)': f"{row['invested_amount']:,.2f}",
+                            'Current Value (₹)': f"{value:,.2f}",
+                            'P&L (₹)': f"{sector_pnl:,.2f}",
+                            'P&L %': f"{sector_pnl_pct:.2f}%"
+                        })
+
+                    sector_df = pd.DataFrame(sector_table_data)
+                    st.dataframe(sector_df, use_container_width=True, hide_index=True)
+
+            with col2:
+                # Channel Performance Chart
+                st.subheader("📡 Channel Performance Analysis")
+
+                # Group by channel and calculate metrics
+                channel_performance = stock_and_mf_buys.groupby('channel').agg({
+                    'invested_amount': 'sum',
+                    'current_value': 'sum',
+                    'unrealized_pnl': 'sum',
+                    'quantity': 'sum'
+                }).reset_index()
+
+                if not channel_performance.empty:
+                    channel_performance['pnl_percentage'] = (channel_performance['unrealized_pnl'] / channel_performance['invested_amount']) * 100
+
+                    # Create channel performance chart
+                    fig_channel = go.Figure()
+                    fig_channel.add_trace(go.Bar(
+                        x=channel_performance['channel'],
+                        y=channel_performance['pnl_percentage'],
+                        marker_color=['green' if x >= 0 else 'red' for x in channel_performance['pnl_percentage']],
+                        text=channel_performance['pnl_percentage'].round(2),
+                        textposition='auto',
+                    ))
+
+                    fig_channel.update_layout(
+                        title="Channel Performance (1-Year)",
+                        xaxis_title="Channel",
+                        yaxis_title="P&L Percentage (%)",
+                        height=400
+                    )
+
+                    st.plotly_chart(fig_channel, config={'displayModeBar': True, 'responsive': True})
+
+                    # Channel performance table
+                    channel_table_data = []
+                    for _, row in channel_performance.iterrows():
+                        channel = row['channel']
+                        value = row['current_value']
+                        # Get channel-specific data
+                        channel_stocks = stock_and_mf_buys[stock_and_mf_buys['channel'] == channel]
+                        channel_count = len(channel_stocks['ticker'].unique())
+                        channel_pnl = channel_stocks['unrealized_pnl'].sum() if 'unrealized_pnl' in channel_stocks.columns else 0
+                        channel_pnl_pct = (channel_pnl / value * 100) if value > 0 else 0
+
+                        channel_table_data.append({
+                            'Channel': channel,
+                            'Holdings': channel_count,
+                            'Invested (₹)': f"{row['invested_amount']:,.2f}",
+                            'Current Value (₹)': f"{value:,.2f}",
+                            'P&L (₹)': f"{channel_pnl:,.2f}",
+                            'P&L %': f"{channel_pnl_pct:.2f}%"
+                        })
+
+                    channel_df = pd.DataFrame(channel_table_data)
+                    st.dataframe(channel_df, use_container_width=True, hide_index=True)
+
+            # Analysis Summary
+            st.subheader("📈 Analysis Summary")
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                total_sectors = len(stock_and_mf_buys['sector'].unique())
+                st.metric("Total Sectors", total_sectors)
+
+            with col2:
+                total_channels = len(stock_and_mf_buys['channel'].unique())
+                st.metric("Total Channels", total_channels)
+
+            with col3:
+                avg_return = stock_performance['pnl_percentage'].mean()
+                avg_arrow = "🔼" if avg_return >= 0 else "🔽"
+                avg_color = "normal" if avg_return >= 0 else "inverse"
+                st.metric("Average Return", f"{avg_arrow} {avg_return:.2f}%", delta_color=avg_color)
+
+            with col4:
+                best_overall = stock_performance['pnl_percentage'].max()
+                best_arrow = "🔼" if best_overall >= 0 else "🔽"
+                best_color = "normal" if best_overall >= 0 else "inverse"
+                st.metric("Best Return", f"{best_arrow} {best_overall:.2f}%", delta_color=best_color)
+        else:
+            st.info("No stock buy transactions found in the last 1 year")
+
+    def render_overall_portfolio_performance(self, df):
+        """Render portfolio overview with general metrics"""
+        from datetime import datetime, timedelta
+
+        st.subheader("📊 Portfolio Overview")
+
         # Debug: Show data summary
         with st.expander("🔍 Debug: Portfolio Data Summary", expanded=False):
             st.info(f"📊 Total transactions loaded: {len(df)}")
@@ -2476,39 +2803,39 @@ class PortfolioAnalytics:
                 st.info(f"💰 Total invested: ₹{df['invested_amount'].sum():,.2f}")
                 st.info(f"💰 Zero invested amounts: {(df['invested_amount'] == 0).sum()}")
             st.dataframe(df.head(10), use_container_width=True)
-        
+
         # Ensure date column is properly formatted as datetime
         if 'date' not in df.columns:
             st.error("Date column not found in portfolio data")
             return
-        
+
         try:
             # Convert date column to datetime if it's not already
             if not pd.api.types.is_datetime64_any_dtype(df['date']):
                 df['date'] = pd.to_datetime(df['date'], errors='coerce')
-            
+
             # Remove rows with invalid dates
             df = df.dropna(subset=['date'])
-            
+
             if df.empty:
                 st.warning("No valid date data available for performance analysis")
                 return
-            
+
             # Performance over time
             st.subheader("📊 Portfolio Performance Over Time")
-            
+
             # Group by date and calculate cumulative performance
             daily_performance = df.groupby(df['date'].dt.date).agg({
                 'invested_amount': 'sum',
             'current_value': 'sum',
                 'unrealized_pnl': 'sum'
         }).reset_index()
-            
+
             daily_performance['cumulative_return'] = (
-                (daily_performance['current_value'] - daily_performance['invested_amount']) / 
+                (daily_performance['current_value'] - daily_performance['invested_amount']) /
                 daily_performance['invested_amount']
             ) * 100
-            
+
             # Performance line chart
             fig_performance = go.Figure()
             fig_performance.add_trace(go.Scatter(
@@ -2518,19 +2845,19 @@ class PortfolioAnalytics:
                 name='Cumulative Return %',
                 line=dict(color='blue', width=3)
             ))
-            
+
             fig_performance.update_layout(
                 title="Portfolio Cumulative Return Over Time",
                 xaxis_title="Date",
                 yaxis_title="Cumulative Return (%)",
                 hovermode='x unified'
             )
-            
+
             st.plotly_chart(fig_performance, config={'displayModeBar': True, 'responsive': True})
-            
+
             # Best Performing Sector and Channel Analysis
             st.subheader("🏆 Best Performing Sector & Channel")
-            
+
             # Sector Performance
             if 'sector' in df.columns and not df['sector'].isna().all():
                 sector_performance = df.groupby('sector').agg({
@@ -2538,67 +2865,67 @@ class PortfolioAnalytics:
                 'current_value': 'sum',
                     'unrealized_pnl': 'sum'
             }).reset_index()
-            
+
                 if not sector_performance.empty:
                     sector_performance['pnl_percentage'] = (sector_performance['unrealized_pnl'] / sector_performance['invested_amount']) * 100
                     sector_performance = sector_performance.sort_values('pnl_percentage', ascending=False)
-        
+
             col1, col2 = st.columns(2)
             with col1:
                         best_sector = sector_performance.iloc[0]
                         best_sector_arrow = "🔼" if best_sector['pnl_percentage'] > 0 else "🔽" if best_sector['pnl_percentage'] < 0 else "➖"
                         best_sector_color = "normal" if best_sector['pnl_percentage'] > 0 else "inverse"
                         st.metric(
-                            "Best Performing Sector", 
-                            f"{best_sector_arrow} {best_sector['sector']}", 
+                            "Best Performing Sector",
+                            f"{best_sector_arrow} {best_sector['sector']}",
                             delta=f"₹{best_sector['unrealized_pnl']:,.2f} ({best_sector['pnl_percentage']:.2f}%)",
                             delta_color=best_sector_color
                         )
-                    
+
             with col2:
-                if len(sector_performance) > 1:
-                    worst_sector = sector_performance.iloc[-1]
-                    worst_sector_arrow = "🔼" if worst_sector['pnl_percentage'] > 0 else "🔽" if worst_sector['pnl_percentage'] < 0 else "➖"
-                    worst_sector_color = "normal" if worst_sector['pnl_percentage'] > 0 else "inverse"
-                    st.metric(
-                        "Worst Performing Sector", 
-                        f"{worst_sector_arrow} {worst_sector['sector']}", 
-                        delta=f"₹{worst_sector['unrealized_pnl']:,.2f} ({worst_sector['pnl_percentage']:.2f}%)",
-                        delta_color=worst_sector_color
-                    )
-            
+                        if len(sector_performance) > 1:
+                            worst_sector = sector_performance.iloc[-1]
+                            worst_sector_arrow = "🔼" if worst_sector['pnl_percentage'] > 0 else "🔽" if worst_sector['pnl_percentage'] < 0 else "➖"
+                            worst_sector_color = "normal" if worst_sector['pnl_percentage'] > 0 else "inverse"
+                            st.metric(
+                                "Worst Performing Sector",
+                                f"{worst_sector_arrow} {worst_sector['sector']}",
+                                delta=f"₹{worst_sector['unrealized_pnl']:,.2f} ({worst_sector['pnl_percentage']:.2f}%)",
+                                delta_color=worst_sector_color
+                            )
+
             # Channel Performance
             if 'channel' in df.columns and not df['channel'].isna().all():
                 channel_performance = df.groupby('channel').agg({
-                    'invested_amount': 'sum',
-                    'current_value': 'sum',
+                'invested_amount': 'sum',
+                'current_value': 'sum',
                     'unrealized_pnl': 'sum'
-                }).reset_index()
-                
+            }).reset_index()
+
                 if not channel_performance.empty:
                     channel_performance['pnl_percentage'] = (channel_performance['unrealized_pnl'] / channel_performance['invested_amount']) * 100
                     channel_performance = channel_performance.sort_values('pnl_percentage', ascending=False)
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
+
+            col1, col2 = st.columns(2)
+            with col1:
                         best_channel = channel_performance.iloc[0]
                         best_channel_arrow = "🔼" if best_channel['pnl_percentage'] > 0 else "🔽" if best_channel['pnl_percentage'] < 0 else "➖"
                         best_channel_color = "normal" if best_channel['pnl_percentage'] > 0 else "inverse"
                         st.metric(
-                            "Best Performing Channel", 
-                            f"{best_channel_arrow} {best_channel['channel']}", 
+                            "Best Performing Channel",
+                            f"{best_channel_arrow} {best_channel['channel']}",
                             delta=f"₹{best_channel['unrealized_pnl']:,.2f} ({best_channel['pnl_percentage']:.2f}%)",
                             delta_color=best_channel_color
                         )
-                    
-                    with col2:
+
+            with col2:
                         if len(channel_performance) > 1:
                             worst_channel = channel_performance.iloc[-1]
                             worst_channel_arrow = "🔼" if worst_channel['pnl_percentage'] > 0 else "🔽" if worst_channel['pnl_percentage'] < 0 else "➖"
                             worst_channel_color = "normal" if worst_channel['pnl_percentage'] > 0 else "inverse"
                             st.metric(
-                                "Worst Performing Channel", 
-                                f"{worst_channel_arrow} {worst_channel['channel']}", 
+                                "Worst Performing Channel",
+                                f"{worst_channel_arrow} {worst_channel['channel']}",
                                 delta=f"₹{worst_channel['unrealized_pnl']:,.2f} ({worst_channel['pnl_percentage']:.2f}%)",
                                 delta_color=worst_channel_color
                             )
@@ -2685,7 +3012,7 @@ class PortfolioAnalytics:
                 for _, row in stock_performance.iterrows():
                     ticker = row['ticker']
                     # Get additional details from original data
-                    ticker_data = stock_buys[stock_buys['ticker'] == ticker].iloc[0]
+                    ticker_data = stock_and_mf_buys[stock_and_mf_buys['ticker'] == ticker].iloc[0]
                     
                     table_row = {
                         'Ticker': ticker,
@@ -2777,7 +3104,7 @@ class PortfolioAnalytics:
                     
                     for _, row in stock_performance.iterrows():
                         ticker = row['ticker']
-                        ticker_transactions = stock_buys[stock_buys['ticker'] == ticker].copy()
+                        ticker_transactions = stock_and_mf_buys[stock_and_mf_buys['ticker'] == ticker].copy()
                         
                         # Convert date to datetime if it's not already
                         if not pd.api.types.is_datetime64_any_dtype(ticker_transactions['date']):
@@ -3058,7 +3385,7 @@ class PortfolioAnalytics:
                             sector = row['sector']
                             value = row['current_value']
                             # Get sector-specific data
-                            sector_stocks = stock_buys[stock_buys['sector'] == sector]
+                            sector_stocks = stock_and_mf_buys[stock_and_mf_buys['sector'] == sector]
                             sector_count = len(sector_stocks['ticker'].unique())
                             sector_pnl = sector_stocks['unrealized_pnl'].sum() if 'unrealized_pnl' in sector_stocks.columns else 0
                             sector_pnl_pct = (sector_pnl / value * 100) if value > 0 else 0
@@ -3093,7 +3420,7 @@ class PortfolioAnalytics:
                             channel = row['channel']
                             value = row['current_value']
                             # Get channel-specific data
-                            channel_stocks = stock_buys[stock_buys['channel'] == channel]
+                            channel_stocks = stock_and_mf_buys[stock_and_mf_buys['channel'] == channel]
                             channel_count = len(channel_stocks['ticker'].unique())
                             channel_pnl = channel_stocks['unrealized_pnl'].sum() if 'unrealized_pnl' in channel_stocks.columns else 0
                             channel_pnl_pct = (channel_pnl / value * 100) if value > 0 else 0
@@ -3191,11 +3518,11 @@ class PortfolioAnalytics:
                     best_stocks_by_sector = []
                     sector_ratings = []
                     
-                    for sector in stock_buys['sector'].unique():
+                    for sector in stock_and_mf_buys['sector'].unique():
                         if pd.isna(sector) or sector == 'Unknown':
                             continue
                             
-                        sector_stocks = stock_buys[stock_buys['sector'] == sector]
+                        sector_stocks = stock_and_mf_buys[stock_and_mf_buys['sector'] == sector]
                         
                         # Group by ticker within sector
                         sector_ticker_perf = sector_stocks.groupby('ticker').agg({
@@ -3344,11 +3671,11 @@ class PortfolioAnalytics:
                     best_stocks_by_channel = []
                     channel_ratings = []
                     
-                    for channel in stock_buys['channel'].unique():
+                    for channel in stock_and_mf_buys['channel'].unique():
                         if pd.isna(channel) or channel == 'Unknown':
                             continue
                             
-                        channel_stocks = stock_buys[stock_buys['channel'] == channel]
+                        channel_stocks = stock_and_mf_buys[stock_and_mf_buys['channel'] == channel]
                         
                         # Group by ticker within channel
                         channel_ticker_perf = channel_stocks.groupby('ticker').agg({
@@ -3482,11 +3809,11 @@ class PortfolioAnalytics:
                     col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
-                        total_sectors = len(stock_buys['sector'].unique())
+                        total_sectors = len(stock_and_mf_buys['sector'].unique())
                         st.metric("Total Sectors", total_sectors)
                     
                     with col2:
-                        total_channels = len(stock_buys['channel'].unique())
+                        total_channels = len(stock_and_mf_buys['channel'].unique())
                         st.metric("Total Channels", total_channels)
                     
                     with col3:
