@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
+import time
 import warnings
 import openai
 import json
@@ -1681,21 +1682,22 @@ class PortfolioAnalytics:
                             print(f"💡 Try installing: pip install mftool yfinance pandas")
                             live_price = None
                             sector = "Mutual Fund"
-                except Exception as e:
-                    print(f"⚠️ MF {ticker}: get_mutual_fund_price_and_category failed: {e}")
-                    print(f"💡 This might be due to missing dependencies. Try: pip install mftool beautifulsoup4 html5lib")
-                    # For mutual funds, use transaction price as fallback (they don't have market prices like stocks)
-                    live_price = pms_trans['price'] if 'pms_trans' in locals() and pms_trans['price'] else None
-                    if live_price:
-                        print(f"✅ MF {ticker}: Using transaction price as fallback - ₹{live_price}")
+                        except Exception as e:
+                            print(f"⚠️ MF {ticker}: get_mutual_fund_price_and_category failed: {e}")
+                            print(f"💡 This might be due to missing dependencies. Try: pip install mftool beautifulsoup4 html5lib")
+                            # For mutual funds, use transaction price as fallback (they don't have market prices like stocks)
+                            live_price = pms_trans['price'] if 'pms_trans' in locals() and pms_trans['price'] else None
+                            if live_price:
+                                print(f"✅ MF {ticker}: Using transaction price as fallback - ₹{live_price}")
+                            else:
+                                print(f"⚠️ MF {ticker}: No transaction price available, skipping")
+                                live_price = None
+                            sector = "Mutual Fund"
+                    
                     else:
-                        print(f"⚠️ MF {ticker}: No transaction price available, skipping")
-                        live_price = None
-                    sector = "Mutual Fund"
-
-                        # Unknown ticker type or stock ticker - try yfinance as last resort
-                    print(f"🔍 {ticker}: Unknown ticker type, trying yfinance as last resort")
-                    try:
+                        # Unknown ticker type or stock ticker - try yfinance
+                        print(f"🔍 {ticker}: Stock ticker, fetching from yfinance")
+                        try:
                             live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
 
                             print(f"🔍 DEBUG: {ticker} -> live_price={live_price}, sector={sector}, market_cap={market_cap}")
@@ -1779,12 +1781,17 @@ class PortfolioAnalytics:
                                 else:
                                     sector = 'Other Stocks'
 
-                    except Exception as e:
+                        except Exception as e:
                             print(f"⚠️ {ticker}: yfinance fallback failed: {e}")
                             live_price = None
                             sector = 'Unknown'
+                
+                except Exception as e:
+                    print(f"❌ Error processing {ticker}: {e}")
+                    consecutive_failures += 1
+                    continue
 
-            print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
+                print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
             if live_price and live_price > 0:
                 live_prices[ticker] = live_price
                 sectors[ticker] = sector
