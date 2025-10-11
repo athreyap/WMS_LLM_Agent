@@ -247,6 +247,8 @@ class PortfolioAnalytics:
     
     def authenticate_user(self, username, password):
         """Authenticate user and initialize session"""
+        from datetime import datetime
+
         try:
             # Get user (case-insensitive lookup handled by database function)
             user = get_user_by_username_supabase(username.strip())
@@ -960,6 +962,8 @@ class PortfolioAnalytics:
         - Derives monthly from weekly data
         - Smart detection of missing data
         """
+        from datetime import datetime, timedelta
+
         try:
             # Get transactions for the user
             transactions = get_transactions_supabase(user_id)
@@ -1473,6 +1477,8 @@ class PortfolioAnalytics:
     
     def load_portfolio_data(self, user_id):
         """Load and process portfolio data"""
+        from datetime import datetime
+
         try:
             transactions = get_transactions_supabase(user_id=user_id)
             if not transactions:
@@ -2226,8 +2232,10 @@ class PortfolioAnalytics:
     
     def render_overview_page(self):
         """Render portfolio overview with key metrics"""
+        from datetime import datetime
+
         st.header("🏠 Portfolio Overview")
-        
+
         # Add refresh notification
         if hasattr(self.session_state, 'last_refresh_time'):
             time_since_refresh = (datetime.now() - self.session_state.last_refresh_time).total_seconds() / 60
@@ -2416,13 +2424,15 @@ class PortfolioAnalytics:
     
     def render_performance_page(self):
         """Render performance analysis charts"""
+        from datetime import datetime, timedelta
+
         st.header("📈 Performance Analysis")
-        
+
         if self.session_state.portfolio_data is None:
             self.show_page_loading_animation("Performance Analysis")
             st.info("💡 **Tip:** If this page doesn't load automatically, use the '🔄 Refresh Portfolio Data' button in Settings.")
             return
-        
+
         df = self.session_state.portfolio_data
         
         # Debug: Show data summary
