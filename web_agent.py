@@ -427,7 +427,14 @@ class PortfolioAnalytics:
             
             # Convert date to datetime
             df['date'] = pd.to_datetime(df['date'], errors='coerce')
-            df = df.dropna(subset=['date'])
+            
+            # Fill invalid dates with today's date as fallback (to avoid dropping rows)
+            invalid_dates = df['date'].isna().sum()
+            if invalid_dates > 0:
+                from datetime import datetime
+                df['date'] = df['date'].fillna(pd.Timestamp(datetime.now().date()))
+                st.warning(f"⚠️ {invalid_dates} rows had invalid dates - using current date as fallback")
+            
             st.info(f"📅 Dates processed: {len(df)} rows with valid dates")
             
             # Standardize transaction types
@@ -441,9 +448,14 @@ class PortfolioAnalytics:
                 'sale': 'sell'
             })
             
-            # Filter valid transaction types
-            df = df[df['transaction_type'].isin(['buy', 'sell'])]
-            st.info(f"💼 Transaction types filtered: {len(df)} valid transactions")
+            # For rows with unrecognized transaction types, default to 'buy' (to avoid dropping rows)
+            invalid_types = ~df['transaction_type'].isin(['buy', 'sell'])
+            invalid_count = invalid_types.sum()
+            if invalid_count > 0:
+                df.loc[invalid_types, 'transaction_type'] = 'buy'
+                st.warning(f"⚠️ {invalid_count} rows had invalid transaction types - defaulting to 'buy'")
+            
+            st.info(f"💼 Transaction types standardized: {len(df)} valid transactions")
             
             if df.empty:
                 st.warning(f"⚠️ No valid transactions found in {uploaded_file.name}")
@@ -1792,34 +1804,34 @@ class PortfolioAnalytics:
                     continue
 
                 print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
-            if live_price and live_price > 0:
-                live_prices[ticker] = live_price
-                sectors[ticker] = sector
-                successful_fetches += 1
-                consecutive_failures = 0
-                print(f"✅ STORED: {ticker} -> ₹{live_price}")
-                
-                # 💾 SAVE TO DATABASE (Critical fix - persist prices across sessions)
-                try:
-                    from database_config_supabase import save_stock_price_supabase
-                    today = datetime.now().strftime('%Y-%m-%d')
+                if live_price and live_price > 0:
+                    live_prices[ticker] = live_price
+                    sectors[ticker] = sector
+                    successful_fetches += 1
+                    consecutive_failures = 0
+                    print(f"✅ STORED: {ticker} -> ₹{live_price}")
                     
-                    # Save live price to database
-                    save_stock_price_supabase(ticker, today, live_price, 'live_fetch')
-                    
-                    # Update stock_data with latest metadata (using actual columns)
-                    update_stock_data_supabase(
-                        ticker=ticker,
-                        sector=sector or "Unknown",
-                        current_price=live_price  # Maps to live_price column
-                    )
-                    print(f"💾 Saved {ticker} to database (price + metadata)")
-                except Exception as db_error:
-                    print(f"⚠️ Could not save {ticker} to DB: {db_error}")
-                    # Continue anyway - at least we have it in session
-            else:
-                consecutive_failures += 1
-                print(f"❌ SKIPPED: {ticker} - invalid price or sector")
+                    # 💾 SAVE TO DATABASE (Critical fix - persist prices across sessions)
+                    try:
+                        from database_config_supabase import save_stock_price_supabase
+                        today = datetime.now().strftime('%Y-%m-%d')
+                        
+                        # Save live price to database
+                        save_stock_price_supabase(ticker, today, live_price, 'live_fetch')
+                        
+                        # Update stock_data with latest metadata (using actual columns)
+                        update_stock_data_supabase(
+                            ticker=ticker,
+                            sector=sector or "Unknown",
+                            current_price=live_price  # Maps to live_price column
+                        )
+                        print(f"💾 Saved {ticker} to database (price + metadata)")
+                    except Exception as db_error:
+                        print(f"⚠️ Could not save {ticker} to DB: {db_error}")
+                        # Continue anyway - at least we have it in session
+                else:
+                    consecutive_failures += 1
+                    print(f"❌ SKIPPED: {ticker} - invalid price or sector")
 
 
             

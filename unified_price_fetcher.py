@@ -49,13 +49,13 @@ def get_mutual_fund_price_and_category(ticker: str, clean_ticker: str, user_id: 
                         closest_price = date_diffs[0][1]
                         closest_days = date_diffs[0][0]
                         
-                        if closest_days <= 30:  # Accept prices within 30 days
+                        if closest_days <= 90:  # Accept prices within 90 days (expanded window)
                             price = closest_price
                             print(f"✅ MF {ticker}: Historical price ₹{price} for {target_date} (closest: {closest_days} days) from transaction data")
                             print(f"   📊 Found in database: Target: {target_date} → Closest: {closest_days} days → Price: ₹{price}")
                             return price, category
                         else:
-                            print(f"⚠️ MF {ticker}: No transaction price within 30 days of {target_date}")
+                            print(f"⚠️ MF {ticker}: No transaction price within 90 days of {target_date}")
                             print(f"   📊 Closest available: {closest_days} days away (too far for accurate pricing)")
                 else:
                     # For live prices, DO NOT use transaction prices - fetch current NAV from mftool
@@ -88,9 +88,9 @@ def get_mutual_fund_price_and_category(ticker: str, clean_ticker: str, user_id: 
                     # For historical prices, try mftool history method
                     try:
                         target_dt = pd.to_datetime(target_date)
-                        # Get data for a range around the target date (5 days as requested)
-                        start_date = target_dt - pd.Timedelta(days=5)
-                        end_date = target_dt + pd.Timedelta(days=5)
+                        # Get data for a range around the target date (expanded to 90 days)
+                        start_date = target_dt - pd.Timedelta(days=90)
+                        end_date = target_dt + pd.Timedelta(days=90)
                         
                         # Get historical NAV data using the working method
                         hist_data = mf.get_scheme_historical_nav(scheme_code, as_Dataframe=True)
@@ -99,9 +99,9 @@ def get_mutual_fund_price_and_category(ticker: str, clean_ticker: str, user_id: 
                             # Convert date column to datetime with proper format handling
                             hist_data['date'] = pd.to_datetime(hist_data.index, format='%d-%m-%Y', dayfirst=True)
                             
-                            # Filter data within 5 days range (as requested)
-                            start_date = target_dt - pd.Timedelta(days=5)
-                            end_date = target_dt + pd.Timedelta(days=5)
+                            # Filter data within 90 days range (expanded)
+                            start_date = target_dt - pd.Timedelta(days=90)
+                            end_date = target_dt + pd.Timedelta(days=90)
                             
                             # Filter data for the date range
                             range_data = hist_data[(hist_data['date'] >= start_date) & (hist_data['date'] <= end_date)].copy()
@@ -113,7 +113,7 @@ def get_mutual_fund_price_and_category(ticker: str, clean_ticker: str, user_id: 
                                 closest_nav = range_data.loc[closest_idx, 'nav']
                                 closest_days = range_data.loc[closest_idx, 'days_diff']
                             
-                            if closest_days <= 5:  # Accept NAV within 5 days
+                            if closest_days <= 90:  # Accept NAV within 90 days (expanded)
                                 price = float(closest_nav)
                                 print(f"✅ MF {ticker}: Historical NAV ₹{price} for {target_date} (closest: {closest_days} days) from mftool")
                                 print(f"   📊 Mftool Historical: Target: {target_date} → Closest: {closest_days} days → NAV: ₹{price}")
@@ -129,7 +129,7 @@ def get_mutual_fund_price_and_category(ticker: str, clean_ticker: str, user_id: 
                                 
                                 return price, category
                             else:
-                                print(f"⚠️ MF {ticker}: No NAV data within 5 days of {target_date}")
+                                print(f"⚠️ MF {ticker}: No NAV data within 90 days of {target_date}")
                                 print(f"   📊 Closest available: {closest_days} days away (too far for accurate NAV)")
                         else:
                             print(f"⚠️ MF {ticker}: No historical NAV data available for date range")
@@ -298,9 +298,9 @@ def get_mutual_fund_price(ticker: str, clean_ticker: str, user_id: int, target_d
                     # For historical prices, try mftool history method
                     try:
                         target_dt = pd.to_datetime(target_date)
-                        # Get data for a range around the target date (5 days as requested)
-                        start_date = target_dt - pd.Timedelta(days=5)
-                        end_date = target_dt + pd.Timedelta(days=5)
+                        # Get data for a range around the target date (expanded to 90 days)
+                        start_date = target_dt - pd.Timedelta(days=90)
+                        end_date = target_dt + pd.Timedelta(days=90)
                         
                         # Get historical NAV data using the working method
                         hist_data = mf.get_scheme_historical_nav(scheme_code, as_Dataframe=True)
@@ -309,9 +309,9 @@ def get_mutual_fund_price(ticker: str, clean_ticker: str, user_id: int, target_d
                             # Convert date column to datetime with proper format handling
                             hist_data['date'] = pd.to_datetime(hist_data.index, format='%d-%m-%Y', dayfirst=True)
                             
-                            # Filter data within 5 days range (as requested)
-                            start_date = target_dt - pd.Timedelta(days=5)
-                            end_date = target_dt + pd.Timedelta(days=5)
+                            # Filter data within 90 days range (expanded)
+                            start_date = target_dt - pd.Timedelta(days=90)
+                            end_date = target_dt + pd.Timedelta(days=90)
                             
                             # Filter data for the date range
                             range_data = hist_data[(hist_data['date'] >= start_date) & (hist_data['date'] <= end_date)].copy()
@@ -566,8 +566,8 @@ def get_stock_price(ticker: str, clean_ticker: str, target_date: str = None) -> 
             if target_dt.tz is not None:
                 target_dt = target_dt.tz_localize(None)
             
-            start_date = target_dt - pd.Timedelta(days=30)
-            end_date = target_dt + pd.Timedelta(days=30)
+            start_date = target_dt - pd.Timedelta(days=90)
+            end_date = target_dt + pd.Timedelta(days=90)
             
             hist_ns = stock_ns.history(start=start_date, end=end_date)
             if not hist_ns.empty:
@@ -579,12 +579,12 @@ def get_stock_price(ticker: str, clean_ticker: str, target_date: str = None) -> 
                 closest_price = hist_ns.loc[closest_idx, 'Close']
                 closest_days = hist_ns.loc[closest_idx, 'days_diff']
                 
-                if closest_days <= 30 and closest_price > 0:  # Accept prices within 30 days
+                if closest_days <= 90 and closest_price > 0:  # Accept prices within 90 days
                     print(f"✅ {ticker}: Historical price ₹{closest_price} for {target_date} (closest: {closest_days} days) from yfinance (.NS)")
                     print(f"   📊 YFinance (.NS): Target: {target_date} → Closest: {closest_days} days → Price: ₹{closest_price}")
                     return closest_price
                 else:
-                    print(f"⚠️ {ticker}: No price data within 30 days of {target_date} from yfinance (.NS)")
+                    print(f"⚠️ {ticker}: No price data within 90 days of {target_date} from yfinance (.NS)")
                     print(f"   📊 Closest available: {closest_days} days away (too far for accurate pricing)")
             else:
                 print(f"⚠️ {ticker}: No historical data available for {target_date} from yfinance (.NS)")
@@ -613,12 +613,12 @@ def get_stock_price(ticker: str, clean_ticker: str, target_date: str = None) -> 
                     closest_price = hist_bo.loc[closest_idx, 'Close']
                     closest_days = hist_bo.loc[closest_idx, 'days_diff']
                     
-                    if closest_days <= 30 and closest_price > 0:  # Accept prices within 30 days
+                    if closest_days <= 90 and closest_price > 0:  # Accept prices within 90 days
                         print(f"✅ {ticker}: Historical price ₹{closest_price} for {target_date} (closest: {closest_days} days) from yfinance (.BO)")
                         print(f"   📊 YFinance (.BO): Target: {target_date} → Closest: {closest_days} days → Price: ₹{closest_price}")
                         return closest_price
                     else:
-                        print(f"⚠️ {ticker}: No price data within 30 days of {target_date} from yfinance (.BO)")
+                        print(f"⚠️ {ticker}: No price data within 90 days of {target_date} from yfinance (.BO)")
                         print(f"   📊 Closest available: {closest_days} days away (too far for accurate pricing)")
                 else:
                     print(f"⚠️ {ticker}: No historical data available for {target_date} from yfinance (.BO)")
