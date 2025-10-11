@@ -3707,218 +3707,11 @@ class PortfolioAnalytics:
             st.info("No stock buy transactions found in the last 1 year")
 
     def render_overall_portfolio_performance(self, df):
-        """Render overall portfolio performance and monthly transaction analysis"""
-        from datetime import datetime, timedelta
+        """Render comprehensive overall portfolio performance metrics and analysis"""
         import plotly.express as px
         import plotly.graph_objects as go
-
-        st.subheader("📋 Overall Portfolio Performance")
-
-        # Monthly Transaction Analysis (1-Year)
-        st.subheader("📅 Monthly Transaction Analysis (1-Year)")
-
-        # Filter transactions within the last year
-        one_year_ago = datetime.now() - timedelta(days=365)
-        recent_transactions = df[df['date'] >= one_year_ago].copy()
-
-        if not recent_transactions.empty:
-            # Create monthly aggregations
-            monthly_data = recent_transactions.groupby([
-                recent_transactions['date'].dt.to_period('M'),
-                'transaction_type'
-            ]).agg({
-                'invested_amount': 'sum',
-                'quantity': 'sum'
-            }).reset_index()
-
-            # Pivot to get buy and sell in separate columns
-            monthly_pivot = monthly_data.pivot(
-                index='date',
-                columns='transaction_type',
-                values=['invested_amount', 'quantity']
-            ).fillna(0)
-
-            # Flatten column names
-            monthly_pivot.columns = [f"{col[1]}_{col[0]}" for col in monthly_pivot.columns]
-            monthly_pivot = monthly_pivot.reset_index()
-
-            # Create two columns for charts
-            col1, col2 = st.columns(2)
-
-            with col1:
-                # Buy vs Sell Chart
-                fig_monthly = go.Figure()
-
-                # Add bars for buy and sell
-                fig_monthly.add_trace(go.Bar(
-                    x=monthly_pivot['date'].astype(str),
-                    y=monthly_pivot.get('buy_invested_amount', [0] * len(monthly_pivot)),
-                    name='Buy Value',
-                    marker_color='green',
-                    opacity=0.7
-                ))
-
-                fig_monthly.add_trace(go.Bar(
-                    x=monthly_pivot['date'].astype(str),
-                    y=monthly_pivot.get('sell_invested_amount', [0] * len(monthly_pivot)),
-                    name='Sell Value',
-                    marker_color='red',
-                    opacity=0.7
-                ))
-
-                fig_monthly.update_layout(
-                    title="Monthly Buy vs Sell Activity",
-                    xaxis_title="Month",
-                    yaxis_title="Amount (₹)",
-                    barmode='stack',
-                    height=400
-                )
-
-                st.plotly_chart(fig_monthly, config={'displayModeBar': True, 'responsive': True})
-
-            with col2:
-                # Net Flow Chart
-                fig_net = go.Figure()
-
-                # Calculate net flow
-                monthly_pivot['net_flow'] = monthly_pivot.get('buy_invested_amount', 0) - monthly_pivot.get('sell_invested_amount', 0)
-
-                colors = ['green' if x >= 0 else 'red' for x in monthly_pivot['net_flow']]
-                fig_net.add_trace(go.Bar(
-                    x=monthly_pivot['date'].astype(str),
-                    y=monthly_pivot['net_flow'],
-                    marker_color=colors,
-                    name='Net Flow',
-                    opacity=0.7
-                ))
-
-                fig_net.update_layout(
-                    title="Monthly Net Flow (Buy - Sell)",
-                    xaxis_title="Month",
-                    yaxis_title="Net Flow (₹)",
-                    height=400
-                )
-
-                # Add horizontal line at zero
-                fig_net.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.5)
-
-                st.plotly_chart(fig_net, config={'displayModeBar': True, 'responsive': True})
-
-            # Monthly Analysis Summary
-            st.subheader("📊 Monthly Analysis Summary")
-
-            # Calculate summary statistics
-            total_buy_value = monthly_pivot['buy_invested_amount'].sum() if 'buy_invested_amount' in monthly_pivot.columns else 0
-            total_sell_value = monthly_pivot['sell_invested_amount'].sum() if 'sell_invested_amount' in monthly_pivot.columns else 0
-            total_net_flow = total_buy_value - total_sell_value
-
-            col1, col2, col3, col4 = st.columns(4)
-
-            with col1:
-                st.metric(
-                    "Total Buy Value",
-                    f"₹{total_buy_value:,.2f}",
-                    help="Total value of buy transactions in the last year"
-                )
-
-            with col2:
-                st.metric(
-                    "Total Sell Value",
-                    f"₹{total_sell_value:,.2f}",
-                    help="Total value of sell transactions in the last year"
-                )
-
-            with col3:
-                st.metric(
-                    "Net Flow",
-                    f"₹{total_net_flow:,.2f}",
-                    delta=f"{'Positive' if total_net_flow > 0 else 'Negative' if total_net_flow < 0 else 'Neutral'}",
-                    delta_color="normal" if total_net_flow > 0 else "inverse" if total_net_flow < 0 else "off",
-                    help="Net flow (Buy - Sell) in the last year"
-                )
-
-            with col4:
-                avg_monthly_flow = total_net_flow / len(monthly_pivot) if len(monthly_pivot) > 0 else 0
-                st.metric(
-                    "Avg Monthly Flow",
-                    f"₹{avg_monthly_flow:,.2f}",
-                    help="Average monthly net flow"
-                )
-
-            # Trading Pattern Analysis
-            st.subheader("🔍 Trading Pattern Analysis")
-
-            if len(monthly_pivot) > 1:
-                # Calculate volatility (standard deviation of net flow)
-                net_flow_std = monthly_pivot['net_flow'].std()
-
-                # Find most active month
-                if 'buy_invested_amount' in monthly_pivot.columns and 'sell_invested_amount' in monthly_pivot.columns:
-                    monthly_pivot['total_activity'] = monthly_pivot['buy_invested_amount'] + monthly_pivot['sell_invested_amount']
-                    most_active_month = monthly_pivot.loc[monthly_pivot['total_activity'].idxmax()]
-
-                    # Determine trading pattern
-                    if net_flow_std < total_net_flow * 0.1:  # Low volatility relative to total
-                        pattern = "Consistent Investor"
-                        description = "You maintain steady investment patterns with low month-to-month variation."
-                    elif total_buy_value > total_sell_value * 2:
-                        pattern = "Accumulating Investor"
-                        description = "You're primarily buying, indicating a focus on building positions."
-                    elif total_sell_value > total_buy_value * 2:
-                        pattern = "Realizing Investor"
-                        description = "You're primarily selling, indicating profit-taking or portfolio rebalancing."
-                    else:
-                        pattern = "Active Trader"
-                        description = "You have a balanced approach with both buying and selling activity."
-
-                    col1, col2 = st.columns([1, 2])
-                    with col1:
-                        st.info(f"**Trading Pattern:** {pattern}")
-                    with col2:
-                        st.write(description)
-
-            # Monthly breakdown table
-            st.subheader("📋 Monthly Breakdown")
-
-            # Prepare data for display
-            display_data = monthly_pivot.copy()
-            display_data['date'] = display_data['date'].astype(str)
-
-            # Rename columns for better display
-            column_mapping = {
-                'buy_invested_amount': 'Buy Value (₹)',
-                'sell_invested_amount': 'Sell Value (₹)',
-                'net_flow': 'Net Flow (₹)',
-                'buy_quantity': 'Buy Quantity',
-                'sell_quantity': 'Sell Quantity'
-            }
-
-            display_data = display_data.rename(columns=column_mapping)
-
-            # Format currency columns
-            for col in display_data.columns:
-                if 'Value' in col or 'Flow' in col:
-                    display_data[col] = display_data[col].apply(lambda x: f"₹{x:,.2f}")
-
-            st.dataframe(
-                display_data,
-                use_container_width=True,
-                hide_index=True
-            )
-
-        else:
-            st.info("No transactions found in the last year")
-
-        # Recent transactions section (moved from overview)
-        st.subheader("📋 Recent Transactions")
-        recent_transactions = df.sort_values('date', ascending=False).head(10)
-        st.dataframe(
-            recent_transactions[['date', 'ticker', 'quantity', 'price', 'live_price', 'unrealized_pnl']],
-            width='stretch'
-        )
-
-    def render_overall_portfolio_performance(self, df):
-        """Render comprehensive overall portfolio performance metrics and analysis"""
+        from datetime import datetime, timedelta
+        
         st.subheader("📊 Overall Portfolio Performance")
         
         try:
@@ -9442,11 +9235,20 @@ You can also suggest creating charts/graphs based on this data."""
                 )
             )
             
-            # Display chart with unique key including context and timestamp
+            # Display chart with unique key including context, timestamp, and random component
+            import time
+            import random
             tickers_str = '_'.join(sorted(tickers_with_data[:5]))
-            # Create a hash to ensure unique keys even with same tickers in different contexts
-            unique_hash = hashlib.md5(f"{context}_{tickers_str}_{len(tickers_with_data)}".encode()).hexdigest()[:8]
+            # Create a highly unique hash combining multiple factors
+            timestamp = str(time.time())
+            random_component = str(random.randint(1000, 9999))
+            unique_string = f"{context}_{tickers_str}_{len(tickers_with_data)}_{timestamp}_{random_component}"
+            unique_hash = hashlib.md5(unique_string.encode()).hexdigest()[:12]
             chart_key = f"weekly_chart_{context}_{unique_hash}"
+            
+            # Debug log
+            print(f"🔑 Generated chart key: {chart_key}")
+            
             st.plotly_chart(fig, use_container_width=True, key=chart_key)
             
             # Display statistics for each ticker
@@ -9592,7 +9394,12 @@ You can also suggest creating charts/graphs based on this data."""
                                 showlegend=False
                             )
                             
-                            st.plotly_chart(fig, use_container_width=True, key=f"pms_aif_progression_{row['ticker']}")
+                            # Generate unique key with timestamp
+                            import time
+                            import random
+                            unique_suffix = f"{time.time()}_{random.randint(1000,9999)}"
+                            chart_key = f"pms_aif_progression_{row['ticker']}_{unique_suffix}"
+                            st.plotly_chart(fig, use_container_width=True, key=chart_key)
                     
                     st.markdown("---")
                     st.caption("💡 Values are estimated based on fund manager reports and may not reflect exact real-time NAV")
@@ -9623,7 +9430,12 @@ You can also suggest creating charts/graphs based on this data."""
                     showlegend=False
                 )
                 
-                st.plotly_chart(fig_compare, use_container_width=True, key="pms_aif_comparison_bar")
+                # Generate unique key with timestamp
+                import time
+                import random
+                unique_suffix = f"{time.time()}_{random.randint(1000,9999)}"
+                chart_key = f"pms_aif_comparison_bar_{unique_suffix}"
+                st.plotly_chart(fig_compare, use_container_width=True, key=chart_key)
         
         except Exception as e:
             st.error(f"Error rendering PMS/AIF summary: {e}")
