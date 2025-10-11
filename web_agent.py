@@ -4701,6 +4701,34 @@ class PortfolioAnalytics:
                         st.json(df.columns.tolist())
                     return
                 
+                # Check if all sectors are Unknown
+                valid_sectors = df[~df['sector'].isin(['Unknown', '', None])]['sector'].dropna()
+                if len(valid_sectors) == 0:
+                    st.warning("⚠️ No sector information available - all holdings show as 'Unknown'")
+                    st.info("💡 Please use the '🔄 Refresh Portfolio Data' button in Settings to fetch sector information.")
+                    
+                    # Show breakdown by ticker instead
+                    st.subheader("📊 Holdings Breakdown (Without Sectors)")
+                    holdings_summary = df.groupby('ticker').agg({
+                        'stock_name': 'first',
+                        'invested_amount': 'sum',
+                        'current_value': 'sum',
+                        'unrealized_pnl': 'sum'
+                    }).reset_index()
+                    holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
+                    holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
+                    
+                    st.dataframe(
+                        holdings_summary.style.format({
+                            'invested_amount': '₹{:,.0f}',
+                            'current_value': '₹{:,.0f}',
+                            'unrealized_pnl': '₹{:,.0f}',
+                            'pnl_percentage': '{:.2f}%'
+                        }),
+                        use_container_width=True
+                    )
+                    return
+                
                 # Group by sector (exclude Unknown if there are other sectors)
                 sector_data = df.groupby('sector').agg({
                     'invested_amount': 'sum',
@@ -4853,6 +4881,34 @@ class PortfolioAnalytics:
             try:
                 if 'channel' not in df.columns or df['channel'].isna().all():
                     st.warning("Channel information not available")
+                    return
+                
+                # Check if all channels are Unknown or empty
+                valid_channels = df[~df['channel'].isin(['Unknown', '', None])]['channel'].dropna()
+                if len(valid_channels) == 0:
+                    st.warning("⚠️ No channel information available - all holdings show as 'Unknown'")
+                    st.info("💡 Channels are set from the CSV file's 'channel' column. Please ensure your CSV has channel information.")
+                    
+                    # Show breakdown by ticker instead
+                    st.subheader("📊 Holdings Breakdown (Without Channels)")
+                    holdings_summary = df.groupby('ticker').agg({
+                        'stock_name': 'first',
+                        'invested_amount': 'sum',
+                        'current_value': 'sum',
+                        'unrealized_pnl': 'sum'
+                    }).reset_index()
+                    holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
+                    holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
+                    
+                    st.dataframe(
+                        holdings_summary.style.format({
+                            'invested_amount': '₹{:,.0f}',
+                            'current_value': '₹{:,.0f}',
+                            'unrealized_pnl': '₹{:,.0f}',
+                            'pnl_percentage': '{:.2f}%'
+                        }),
+                        use_container_width=True
+                    )
                     return
                 
                 # Group by channel
