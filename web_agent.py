@@ -943,29 +943,17 @@ class PortfolioAnalytics:
             if success:
                 st.success(f"✅ Saved {len(df)} transactions to database")
                 
-                # STEP 1: Fetch and cache historical prices for transaction dates (saves to DB)
-                st.info("🔄 Caching historical prices for transaction dates...")
-                try:
-                    self.cache_transaction_historical_prices(df, user_id)
-                    st.success("✅ Transaction historical prices cached!")
-                except Exception as e:
-                    st.warning(f"⚠️ Historical price caching had warnings: {e}")
-                
-                # STEP 2: Fetch and cache weekly prices for all tickers (saves to DB)
-                st.info("🔄 Building weekly price cache for holdings...")
-                try:
-                    self.cache_weekly_prices_for_file(df, user_id)
-                    st.success("✅ Weekly price cache built!")
-                except Exception as e:
-                    st.warning(f"⚠️ Weekly price caching had warnings: {e}")
-                
-                # STEP 3: Fetch live prices and sectors for new tickers (saves to DB)
+                # Fetch live prices and sectors for new tickers (saves to DB)
                 st.info("🔄 Fetching live prices and sectors for new tickers...")
                 try:
                     self.fetch_live_prices_and_sectors(user_id)
                     st.success("✅ Live prices and sectors updated successfully!")
                 except Exception as e:
                     st.warning(f"⚠️ Live price update had warnings: {e}")
+                
+                # Note: Historical and weekly price caching is done automatically 
+                # during portfolio data loading and refresh operations
+                st.info("💡 Price history will be cached when you refresh portfolio data in Settings")
                 
                 # STEP 4: Refresh portfolio data to include new transactions
                 st.info("🔄 Refreshing portfolio data...")
