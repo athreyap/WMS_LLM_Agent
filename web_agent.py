@@ -1821,7 +1821,11 @@ class PortfolioAnalytics:
                             # If no sector from yfinance, try to get it from stock data table
                             if not sector or sector == 'Unknown':
                                 stock_data = get_stock_data_supabase(ticker)
-                                sector = stock_data.get('sector', None) if stock_data else None
+                                # get_stock_data_supabase returns a list, get first item if available
+                                if stock_data and isinstance(stock_data, list) and len(stock_data) > 0:
+                                    sector = stock_data[0].get('sector', None)
+                                else:
+                                    sector = None
 
                                 # If still no sector, try to fetch it from stock_data_agent
                                 if not sector or sector == 'Unknown':
@@ -1873,8 +1877,6 @@ class PortfolioAnalytics:
                             print(f"⚠️ {ticker}: yfinance fallback failed: {e}")
                             live_price = None
                             sector = 'Unknown'
-                    consecutive_failures += 1
-                    continue
                 except Exception as e:
                     print(f"⚠️ {ticker}: failed: {e}")
                     live_price = None
