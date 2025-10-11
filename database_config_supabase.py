@@ -1444,7 +1444,11 @@ def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_
             print(f"   Saved data: {result.data[0]}")
             return True
         else:
-            print(f"⚠️ Save returned no data for {ticker} on {price_date} - result: {result}")
+            print(f"⚠️ Save returned no data for {ticker} on {price_date}")
+            print(f"   Result object: {result}")
+            print(f"   Result.data: {result.data}")
+            print(f"   Result.data type: {type(result.data)}")
+            print(f"   Result.data length: {len(result.data) if result.data else 'None'}")
             return False
 
     except Exception as e:

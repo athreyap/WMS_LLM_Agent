@@ -730,12 +730,19 @@ class PortfolioAnalytics:
                     if save_result:
                         print(f"✅ Saved {ticker} price for {target_date_str} to database")
 
-                        # Verify the save by reading it back immediately
-                        verify_price = get_stock_price_supabase(ticker, target_date_str)
-                        if verify_price and abs(float(verify_price) - price) < 0.01:  # Allow small floating point differences
-                            print(f"✅ Verification successful: {ticker} {target_date_str} saved correctly")
-                        else:
-                            print(f"⚠️ Verification failed: {ticker} {target_date_str} not found after save (expected: {price}, got: {verify_price})")
+                        # Verify the save by reading it back immediately (with retry)
+                        import time
+                        max_retries = 3
+                        for attempt in range(max_retries):
+                            time.sleep(0.1)  # Small delay to allow database commit
+                            verify_price = get_stock_price_supabase(ticker, target_date_str)
+                            if verify_price and abs(float(verify_price) - price) < 0.01:  # Allow small floating point differences
+                                print(f"✅ Verification successful: {ticker} {target_date_str} saved correctly")
+                                break
+                            elif attempt == max_retries - 1:
+                                print(f"⚠️ Verification failed after {max_retries} attempts: {ticker} {target_date_str} not found after save (expected: {price}, got: {verify_price})")
+                            else:
+                                print(f"⚠️ Verification attempt {attempt + 1} failed, retrying...")
                     else:
                         print(f"⚠️ Failed to save {ticker} price to database (returned False)")
                 except Exception as e:
@@ -779,12 +786,19 @@ class PortfolioAnalytics:
                     if save_result:
                         print(f"✅ Saved {ticker} monthly price for {target_date_str} to database")
 
-                        # Verify the save by reading it back immediately
-                        verify_price = get_monthly_stock_price_supabase(ticker, target_date_str)
-                        if verify_price and abs(float(verify_price) - price) < 0.01:
-                            print(f"✅ Monthly verification successful: {ticker} {target_date_str} saved correctly")
-                        else:
-                            print(f"⚠️ Monthly verification failed: {ticker} {target_date_str} not found after save (expected: {price}, got: {verify_price})")
+                        # Verify the save by reading it back immediately (with retry)
+                        import time
+                        max_retries = 3
+                        for attempt in range(max_retries):
+                            time.sleep(0.1)  # Small delay to allow database commit
+                            verify_price = get_monthly_stock_price_supabase(ticker, target_date_str)
+                            if verify_price and abs(float(verify_price) - price) < 0.01:
+                                print(f"✅ Monthly verification successful: {ticker} {target_date_str} saved correctly")
+                                break
+                            elif attempt == max_retries - 1:
+                                print(f"⚠️ Monthly verification failed after {max_retries} attempts: {ticker} {target_date_str} not found after save (expected: {price}, got: {verify_price})")
+                            else:
+                                print(f"⚠️ Monthly verification attempt {attempt + 1} failed, retrying...")
                     else:
                         print(f"⚠️ Failed to save {ticker} monthly price to database (returned False)")
                 except Exception as e:
@@ -4481,18 +4495,62 @@ class PortfolioAnalytics:
                         if st.button("🔍 Verify Database Storage", key="verify_db_storage"):
                             st.info("🔍 Checking if data is being saved to database...")
                             try:
-                                from database_config_supabase import get_all_stock_prices_supabase
+                                from database_config_supabase import get_all_stock_prices_supabase, diagnose_database_issues, get_stock_price_supabase
                                 from datetime import timedelta
+
+                                # First run database diagnostics
+                                st.info("🔍 Running database diagnostics...")
+                                diagnose_database_issues()
+
+                                # Then check for data
                                 all_prices = get_all_stock_prices_supabase()
                                 if all_prices:
                                     recent_prices = [p for p in all_prices if p.get('created_at', '') > str(datetime.now() - timedelta(hours=1))]
                                     st.success(f"✅ Found {len(all_prices)} total prices in database, {len(recent_prices)} saved in last hour")
+
                                     if recent_prices:
                                         st.json(recent_prices[:5])  # Show first 5 recent entries
+                                        st.info("💡 Recent saves are working correctly!")
+
+                                        # Test verification for a recent save
+                                        if recent_prices:
+                                            test_ticker = recent_prices[0]['ticker']
+                                            test_date = recent_prices[0]['price_date']
+                                            verify_price = get_stock_price_supabase(test_ticker, test_date)
+                                            if verify_price:
+                                                st.success(f"✅ Verification test passed: {test_ticker} {test_date} = ₹{verify_price}")
+                                            else:
+                                                st.error(f"❌ Verification test failed: {test_ticker} {test_date} not found after save!")
+                                    else:
+                                        st.warning("⚠️ No recent saves found. Check if save operations are working.")
                                 else:
                                     st.warning("⚠️ No prices found in database. Data may not be saving properly.")
+                                    st.info("💡 This could indicate database permissions, connection issues, or save operations are failing.")
+
+                                    # Try to test database connection and table access
+                                    try:
+                                        # Try a simple query to test connection
+                                        test_result = get_stock_price_supabase("TEST", "2024-01-01")
+                                        st.info("✅ Database connection test passed")
+
+                                        # Test table access
+                                        try:
+                                            from database_config_supabase import check_table_structure
+                                            table_check = check_table_structure('stock_prices')
+                                            if table_check['accessible']:
+                                                st.success(f"✅ stock_prices table is accessible ({len(table_check['columns'])} columns)")
+                                            else:
+                                                st.error(f"❌ stock_prices table not accessible: {table_check['error']}")
+                                        except Exception as table_error:
+                                            st.warning(f"⚠️ Could not check table structure: {table_error}")
+
+                                    except Exception as conn_error:
+                                        st.error(f"❌ Database connection test failed: {conn_error}")
+                                        st.info("💡 This indicates a connection or authentication issue with the database.")
+
                             except Exception as db_error:
                                 st.error(f"❌ Database verification failed: {db_error}")
+                                st.info("💡 Check the console logs for more detailed error information.")
                         
                         if historical_data:
                             hist_df = pd.DataFrame(historical_data)
