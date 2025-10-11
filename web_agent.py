@@ -1123,14 +1123,27 @@ class PortfolioAnalytics:
                 except Exception as e:
                     st.warning(f"⚠️ Live price update had warnings: {e}")
                 
-                # STEP 3: Cache weekly price data for charts (in background, non-blocking)
+                # STEP 3: Cache weekly AND monthly price data for charts
+                st.info("🔄 Caching weekly and monthly price data for charts...")
                 try:
-                    # Set a flag to trigger cache population in background
-                    cache_trigger_key = f'cache_trigger_{user_id}'
-                    st.session_state[cache_trigger_key] = True
-                    st.info("💡 Weekly price data will be cached automatically for chart display")
+                    # Actually populate the cache now (not just set a flag)
+                    with st.spinner("⏳ Building weekly price cache... This may take 30-60 seconds..."):
+                        self.populate_weekly_and_monthly_cache(user_id)
+                    st.success("✅ Weekly and monthly price data cached successfully!")
                 except Exception as e:
-                    st.warning(f"⚠️ Cache trigger had warnings: {e}")
+                    st.warning(f"⚠️ Weekly/monthly cache had warnings: {e}")
+                    st.info("💡 You can manually refresh the cache later from Settings → Refresh Cache")
+                
+                # STEP 3.5: Update PMS/AIF values from factsheets (if any found)
+                try:
+                    from pms_aif_updater import update_pms_aif_for_file
+                    st.info("🔄 Checking for PMS/AIF investments...")
+                    pms_count = update_pms_aif_for_file(user_id, file_id)
+                    if pms_count and pms_count > 0:
+                        st.success(f"✅ Updated {pms_count} PMS/AIF value(s) from factsheets!")
+                except Exception as e:
+                    # Don't fail the upload if PMS update fails
+                    st.info(f"💡 PMS/AIF update: {e}")
                 
                 # STEP 4: Refresh portfolio data to include new transactions
                 st.info("🔄 Refreshing portfolio data...")
@@ -1329,9 +1342,7 @@ class PortfolioAnalytics:
             # Load portfolio data (essential for dashboard)
             self.load_portfolio_data(user_id)
             
-            # Initialize cache flags but DON'T trigger automatic population
-            # Cache population should only happen when user explicitly requests it in Settings
-            # to avoid blocking the UI on first login
+            # Initialize cache flags and trigger automatic population for missing weeks
             if not skip_cache_population:
                 cache_key = f'cache_populated_{user_id}'
                 cache_trigger_key = f'cache_trigger_{user_id}'
@@ -1342,9 +1353,9 @@ class PortfolioAnalytics:
                 if cache_trigger_key not in st.session_state:
                     st.session_state[cache_trigger_key] = False
                 
-                # DON'T set trigger flag automatically - let user trigger it manually
-                # This prevents blocking the UI on first login
-                # st.session_state[cache_trigger_key] = True  # DISABLED - manual trigger only
+                # Enable automatic cache population during login (non-blocking background mode)
+                # This ensures weekly data is available for charts
+                st.session_state[cache_trigger_key] = True
             
         except Exception as e:
             st.error(f"Error initializing portfolio data: {e}")
@@ -1353,8 +1364,11 @@ class PortfolioAnalytics:
         """
         INCREMENTAL weekly price cache update:
         - Only fetches NEW weeks since last cache update
-        - Derives monthly from weekly data
+        - Derives monthly from weekly data (NO separate monthly fetch)
         - Smart detection of missing data
+        - Automatically triggered during login and file upload
+        - Weekly data saved to historical_prices table
+        - Monthly data derived from weekly cache and saved
         """
         from datetime import datetime, timedelta
 
@@ -2834,15 +2848,17 @@ class PortfolioAnalytics:
             if cache_key not in st.session_state or not st.session_state[cache_key]:
                 # Show small status in sidebar
                 with st.sidebar:
-                    with st.status("📊 Updating cache...", expanded=False) as status:
-                        st.write("Fetching historical data in background...")
+                    with st.status("🔄 Building weekly price cache...", expanded=False) as status:
+                        st.caption("📊 Caching weekly data for charts...")
+                        st.caption("⏱️ Incremental - only new weeks fetched")
                         try:
                             self.populate_monthly_prices_cache(user_id)
                             st.session_state[cache_key] = True
                             st.session_state[cache_trigger_key] = False
-                            status.update(label="✅ Cache updated!", state="complete")
+                            status.update(label="✅ Weekly & monthly cache ready!", state="complete")
                         except Exception as e:
-                            st.write(f"Error: {e}")
+                            st.write(f"⚠️ Cache error: {e}")
+                            st.caption("Charts will fetch data on-demand")
                             status.update(label="⚠️ Cache update failed", state="error")
         
         # File upload in sidebar
@@ -9961,6 +9977,10 @@ You can also suggest creating charts/graphs based on this data."""
             end_date = datetime.now()
             start_date = end_date - timedelta(days=365)
             
+            # Show status message
+            with st.spinner(f"📊 Loading weekly price data for {len(tickers)} holding(s)..."):
+                pass
+            
             # Create the chart
             fig = go.Figure()
             
@@ -9981,7 +10001,8 @@ You can also suggest creating charts/graphs based on this data."""
                 )
                 
                 if not prices_data or len(prices_data) == 0:
-                    st.warning(f"⚠️ No price data available for {ticker}")
+                    st.warning(f"⚠️ No historical price data available for **{ticker}**")
+                    st.info(f"💡 Historical data for {ticker} may still be loading. Try refreshing the page or use the 'Refresh Cache' button in Settings.")
                     continue
                 
                 # Convert to DataFrame
