@@ -3702,7 +3702,7 @@ class PortfolioAnalytics:
                         st.metric("Avg P&L %", f"{avg_pnl_pct:.2f}%", delta=f"{avg_pnl_pct:.2f}%")
                     
                     # Render weekly values comparison
-                    self.render_weekly_values_multi(selected_holdings, self.session_state.user_id)
+                    self.render_weekly_values_multi(selected_holdings, self.session_state.user_id, context="1year_buy")
         else:
             st.info("No stock buy transactions found in the last 1 year")
 
@@ -4171,7 +4171,7 @@ class PortfolioAnalytics:
                     st.markdown(f"**Selected Holdings:** {len(selected_holdings)} | **Total Value:** ₹{total_value:,.0f} | **Total P&L:** ₹{total_pnl:,.0f} | **Avg P&L:** {avg_pnl_pct:.2f}%")
                     
                     # Render weekly values comparison
-                    self.render_weekly_values_multi(selected_holdings, self.session_state.user_id)
+                    self.render_weekly_values_multi(selected_holdings, self.session_state.user_id, context="overall_performance")
             
             st.markdown("---")
             
@@ -4337,7 +4337,7 @@ class PortfolioAnalytics:
                     )
                     
                     if selected_stocks and len(selected_stocks) > 0:
-                        self.render_weekly_values_multi(selected_stocks, self.session_state.user_id)
+                        self.render_weekly_values_multi(selected_stocks, self.session_state.user_id, context="sector_analysis")
             
         except Exception as e:
             st.error(f"Error in sector analysis: {e}")
@@ -4486,7 +4486,7 @@ class PortfolioAnalytics:
                                     st.metric("Avg P&L %", f"{avg_pnl_pct:.2f}%", delta=f"{avg_pnl_pct:.2f}%")
                                 
                                 # Render weekly values comparison
-                                self.render_weekly_values_multi(selected_holdings, self.session_state.user_id)
+                                self.render_weekly_values_multi(selected_holdings, self.session_state.user_id, context="all_channels_sector")
                         
                         else:
                             # All Sectors selected - show all holdings
@@ -4557,7 +4557,7 @@ class PortfolioAnalytics:
                                     st.metric("Avg P&L %", f"{avg_pnl_pct:.2f}%", delta=f"{avg_pnl_pct:.2f}%")
                                 
                                 # Render weekly values comparison
-                                self.render_weekly_values_multi(selected_holdings, self.session_state.user_id)
+                                self.render_weekly_values_multi(selected_holdings, self.session_state.user_id, context="all_channels_all_sectors")
                 else:
                     st.info("💡 No sector data available. Showing all holdings without sector breakdown.")
                     
@@ -4626,7 +4626,7 @@ class PortfolioAnalytics:
                             st.metric("Avg P&L %", f"{avg_pnl_pct:.2f}%", delta=f"{avg_pnl_pct:.2f}%")
                         
                         # Render weekly values comparison
-                        self.render_weekly_values_multi(selected_holdings, self.session_state.user_id)
+                        self.render_weekly_values_multi(selected_holdings, self.session_state.user_id, context="all_channels_no_sector")
             
             elif selected_channel != "All Channels":
                 # Filter by channel
@@ -4695,7 +4695,7 @@ class PortfolioAnalytics:
                                 )
                                 
                                 if selected_holdings and len(selected_holdings) > 0:
-                                    self.render_weekly_values_multi(selected_holdings, self.session_state.user_id)
+                                    self.render_weekly_values_multi(selected_holdings, self.session_state.user_id, context="channel_sector")
                         else:
                             # Show all holdings in channel across all sectors
                             holdings_summary = channel_df.groupby('ticker').agg({
@@ -9273,26 +9273,28 @@ You can also suggest creating charts/graphs based on this data."""
             st.write("**Charts:** Plotly")
             st.write("**Data Processing:** Pandas, NumPy")
     
-    def render_weekly_values(self, ticker, user_id):
+    def render_weekly_values(self, ticker, user_id, context="default"):
         """
         Render weekly price values chart for a specific ticker (single mode)
         """
         # Call multi-select version with single ticker
-        self.render_weekly_values_multi([ticker], user_id)
+        self.render_weekly_values_multi([ticker], user_id, context=context)
     
-    def render_weekly_values_multi(self, tickers, user_id):
+    def render_weekly_values_multi(self, tickers, user_id, context="default"):
         """
         Render weekly price values chart for multiple tickers (comparative mode)
         
         Args:
             tickers: List of stock/MF ticker symbols
             user_id: User ID for fetching data
+            context: Unique context identifier to prevent duplicate keys (e.g., "sector", "channel", "overall")
         """
         try:
             from database_config_supabase import get_stock_prices_range_supabase
             import plotly.graph_objects as go
             from datetime import datetime, timedelta
             from pms_aif_fetcher import is_pms_code, is_aif_code
+            import hashlib
             
             if not tickers or len(tickers) == 0:
                 st.warning("No tickers selected")
@@ -9440,8 +9442,11 @@ You can also suggest creating charts/graphs based on this data."""
                 )
             )
             
-            # Display chart with unique key
-            chart_key = f"weekly_chart_{'_'.join(sorted(tickers_with_data[:5]))}"  # Use first 5 tickers for key
+            # Display chart with unique key including context and timestamp
+            tickers_str = '_'.join(sorted(tickers_with_data[:5]))
+            # Create a hash to ensure unique keys even with same tickers in different contexts
+            unique_hash = hashlib.md5(f"{context}_{tickers_str}_{len(tickers_with_data)}".encode()).hexdigest()[:8]
+            chart_key = f"weekly_chart_{context}_{unique_hash}"
             st.plotly_chart(fig, use_container_width=True, key=chart_key)
             
             # Display statistics for each ticker
