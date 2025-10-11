@@ -566,21 +566,27 @@ class PortfolioAnalytics:
             clean_ticker = str(ticker).strip().upper()
             clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
             
-            # Check if it's a mutual fund scheme code first (priority over BSE detection)
-            # Mutual fund scheme codes are typically 5-6 digits or start with MF_
+            # Check if it's a mutual fund scheme code first (priority over stock detection)
+            # Mutual fund scheme codes are typically 5-6 digits (not traded on NSE/BSE)
+            # Valid MF scheme codes are usually 5-6 digits starting with 1-2
             is_mutual_fund = (
-                (clean_ticker.isdigit() and len(clean_ticker) >= 5) or
-                clean_ticker.startswith('MF_') or
-                (len(clean_ticker) >= 5 and clean_ticker.isdigit())
+                (clean_ticker.isdigit() and len(clean_ticker) >= 5 and len(clean_ticker) <= 6 and clean_ticker.startswith(('1', '2'))) or
+                clean_ticker.startswith('MF_')
             )
 
-            # Check if it's a BSE ticker code (6-digit number) - but only if not a mutual fund
-            is_bse_code = clean_ticker.isdigit() and len(clean_ticker) == 6 and not is_mutual_fund
+            # Check if it's a stock ticker (NSE/BSE symbols)
+            is_stock_ticker = (
+                not is_mutual_fund and
+                (len(clean_ticker) <= 10) and  # Reasonable stock ticker length
+                (clean_ticker.isalpha() or (clean_ticker.isalnum() and not clean_ticker.isdigit()))
+            )
 
             if is_mutual_fund:
-                print(f"🔍 {ticker}: Detected as mutual fund scheme code")
-            elif is_bse_code:
-                print(f"🔍 {ticker}: Detected as BSE code, will try {clean_ticker}.BO")
+                print(f"🔍 {ticker}: Detected as mutual fund scheme code - will use MF APIs only")
+            elif is_stock_ticker:
+                print(f"🔍 {ticker}: Detected as stock ticker - will try NSE/BSE")
+            else:
+                print(f"🔍 {ticker}: Unknown ticker type - will try all sources")
             
             # === EARLY CHECK: Is this a PMS/AIF? ===
             ticker_upper = ticker.upper()
@@ -628,46 +634,27 @@ class PortfolioAnalytics:
                 print(f"⚠️ {ticker}: PMS/AIF but no transaction found for {target_date_str}")
                 return None
             
-            # === STRATEGY 1: Try yfinance (BSE first for BSE codes, then NSE) ===
-            if not price and is_bse_code:
-                # BSE codes should try .BO first
+            # === STRATEGY 1: Try yfinance (only for stock tickers, not MF scheme codes) ===
+            if not price and is_stock_ticker:
                 try:
                     import yfinance as yf
-                    stock = yf.Ticker(f"{clean_ticker}.BO")
-                    hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
-                    if not hist_data.empty:
-                        price = float(hist_data['Close'].iloc[0])
-                        price_source = 'yfinance_bse'
-                        print(f"✅ {ticker}: yfinance BSE (code {clean_ticker}) - ₹{price}")
-                except Exception as e:
-                    pass
-            
-            # === STRATEGY 2: Try yfinance with .NS (NSE) for non-BSE codes ===
-            if not price and not is_bse_code:
-                try:
-                    import yfinance as yf
+                    # Try NSE first for most Indian stocks
                     stock = yf.Ticker(f"{clean_ticker}.NS")
                     hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
                     if not hist_data.empty:
                         price = float(hist_data['Close'].iloc[0])
                         price_source = 'yfinance_nse'
                         print(f"✅ {ticker}: yfinance NSE - ₹{price}")
+                    else:
+                        # Try BSE as fallback
+                        stock = yf.Ticker(f"{clean_ticker}.BO")
+                        hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
+                        if not hist_data.empty:
+                            price = float(hist_data['Close'].iloc[0])
+                            price_source = 'yfinance_bse'
+                            print(f"✅ {ticker}: yfinance BSE - ₹{price}")
                 except Exception as e:
-                    pass
-            
-            # === STRATEGY 3: Try alternate exchange (NSE if BSE failed, BSE if NSE failed) ===
-            if not price:
-                try:
-                    import yfinance as yf
-                    suffix = '.NS' if is_bse_code else '.BO'
-                    stock = yf.Ticker(f"{clean_ticker}{suffix}")
-                    hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
-                    if not hist_data.empty:
-                        price = float(hist_data['Close'].iloc[0])
-                        price_source = f'yfinance_{"nse" if is_bse_code else "bse"}_fallback'
-                        print(f"✅ {ticker}: yfinance {'NSE' if is_bse_code else 'BSE'} (fallback) - ₹{price}")
-                except Exception as e:
-                    pass
+                    print(f"⚠️ {ticker}: yfinance failed - {e}")
             
             # === STRATEGY 4: Try indstocks (works for both stocks and MFs) ===
             if not price:
@@ -1416,11 +1403,17 @@ class PortfolioAnalytics:
                             print(f"💡 Try installing: pip install mftool yfinance pandas")
                             live_price = None
                             sector = "Mutual Fund"
-                        except Exception as e:
-                            print(f"⚠️ MF {ticker}: get_mutual_fund_price_and_category failed: {e}")
-                            print(f"💡 This might be due to missing dependencies. Try: pip install mftool")
-                            live_price = None
-                            sector = "Mutual Fund"
+                except Exception as e:
+                    print(f"⚠️ MF {ticker}: get_mutual_fund_price_and_category failed: {e}")
+                    print(f"💡 This might be due to missing dependencies. Try: pip install mftool beautifulsoup4 html5lib")
+                    # For mutual funds, use transaction price as fallback (they don't have market prices like stocks)
+                    live_price = pms_trans['price'] if 'pms_trans' in locals() and pms_trans['price'] else None
+                    if live_price:
+                        print(f"✅ MF {ticker}: Using transaction price as fallback - ₹{live_price}")
+                    else:
+                        print(f"⚠️ MF {ticker}: No transaction price available, skipping")
+                        live_price = None
+                    sector = "Mutual Fund"
                     
                     elif ticker_str.startswith('INF') and len(ticker_str) == 12:
                         # Mutual fund ISIN - try to get category from mftool or indstocks
