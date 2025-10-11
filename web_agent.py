@@ -9210,15 +9210,24 @@ You can also suggest creating charts/graphs based on this data."""
                 st.info("💡 Price data is cached when you first upload a file. Make sure the tickers have been processed.")
                 return
             
-            # Update layout
+            # Update layout with better text visibility
             title = f"Price Comparison: {', '.join(tickers_with_data[:3])}"
             if len(tickers_with_data) > 3:
                 title += f" and {len(tickers_with_data) - 3} more"
             
             fig.update_layout(
-                title=title + " (Last 1 Year)",
-                xaxis_title="Date",
-                yaxis_title="Price (₹)",
+                title=dict(
+                    text=title + " (Last 1 Year)",
+                    font=dict(size=18, color='#262730')  # Dark text for visibility
+                ),
+                xaxis_title=dict(
+                    text="Date",
+                    font=dict(size=14, color='#262730')
+                ),
+                yaxis_title=dict(
+                    text="Price (₹)",
+                    font=dict(size=14, color='#262730')
+                ),
                 height=600,
                 hovermode='x unified',
                 showlegend=True,
@@ -9227,12 +9236,22 @@ You can also suggest creating charts/graphs based on this data."""
                     y=0.99,
                     xanchor="left",
                     x=0.01,
-                    bgcolor="rgba(255, 255, 255, 0.8)"
+                    bgcolor="rgba(255, 255, 255, 0.95)",  # More opaque white background
+                    bordercolor="rgba(0, 0, 0, 0.2)",
+                    borderwidth=1,
+                    font=dict(size=12, color='#262730')  # Dark text in legend
                 ),
                 xaxis=dict(
-                    rangeslider=dict(visible=True),
-                    type='date'
-                )
+                    rangeslider=dict(visible=False),  # Hidden to avoid looking like 2 graphs
+                    type='date',
+                    tickfont=dict(color='#262730')  # Dark tick labels
+                ),
+                yaxis=dict(
+                    tickfont=dict(color='#262730')  # Dark tick labels
+                ),
+                plot_bgcolor='rgba(240, 242, 246, 0.5)',  # Light background
+                paper_bgcolor='white',  # White paper background
+                font=dict(color='#262730')  # Default font color
             )
             
             # Display chart with unique key including context, timestamp, and random component
