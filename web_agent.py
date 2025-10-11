@@ -193,7 +193,7 @@ class PortfolioAnalytics:
                 - If price is missing, the system will fetch historical prices automatically
                 """)
                 
-            # Action buttons
+                            # Action buttons
             col1, col2, col3 = st.columns([1, 1, 1])
             with col1:
                 if st.button("✖️ Close Sample Format", type="secondary"):
@@ -280,12 +280,162 @@ class PortfolioAnalytics:
                 
                 # Initialize portfolio data after login (enable background cache)
                 self.initialize_portfolio_data(skip_cache_population=False)
+                
+                # Update PMS/AIF values from factsheets (background task)
+                self.update_pms_aif_values_background(user['id'])
+                
                 return True
             return False
             
         except Exception as e:
             st.error(f"Authentication error: {e}")
             return False
+    
+    def update_pms_aif_values_background(self, user_id):
+        """
+        Update PMS/AIF values from factsheets during login
+        Runs in background to not block login process
+        """
+        try:
+            import threading
+            import requests
+            import PyPDF2
+            import io
+            import re
+            from database_config_supabase import get_transactions_supabase, update_stock_data_supabase, save_stock_price_supabase
+            from pms_aif_fetcher import is_pms_code, is_aif_code
+            from datetime import datetime, timedelta
+            
+            def fetch_and_update():
+                """Background thread to fetch PMS/AIF values"""
+                try:
+                    # Get user's transactions
+                    transactions = get_transactions_supabase(user_id=user_id)
+                    if not transactions:
+                        return
+                    
+                    df = pd.DataFrame(transactions)
+                    
+                    # Identify PMS/AIF holdings
+                    pms_aif_tickers = []
+                    for ticker in df['ticker'].unique():
+                        ticker_str = str(ticker).strip()
+                        if is_pms_code(ticker_str) or is_aif_code(ticker_str):
+                            pms_aif_tickers.append(ticker_str)
+                    
+                    if not pms_aif_tickers:
+                        return  # No PMS/AIF holdings
+                    
+                    print(f"🔄 Background: Updating {len(pms_aif_tickers)} PMS/AIF value(s)...")
+                    
+                    # Factsheet URLs
+                    factsheet_urls = {
+                        'INP000005000': 'https://www.buoyantcap.com/wp-content/uploads/2025/09/PMS-flyer-Sep-25.pdf',
+                        'INP000006387': 'https://www.carneliancapital.co.in/_files/ugd/3ea37e_226f032b021f40c992d0511e2782f5ae.pdf',
+                        'INP000000613': 'https://www.unificap.com/sites/default/files/track_record/pdf/Unifi-Capital-Presentation-September-2025.pdf',
+                        'INP000005125': 'https://www.valentisadvisors.com/wp-content/uploads/2025/06/Valentis-PMS-Presentation-May-2025.pdf',
+                    }
+                    
+                    session = requests.Session()
+                    session.headers.update({
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    })
+                    
+                    for ticker in pms_aif_tickers:
+                        try:
+                            if ticker not in factsheet_urls:
+                                continue
+                            
+                            url = factsheet_urls[ticker]
+                            
+                            # Download PDF
+                            response = session.get(url, timeout=30)
+                            if response.status_code != 200:
+                                continue
+                            
+                            # Extract text
+                            pdf_file = io.BytesIO(response.content)
+                            pdf_reader = PyPDF2.PdfReader(pdf_file)
+                            text = ""
+                            for page in pdf_reader.pages:
+                                text += page.extract_text() + "\n"
+                            
+                            # Extract CAGR
+                            returns_data = {}
+                            patterns = {
+                                '1y_return': r'1\s*[Yy](?:ear)?\s*(?:Return|CAGR)?\s*:?\s*([+-]?\d+\.?\d*)\s*%',
+                                '3y_cagr': r'3\s*[Yy](?:ear)?\s*(?:CAGR|Return)?\s*:?\s*([+-]?\d+\.?\d*)\s*%',
+                                '5y_cagr': r'5\s*[Yy](?:ear)?\s*(?:CAGR|Return)?\s*:?\s*([+-]?\d+\.?\d*)\s*%',
+                            }
+                            
+                            for key, pattern in patterns.items():
+                                matches = re.findall(pattern, text, re.IGNORECASE)
+                                if matches:
+                                    returns_data[key] = float(matches[0])
+                            
+                            if not returns_data:
+                                continue
+                            
+                            # Get investment details
+                            ticker_trans = df[df['ticker'] == ticker]
+                            if ticker_trans.empty:
+                                continue
+                            
+                            first_trans = ticker_trans.iloc[0]
+                            investment_date = pd.to_datetime(first_trans['date'])
+                            investment_amount = float(ticker_trans['quantity'].sum() * first_trans['price'])
+                            
+                            # Calculate current value using CAGR
+                            years_elapsed = (datetime.now() - investment_date).days / 365.25
+                            current_value = investment_amount
+                            
+                            if years_elapsed >= 5 and '5y_cagr' in returns_data:
+                                cagr = returns_data['5y_cagr'] / 100
+                                current_value = investment_amount * ((1 + cagr) ** years_elapsed)
+                            elif years_elapsed >= 3 and '3y_cagr' in returns_data:
+                                cagr = returns_data['3y_cagr'] / 100
+                                current_value = investment_amount * ((1 + cagr) ** years_elapsed)
+                            elif years_elapsed >= 1 and '1y_return' in returns_data:
+                                annual_return = returns_data['1y_return'] / 100
+                                current_value = investment_amount * ((1 + annual_return) ** years_elapsed)
+                            
+                            # Determine sector
+                            if is_aif_code(ticker):
+                                sector = "Alternative Investments"
+                            else:
+                                sector = "PMS Equity"
+                            
+                            # Update database
+                            stock_name = first_trans.get('stock_name', ticker)
+                            update_stock_data_supabase(
+                                ticker=ticker,
+                                stock_name=stock_name,
+                                sector=sector,
+                                live_price=current_value,
+                                market_cap=None
+                            )
+                            
+                            # Save as historical price
+                            today = datetime.now().strftime('%Y-%m-%d')
+                            save_stock_price_supabase(ticker, current_value, today)
+                            
+                            print(f"✅ Updated {ticker}: ₹{current_value:,.0f}")
+                            
+                        except Exception as e:
+                            print(f"⚠️ Error updating {ticker}: {e}")
+                            continue
+                    
+                    print(f"✅ Background: PMS/AIF values updated")
+                    
+                except Exception as e:
+                    print(f"❌ Background PMS/AIF update error: {e}")
+            
+            # Start background thread
+            thread = threading.Thread(target=fetch_and_update, daemon=True)
+            thread.start()
+            
+        except Exception as e:
+            print(f"⚠️ Could not start PMS/AIF update: {e}")
     
     def process_uploaded_files_during_registration(self, uploaded_files, user_id):
         """Process uploaded files during registration"""
@@ -1470,7 +1620,7 @@ class PortfolioAnalytics:
                                         price = self.fetch_historical_price_comprehensive(ticker, week_date)
                                     except Exception as e:
                                         exception = e
-                            
+
                                 # Create a thread for the fetch operation
                                 fetch_thread = threading.Thread(target=fetch_with_timeout)
                                 fetch_thread.daemon = True
@@ -1489,7 +1639,7 @@ class PortfolioAnalytics:
                                     pass
                                 elif price and price > 0:
                                     all_weekly_prices[ticker][week_date] = price
-                                weekly_cached_count += 1
+                                    weekly_cached_count += 1
 
                             except Exception as e:
                                 print(f"⚠️ Error in timeout handling for {ticker} on {week_date_str}: {e}")
@@ -1571,7 +1721,7 @@ class PortfolioAnalytics:
                 try:
                     # Fetch historical price using comprehensive fetcher
                     historical_price = self.fetch_historical_price_comprehensive(ticker, transaction_date)
-                        
+                    
                     if historical_price and historical_price > 0:
                         success_count += 1
                     else:
@@ -1583,10 +1733,9 @@ class PortfolioAnalytics:
             
             print(f"📊 Historical price caching: {success_count} cached, {skip_count} skipped, {error_count} errors")
             return success_count
-                    
         except Exception as e:
             print(f"❌ Error in cache_transaction_historical_prices: {e}")
-            raise
+            return 0
     
     def update_missing_historical_prices(self, user_id):
         """Update missing historical prices in database"""
@@ -1906,19 +2055,18 @@ class PortfolioAnalytics:
                                 else:
                                     sector = 'Other Stocks'
                         except Exception as e:
-                            print(f"⚠️ {ticker}: yfinance failed: {e}")
+                            print(f"⚠️ {ticker}: yfinance/stock fetch failed: {e}")
+                            live_price = None
+                            sector = 'Unknown'                    
+                except Exception as e:
+                            print(f"⚠️ {ticker}: fetch failed: {e}")
                             live_price = None
                             sector = 'Unknown'
-                
-                except Exception as e:
-                    print(f"⚠️ {ticker}: failed: {e}")
-                    live_price = None
-                    sector = 'Unknown'
                 
                 print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
 
                 # Store successful fetch (MUST be inside the for loop)
-            if live_price and live_price > 0:
+                if live_price and live_price > 0:
                     live_prices[ticker] = live_price
                     sectors[ticker] = sector
                     successful_fetches += 1
@@ -1943,7 +2091,7 @@ class PortfolioAnalytics:
                     except Exception as db_error:
                         print(f"⚠️ Could not save {ticker} to DB: {db_error}")
                         # Continue anyway - at least we have it in session
-            else:
+                else:
                     consecutive_failures += 1
                     print(f"❌ SKIPPED: {ticker} - invalid price or sector")
 
@@ -3129,8 +3277,6 @@ class PortfolioAnalytics:
                     )
                     
                     st.plotly_chart(fig_top, use_container_width=True, key="top_performers_chart")
-                else:
-                        st.info("No performance data available")
             else:
                 st.info("Performance data not available")
         
@@ -3189,8 +3335,6 @@ class PortfolioAnalytics:
                     )
                     
                     st.plotly_chart(fig_bottom, use_container_width=True, key="underperformers_chart")
-                else:
-                        st.info("No performance data available")
             else:
                 st.info("Performance data not available")
         
@@ -3931,11 +4075,11 @@ class PortfolioAnalytics:
                                         color_continuous_scale='RdYlGn',
                                         text='pnl_percentage'
                                     )
-                                    fig_sector_compare.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
-                                    fig_sector_compare.update_layout(height=300)
-                                    st.plotly_chart(fig_sector_compare, use_container_width=True, key="1year_multi_sector_compare")
+                                fig_sector_compare.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
+                                fig_sector_compare.update_layout(height=300)
+                                st.plotly_chart(fig_sector_compare, use_container_width=True, key="1year_multi_sector_compare")
                                 
-                                st.markdown("---")
+                            st.markdown("---")
                             
                             # Aggregate by ticker
                             holdings_in_sector = sector_holdings.groupby('ticker').agg({
@@ -4333,7 +4477,7 @@ class PortfolioAnalytics:
                             st.markdown(f"💰 P&L: ₹{row['unrealized_pnl']:,.0f} | 📊 {row['pnl_percentage']:.2f}%")
                             st.progress(min(row['pnl_percentage'] / 100, 1.0))
                             st.markdown("---")
-                else:
+                    else:
                         st.info("No gainers yet")
 
             with col2:
@@ -4528,11 +4672,11 @@ class PortfolioAnalytics:
         
         with tab1:
             st.subheader("🏢 Sector-Wise Performance")
-        
-            try:
-            # Debug: Check what's in the sector column
-                print(f"🔍 DEBUG: df.columns = {df.columns.tolist()}")
             
+            try:
+                # Debug: Check what's in the sector column
+                print(f"🔍 DEBUG: df.columns = {df.columns.tolist()}")
+                
                 # Check for sector column - try multiple variations
                 sector_col = None
                 if 'sector' in df.columns and not df['sector'].isna().all():
@@ -4552,12 +4696,12 @@ class PortfolioAnalytics:
                 if not sector_col or df['sector'].isna().all():
                     st.warning("⚠️ Sector information not available in portfolio data")
                     st.info("💡 Sectors are automatically fetched when prices are loaded. Reload data to populate sectors.")
-                # Show what we have for debugging
-                with st.expander("🔍 Debug: Show available columns"):
+                    # Show what we have for debugging
+                    with st.expander("🔍 Debug: Show available columns"):
                         st.json(df.columns.tolist())
-                return
-            
-            # Group by sector (exclude Unknown if there are other sectors)
+                    return
+                
+                # Group by sector (exclude Unknown if there are other sectors)
                 sector_data = df.groupby('sector').agg({
                     'invested_amount': 'sum',
                     'current_value': 'sum',
@@ -4569,13 +4713,13 @@ class PortfolioAnalytics:
                     print(f"🔍 DEBUG: Filtering out 'Unknown' sector, keeping {len(sector_data)-1} known sectors")
                     sector_data = sector_data[sector_data['sector'] != 'Unknown']
                 
-                    sector_data['pnl_percentage'] = (sector_data['unrealized_pnl'] / sector_data['invested_amount'] * 100)
-                    sector_data = sector_data.sort_values('pnl_percentage', ascending=False)
+                sector_data['pnl_percentage'] = (sector_data['unrealized_pnl'] / sector_data['invested_amount'] * 100)
+                sector_data = sector_data.sort_values('pnl_percentage', ascending=False)
                 
-                    print(f"🔍 DEBUG: Final sector_data:\n{sector_data}")
+                print(f"🔍 DEBUG: Final sector_data:\n{sector_data}")
                 
                 # Display sector performance table
-                    st.dataframe(
+                st.dataframe(
                     sector_data.style.format({
                         'invested_amount': '₹{:,.0f}',
                         'current_value': '₹{:,.0f}',
@@ -4586,77 +4730,77 @@ class PortfolioAnalytics:
                 )
                 
                 # Sector pie chart
-                    import plotly.express as px
-                    fig = px.pie(
+                import plotly.express as px
+                fig = px.pie(
                     sector_data,
                     values='current_value',
                     names='sector',
                     title='Portfolio Allocation by Sector'
                 )
-                    st.plotly_chart(fig, use_container_width=True, key="sector_analysis_pie")
+                st.plotly_chart(fig, use_container_width=True, key="sector_analysis_pie")
+                
+                # ===== NEW: Sector Multi-Select Filter =====
+                st.markdown("---")
+                st.subheader("🔍 Drill-Down by Sector (Multiple Selections Allowed)")
+                
+                # Sector selection multiselect
+                sector_list = sorted(df['sector'].dropna().unique().tolist())
+                selected_sectors = st.multiselect(
+                    "Select Sector(s) to view holdings (multiple selections allowed):",
+                    options=sector_list,
+                    default=[],
+                    key="sector_filter_multiselect"
+                )
+                
+                if selected_sectors and len(selected_sectors) > 0:
+                    # Filter holdings by selected sectors
+                    sector_holdings = df[df['sector'].isin(selected_sectors)].copy()
                     
-                    # ===== NEW: Sector Multi-Select Filter =====
-                    st.markdown("---")
-                    st.subheader("🔍 Drill-Down by Sector (Multiple Selections Allowed)")
-                    
-                    # Sector selection multiselect
-                    sector_list = sorted(df['sector'].dropna().unique().tolist())
-                    selected_sectors = st.multiselect(
-                        "Select Sector(s) to view holdings (multiple selections allowed):",
-                        options=sector_list,
-                        default=[],
-                        key="sector_filter_multiselect"
-                    )
-                    
-                    if selected_sectors and len(selected_sectors) > 0:
-                        # Filter holdings by selected sectors
-                        sector_holdings = df[df['sector'].isin(selected_sectors)].copy()
+                    if not sector_holdings.empty:
+                        sectors_str = ", ".join(selected_sectors)
+                        st.info(f"📊 Showing {len(sector_holdings)} holding(s) in **{sectors_str}**")
                         
-                        if not sector_holdings.empty:
-                            sectors_str = ", ".join(selected_sectors)
-                            st.info(f"📊 Showing {len(sector_holdings)} holding(s) in **{sectors_str}**")
+                        # Show sector-by-sector breakdown if multiple sectors selected
+                        if len(selected_sectors) > 1:
+                            st.markdown("### 📊 Performance by Selected Sectors")
+                            sector_breakdown = sector_holdings.groupby('sector').agg({
+                                'invested_amount': 'sum',
+                                'current_value': 'sum',
+                                'unrealized_pnl': 'sum'
+                            }).reset_index()
+                            sector_breakdown['pnl_percentage'] = (
+                                sector_breakdown['unrealized_pnl'] / sector_breakdown['invested_amount'] * 100
+                            )
                             
-                            # Show sector-by-sector breakdown if multiple sectors selected
-                            if len(selected_sectors) > 1:
-                                st.markdown("### 📊 Performance by Selected Sectors")
-                                sector_breakdown = sector_holdings.groupby('sector').agg({
-                                    'invested_amount': 'sum',
-                                    'current_value': 'sum',
-                                    'unrealized_pnl': 'sum'
-                                }).reset_index()
-                                sector_breakdown['pnl_percentage'] = (
-                                    sector_breakdown['unrealized_pnl'] / sector_breakdown['invested_amount'] * 100
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.dataframe(
+                                    sector_breakdown.style.format({
+                                        'invested_amount': '₹{:,.0f}',
+                                        'current_value': '₹{:,.0f}',
+                                        'unrealized_pnl': '₹{:,.0f}',
+                                        'pnl_percentage': '{:.2f}%'
+                                    }),
+                                    use_container_width=True,
+                                    hide_index=True
                                 )
-                                
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    st.dataframe(
-                                        sector_breakdown.style.format({
-                                            'invested_amount': '₹{:,.0f}',
-                                            'current_value': '₹{:,.0f}',
-                                            'unrealized_pnl': '₹{:,.0f}',
-                                            'pnl_percentage': '{:.2f}%'
-                                        }),
-                                        use_container_width=True,
-                                        hide_index=True
-                                    )
-                                
-                                with col2:
-                                    # Bar chart comparing sectors
-                                    fig_sector_compare = px.bar(
-                                        sector_breakdown,
-                                        x='sector',
-                                        y='pnl_percentage',
-                                        title='Sector P&L Comparison',
-                                        color='pnl_percentage',
-                                        color_continuous_scale='RdYlGn',
-                                        text='pnl_percentage'
-                                    )
-                                    fig_sector_compare.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
-                                    fig_sector_compare.update_layout(height=300)
-                                    st.plotly_chart(fig_sector_compare, use_container_width=True, key="multi_sector_compare")
-                                
-                                st.markdown("---")
+                            
+                            with col2:
+                                # Bar chart comparing sectors
+                                fig_sector_compare = px.bar(
+                                    sector_breakdown,
+                                    x='sector',
+                                    y='pnl_percentage',
+                                    title='Sector P&L Comparison',
+                                    color='pnl_percentage',
+                                    color_continuous_scale='RdYlGn',
+                                    text='pnl_percentage'
+                                )
+                                fig_sector_compare.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
+                                fig_sector_compare.update_layout(height=300)
+                                st.plotly_chart(fig_sector_compare, use_container_width=True, key="multi_sector_compare")
+                            
+                            st.markdown("---")
                             
                             # Group by ticker
                             holdings_summary = sector_holdings.groupby('ticker').agg({
@@ -4699,10 +4843,10 @@ class PortfolioAnalytics:
                             
                             if selected_stocks and len(selected_stocks) > 0:
                                 self.render_weekly_values_multi(selected_stocks, self.session_state.user_id, context="sector_analysis")
-                
+            
             except Exception as e:
                 st.error(f"Error in sector analysis: {e}")
-    
+        
         with tab2:
             st.subheader("📡 Channel-Wise Performance")
             
@@ -5498,7 +5642,7 @@ class PortfolioAnalytics:
                                 st.error(f"❌ Failed to process {uploaded_file.name}")
                                 failed_count += 1
                                 failed_files.append(uploaded_file.name)
-                                
+                                    
                     except Exception as e:
                         st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
                         failed_count += 1
