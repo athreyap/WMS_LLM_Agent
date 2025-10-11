@@ -572,9 +572,20 @@ class PortfolioAnalytics:
             clean_ticker = str(ticker).strip().upper()
             clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
             
-            # Check if it's a BSE ticker code (6-digit number) and add .BO suffix for yfinance
-            is_bse_code = clean_ticker.isdigit() and len(clean_ticker) == 6
-            if is_bse_code:
+            # Check if it's a mutual fund scheme code first (priority over BSE detection)
+            # Mutual fund scheme codes are typically 5-6 digits or start with MF_
+            is_mutual_fund = (
+                (clean_ticker.isdigit() and len(clean_ticker) >= 5) or
+                clean_ticker.startswith('MF_') or
+                (len(clean_ticker) >= 5 and clean_ticker.isdigit())
+            )
+
+            # Check if it's a BSE ticker code (6-digit number) - but only if not a mutual fund
+            is_bse_code = clean_ticker.isdigit() and len(clean_ticker) == 6 and not is_mutual_fund
+
+            if is_mutual_fund:
+                print(f"🔍 {ticker}: Detected as mutual fund scheme code")
+            elif is_bse_code:
                 print(f"🔍 {ticker}: Detected as BSE code, will try {clean_ticker}.BO")
             
             # === EARLY CHECK: Is this a PMS/AIF? ===
@@ -2592,22 +2603,31 @@ class PortfolioAnalytics:
                                 delta_color=worst_channel_color
                             )
             
-            # Stock Performance Analysis (1-Year Buy Transactions)
-            st.subheader("📈 Stock Performance Analysis (1-Year Buy Transactions)")
+            # Stock and Mutual Fund Performance Analysis (1-Year Buy Transactions)
+            st.subheader("📈 Stock and Mutual Fund Performance Analysis (1-Year Buy Transactions)")
              
-            # Filter for stocks (not mutual funds) with buy transactions in the last 1 year
+            # Filter for stocks and mutual funds (exclude PMS/AIF) with buy transactions in the last 1 year
             one_year_ago = datetime.now() - timedelta(days=365)
             
             # Filter stocks (exclude mutual funds) with buy transactions in last 1 year
-            stock_buys = df[
-                (~df['ticker'].astype(str).str.startswith('MF_')) & 
-                (df['transaction_type'] == 'buy') & 
+            # Filter stocks and mutual funds (exclude PMS/AIF) with buy transactions in the last 1 year
+            # Include mutual funds but exclude PMS/AIF (they use different calculation methods)
+            def is_pms_aif(ticker):
+                ticker_upper = str(ticker).upper()
+                return any(keyword in ticker_upper for keyword in [
+                    'PMS', 'AIF', 'INP', 'BUOYANT', 'CARNELIAN', 'JULIUS',
+                    'VALENTIS', 'UNIFI', 'PORTFOLIO', 'FUND'
+                ]) or ticker_upper.endswith('_PMS') or str(ticker).startswith('INP')
+
+            stock_and_mf_buys = df[
+                (~df['ticker'].apply(is_pms_aif)) &  # Exclude PMS/AIF
+                (df['transaction_type'] == 'buy') &
                 (df['date'] >= one_year_ago)
             ].copy()
              
-            if not stock_buys.empty:
+            if not stock_and_mf_buys.empty:
                 # Group by ticker and calculate performance metrics
-                stock_performance = stock_buys.groupby('ticker').agg({
+                stock_performance = stock_and_mf_buys.groupby('ticker').agg({
                     'invested_amount': 'sum',
                     'current_value': 'sum',
                     'unrealized_pnl': 'sum',
@@ -2930,8 +2950,8 @@ class PortfolioAnalytics:
                     st.info("This might be due to date format issues or insufficient data")
                 
                 # Add comprehensive charts for sector and channel analysis
-                if not stock_buys.empty:
-                    st.subheader("📊 Sector & Channel Analysis (1-Year Buy Transactions)")
+                if not stock_and_mf_buys.empty:
+                    st.subheader("📊 Sector & Channel Analysis (1-Year Buy Transactions - Stocks & Mutual Funds)")
                     
                     # Create two columns for charts
                     col1, col2 = st.columns(2)
@@ -2941,7 +2961,7 @@ class PortfolioAnalytics:
                         st.subheader("🏭 Sector Performance Analysis")
                         
                         # Group by sector and calculate metrics
-                        sector_performance = stock_buys.groupby('sector').agg({
+                        sector_performance = stock_and_mf_buys.groupby('sector').agg({
                             'invested_amount': 'sum',
                             'current_value': 'sum',
                             'unrealized_pnl': 'sum',
@@ -2984,7 +3004,7 @@ class PortfolioAnalytics:
                         st.subheader("📡 Channel Performance Analysis")
                         
                         # Group by channel and calculate metrics
-                        channel_performance = stock_buys.groupby('channel').agg({
+                        channel_performance = stock_and_mf_buys.groupby('channel').agg({
                             'invested_amount': 'sum',
                             'current_value': 'sum',
                             'unrealized_pnl': 'sum',
@@ -4401,11 +4421,14 @@ class PortfolioAnalytics:
                                         })
                                 else:
                                     # Fallback: Fetch from API if not in cache
-                                    # Check if it's a mutual fund (numeric ticker)
+                                    # Check if it's a mutual fund (numeric ticker or starts with MF_)
                                     clean_ticker = str(ticker).strip()
-                                    is_numeric = clean_ticker.replace('.', '').isdigit()
-                                    
-                                    if is_numeric and len(clean_ticker) >= 5:
+                                    is_mutual_fund = (
+                                        (clean_ticker.isdigit() and len(clean_ticker) >= 5) or
+                                        clean_ticker.startswith('MF_')
+                                    )
+
+                                    if is_mutual_fund:
                                         st.info(f"📊 {ticker}: Mutual fund detected, fetching NAV history...")
                                     else:
                                         st.warning(f"⚠️ No cached data for {ticker}, fetching from API...")
@@ -4443,7 +4466,11 @@ class PortfolioAnalytics:
                                         
                                         # Provide helpful error messages
                                         if ticker_str.isdigit() and len(ticker_str) == 6:
-                                            st.error(f"⚠️ {ticker}: BSE code - may be delisted or data unavailable. Try adding ticker symbol instead.")
+                                            # Check if it's actually a mutual fund (some 6-digit codes are MF scheme codes)
+                                            if len(ticker_str) >= 5:  # Most MF codes are 5+ digits
+                                                st.error(f"⚠️ {ticker}: Mutual fund scheme not found. Please verify the scheme code.")
+                                            else:
+                                                st.error(f"⚠️ {ticker}: BSE code - may be delisted or data unavailable. Try adding ticker symbol instead.")
                                         elif ticker_str.upper() in ['OBEROIRLTY', 'TANFACIND']:
                                             st.error(f"⚠️ {ticker}: Stock may be delisted or suspended. No historical data available.")
                                         elif ticker_str.isdigit() and len(ticker_str) >= 5:
@@ -4517,10 +4544,11 @@ class PortfolioAnalytics:
                                             test_ticker = recent_prices[0]['ticker']
                                             test_date = recent_prices[0]['price_date']
                                             verify_price = get_stock_price_supabase(test_ticker, test_date)
-                                            if verify_price:
+                                            if verify_price and abs(float(verify_price) - recent_prices[0]['price']) < 0.01:
                                                 st.success(f"✅ Verification test passed: {test_ticker} {test_date} = ₹{verify_price}")
                                             else:
-                                                st.error(f"❌ Verification test failed: {test_ticker} {test_date} not found after save!")
+                                                st.error(f"❌ Verification test failed: {test_ticker} {test_date} not found or value mismatch!")
+                                                st.info(f"Expected: ₹{recent_prices[0]['price']}, Got: ₹{verify_price}")
                                     else:
                                         st.warning("⚠️ No recent saves found. Check if save operations are working.")
                                 else:
