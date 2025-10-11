@@ -1749,19 +1749,19 @@ class PortfolioAnalytics:
                             print(f"💡 Try installing: pip install mftool yfinance pandas")
                             live_price = None
                             sector = "Mutual Fund"
-                except Exception as e:
-                    print(f"⚠️ MF {ticker}: get_mutual_fund_price_and_category failed: {e}")
-                    print(f"💡 This might be due to missing dependencies. Try: pip install mftool beautifulsoup4 html5lib")
-                    # For mutual funds, use transaction price as fallback (they don't have market prices like stocks)
-                    live_price = pms_trans['price'] if 'pms_trans' in locals() and pms_trans['price'] else None
-                    if live_price:
-                        print(f"✅ MF {ticker}: Using transaction price as fallback - ₹{live_price}")
-                    else:
-                        print(f"⚠️ MF {ticker}: No transaction price available, skipping")
-                        live_price = None
-                    sector = "Mutual Fund"
+                        except Exception as e:
+                            print(f"⚠️ MF {ticker}: get_mutual_fund_price_and_category failed: {e}")
+                            print(f"💡 This might be due to missing dependencies. Try: pip install mftool beautifulsoup4 html5lib")
+                            # For mutual funds, use transaction price as fallback (they don't have market prices like stocks)
+                            live_price = pms_trans['price'] if 'pms_trans' in locals() and pms_trans['price'] else None
+                            if live_price:
+                                print(f"✅ MF {ticker}: Using transaction price as fallback - ₹{live_price}")
+                            else:
+                                print(f"⚠️ MF {ticker}: No transaction price available, skipping")
+                                live_price = None
+                            sector = "Mutual Fund"
 
-                else:
+                    else:
                         # Unknown ticker type or stock ticker - try yfinance
                         print(f"🔍 {ticker}: Stock ticker, fetching from yfinance")
                         try:
@@ -1869,12 +1869,10 @@ class PortfolioAnalytics:
                                     sector = 'Power & Energy'
                                 else:
                                     sector = 'Other Stocks'
-
-                    except Exception as e:
+                        except Exception as e:
                             print(f"⚠️ {ticker}: yfinance fallback failed: {e}")
                             live_price = None
                             sector = 'Unknown'
-
                 except Exception as e:
                     print(f"❌ Error processing {ticker}: {e}")
                     consecutive_failures += 1
@@ -1884,12 +1882,12 @@ class PortfolioAnalytics:
             if live_price and live_price > 0:
                 live_prices[ticker] = live_price
                 sectors[ticker] = sector
-                    successful_fetches += 1
-                    consecutive_failures = 0
-                    print(f"✅ STORED: {ticker} -> ₹{live_price}")
+                successful_fetches += 1
+                consecutive_failures = 0
+                print(f"✅ STORED: {ticker} -> ₹{live_price}")
                     
                     # 💾 SAVE TO DATABASE (Critical fix - persist prices across sessions)
-                    try:
+                try:
                         from database_config_supabase import save_stock_price_supabase
                         today = datetime.now().strftime('%Y-%m-%d')
                         
@@ -1903,10 +1901,10 @@ class PortfolioAnalytics:
                             current_price=live_price  # Maps to live_price column
                         )
                         print(f"💾 Saved {ticker} to database (price + metadata)")
-                    except Exception as db_error:
+                except Exception as db_error:
                         print(f"⚠️ Could not save {ticker} to DB: {db_error}")
                         # Continue anyway - at least we have it in session
-                else:
+            else:
                     consecutive_failures += 1
                     print(f"❌ SKIPPED: {ticker} - invalid price or sector")
 
@@ -4251,13 +4249,13 @@ class PortfolioAnalytics:
                         status_text.text(f"Processing {idx+1}/{len(uploaded_files)}: {uploaded_file.name}")
                         progress_bar.progress((idx) / len(uploaded_files))
                         
-                    with st.spinner(f"Processing {uploaded_file.name}..."):
-                        success = self.process_csv_file(uploaded_file, self.session_state.user_id)
-                        if success:
-                            st.success(f"✅ {uploaded_file.name} processed successfully!")
+                        with st.spinner(f"Processing {uploaded_file.name}..."):
+                            success = self.process_csv_file(uploaded_file, self.session_state.user_id)
+                            if success:
+                                st.success(f"✅ {uploaded_file.name} processed successfully!")
                                 processed_count += 1
-                        else:
-                            st.error(f"❌ Failed to process {uploaded_file.name}")
+                            else:
+                                st.error(f"❌ Failed to process {uploaded_file.name}")
                                 failed_count += 1
                                 failed_files.append(uploaded_file.name)
                                 
