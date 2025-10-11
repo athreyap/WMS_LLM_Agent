@@ -1638,10 +1638,6 @@ class PortfolioAnalytics:
                 consecutive_failures += 1
                 print(f"❌ SKIPPED: {ticker} - invalid price or sector")
 
-                # Stop if too many consecutive failures (likely API issues)
-                if consecutive_failures >= max_consecutive_failures:
-                    print(f"⚠️ Too many consecutive failures ({consecutive_failures}), stopping live price fetching")
-                    break
 
             
             # Store in session state
