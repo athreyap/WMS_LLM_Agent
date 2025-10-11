@@ -1165,33 +1165,43 @@ class PortfolioAnalytics:
                             # Already cached
                             all_weekly_prices[ticker][week_date] = cached_prices[ticker]
                         else:
-                            # Need to fetch - with timeout protection
+                            # Need to fetch - with timeout protection (Windows-compatible)
                             try:
-                                import signal
+                                import threading
                                 import time
 
-                                def timeout_handler(signum, frame):
-                                    raise TimeoutError("Price fetch timeout")
+                                price = None
+                                exception = None
 
-                                # Set 30 second timeout for individual price fetches
-                                signal.signal(signal.SIGALRM, timeout_handler)
-                                signal.alarm(30)
+                                def fetch_with_timeout():
+                                    nonlocal price, exception
+                                    try:
+                                        price = self.fetch_historical_price_comprehensive(ticker, week_date)
+                                    except Exception as e:
+                                        exception = e
 
-                                price = self.fetch_historical_price_comprehensive(ticker, week_date)
+                                # Create a thread for the fetch operation
+                                fetch_thread = threading.Thread(target=fetch_with_timeout)
+                                fetch_thread.daemon = True
+                                fetch_thread.start()
 
-                                # Cancel the alarm
-                                signal.alarm(0)
+                                # Wait for completion with timeout
+                                fetch_thread.join(timeout=30)  # 30 second timeout
 
-                                if price and price > 0:
+                                if fetch_thread.is_alive():
+                                    print(f"⚠️ Timeout fetching price for {ticker} on {week_date_str}")
+                                    # Continue with next ticker
+                                    pass
+                                elif exception:
+                                    print(f"⚠️ Error fetching price for {ticker} on {week_date_str}: {exception}")
+                                    # Continue with next ticker
+                                    pass
+                                elif price and price > 0:
                                     all_weekly_prices[ticker][week_date] = price
                                     weekly_cached_count += 1
 
-                            except TimeoutError:
-                                print(f"⚠️ Timeout fetching price for {ticker} on {week_date_str}")
-                                # Continue with next ticker
-                                pass
                             except Exception as e:
-                                print(f"⚠️ Error fetching price for {ticker} on {week_date_str}: {e}")
+                                print(f"⚠️ Error in timeout handling for {ticker} on {week_date_str}: {e}")
                                 # Continue with next ticker
                                 pass
                 else:
@@ -1203,33 +1213,43 @@ class PortfolioAnalytics:
                         if cached_price and cached_price > 0:
                             all_weekly_prices[ticker][week_date] = cached_price
                         else:
-                            # Need to fetch - with timeout protection
+                            # Need to fetch - with timeout protection (Windows-compatible)
                             try:
-                                import signal
+                                import threading
                                 import time
 
-                                def timeout_handler(signum, frame):
-                                    raise TimeoutError("Price fetch timeout")
+                                price = None
+                                exception = None
 
-                                # Set 30 second timeout for individual price fetches
-                                signal.signal(signal.SIGALRM, timeout_handler)
-                                signal.alarm(30)
+                                def fetch_with_timeout():
+                                    nonlocal price, exception
+                                    try:
+                                        price = self.fetch_historical_price_comprehensive(ticker, week_date)
+                                    except Exception as e:
+                                        exception = e
 
-                                price = self.fetch_historical_price_comprehensive(ticker, week_date)
+                                # Create a thread for the fetch operation
+                                fetch_thread = threading.Thread(target=fetch_with_timeout)
+                                fetch_thread.daemon = True
+                                fetch_thread.start()
 
-                                # Cancel the alarm
-                                signal.alarm(0)
+                                # Wait for completion with timeout
+                                fetch_thread.join(timeout=30)  # 30 second timeout
 
-                                if price and price > 0:
+                                if fetch_thread.is_alive():
+                                    print(f"⚠️ Timeout fetching price for {ticker} on {week_date_str}")
+                                    # Continue with next ticker
+                                    pass
+                                elif exception:
+                                    print(f"⚠️ Error fetching price for {ticker} on {week_date_str}: {exception}")
+                                    # Continue with next ticker
+                                    pass
+                                elif price and price > 0:
                                     all_weekly_prices[ticker][week_date] = price
                                     weekly_cached_count += 1
 
-                            except TimeoutError:
-                                print(f"⚠️ Timeout fetching price for {ticker} on {week_date_str}")
-                                # Continue with next ticker
-                                pass
                             except Exception as e:
-                                print(f"⚠️ Error fetching price for {ticker} on {week_date_str}: {e}")
+                                print(f"⚠️ Error in timeout handling for {ticker} on {week_date_str}: {e}")
                                 # Continue with next ticker
                                 pass
             
@@ -1353,11 +1373,12 @@ class PortfolioAnalytics:
     def fetch_live_prices_and_sectors(self, user_id, force_refresh=False):
         """
         Fetch live prices and sectors for all tickers
-        
+
         Args:
             user_id: User ID
             force_refresh: If True, force refresh even if already fetched this session
         """
+        from datetime import datetime, timedelta
         try:
             # Check if already fetched this session (unless force refresh)
             if not force_refresh:
