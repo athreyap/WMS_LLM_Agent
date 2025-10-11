@@ -426,14 +426,42 @@ class PortfolioAnalytics:
             st.info(f"📊 Final quantity sample: {df['quantity'].head().tolist()}")
             
             # Convert date to datetime
+            # Store original date column before conversion for error reporting
+            original_dates = df['date'].copy() if 'date' in df.columns else None
             df['date'] = pd.to_datetime(df['date'], errors='coerce')
             
-            # Fill invalid dates with today's date as fallback (to avoid dropping rows)
-            invalid_dates = df['date'].isna().sum()
-            if invalid_dates > 0:
+            # Handle invalid dates with average date from valid dates
+            invalid_date_mask = df['date'].isna()
+            invalid_dates_count = invalid_date_mask.sum()
+            
+            if invalid_dates_count > 0:
                 from datetime import datetime
-                df['date'] = df['date'].fillna(pd.Timestamp(datetime.now().date()))
-                st.warning(f"⚠️ {invalid_dates} rows had invalid dates - using current date as fallback")
+                
+                # Get valid dates to calculate average
+                valid_dates = df[~invalid_date_mask]['date']
+                
+                if len(valid_dates) > 0:
+                    # Calculate average date from valid dates
+                    avg_timestamp = valid_dates.astype('int64').mean()
+                    avg_date = pd.Timestamp(avg_timestamp)
+                    df.loc[invalid_date_mask, 'date'] = avg_date
+                    
+                    # Show warning with invalid dates
+                    st.warning(f"⚠️ {invalid_dates_count} rows had invalid dates - using average date ({avg_date.strftime('%Y-%m-%d')}) as fallback")
+                else:
+                    # No valid dates available, use current date
+                    df['date'] = df['date'].fillna(pd.Timestamp(datetime.now().date()))
+                    st.warning(f"⚠️ {invalid_dates_count} rows had invalid dates - using current date as fallback (no valid dates in file)")
+                
+                # Print the invalid dates for debugging
+                if original_dates is not None:
+                    invalid_date_values = original_dates[invalid_date_mask].unique()
+                    with st.expander(f"🔍 Show {invalid_dates_count} Invalid Date(s)"):
+                        st.write("**Invalid date values found:**")
+                        for idx, invalid_val in enumerate(invalid_date_values[:20], 1):  # Limit to first 20
+                            st.write(f"{idx}. `{invalid_val}`")
+                        if len(invalid_date_values) > 20:
+                            st.write(f"... and {len(invalid_date_values) - 20} more")
             
             st.info(f"📅 Dates processed: {len(df)} rows with valid dates")
             
@@ -1115,7 +1143,9 @@ class PortfolioAnalytics:
             # Load portfolio data (essential for dashboard)
             self.load_portfolio_data(user_id)
             
-            # Mark that cache population should happen (but don't block UI)
+            # Initialize cache flags but DON'T trigger automatic population
+            # Cache population should only happen when user explicitly requests it in Settings
+            # to avoid blocking the UI on first login
             if not skip_cache_population:
                 cache_key = f'cache_populated_{user_id}'
                 cache_trigger_key = f'cache_trigger_{user_id}'
@@ -1126,9 +1156,9 @@ class PortfolioAnalytics:
                 if cache_trigger_key not in st.session_state:
                     st.session_state[cache_trigger_key] = False
                 
-                # Set trigger flag (will be handled later in sidebar)
-                if not st.session_state[cache_key] and not st.session_state[cache_trigger_key]:
-                    st.session_state[cache_trigger_key] = True
+                # DON'T set trigger flag automatically - let user trigger it manually
+                # This prevents blocking the UI on first login
+                # st.session_state[cache_trigger_key] = True  # DISABLED - manual trigger only
             
         except Exception as e:
             st.error(f"Error initializing portfolio data: {e}")
@@ -4091,6 +4121,13 @@ class PortfolioAnalytics:
 
         # Cache management
         st.subheader("🗄️ Cache Management")
+        
+        st.info("""
+        **💡 Tip:** Historical price cache is built on-demand.
+        - Your portfolio loads instantly with live prices
+        - Historical charts and analysis will use cached data
+        - Click "Update Price Cache" below to pre-fetch historical data for faster charts
+        """)
 
         col1, col2 = st.columns(2)
 
@@ -4102,6 +4139,7 @@ class PortfolioAnalytics:
 
         with col2:
             if st.button("🔄 Update Price Cache", type="secondary"):
+                st.warning("⏳ This will fetch historical data for all holdings. It may take 5-10 minutes for large portfolios.")
                 with st.spinner("Updating price cache... This may take a few minutes."):
                     self.populate_weekly_and_monthly_cache(self.session_state.user_id)
                     st.success("✅ Price cache updated!")
