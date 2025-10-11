@@ -534,7 +534,8 @@ def get_stock_price_and_sector(ticker: str, clean_ticker: str, target_date: str 
             
     except Exception as e:
         print(f"⚠️ yfinance failed for {ticker}: {e}")
-    
+
+    print(f"🔍 DEBUG: {ticker} returning price={price}, sector={sector}, market_cap={market_cap}")
     return price, sector, market_cap
 
 def get_stock_price(ticker: str, clean_ticker: str, target_date: str = None) -> float:

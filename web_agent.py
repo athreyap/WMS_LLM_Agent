@@ -1531,6 +1531,8 @@ class PortfolioAnalytics:
                             from unified_price_fetcher import get_stock_price_and_sector
                             live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
 
+                            print(f"🔍 DEBUG: {ticker} -> live_price={live_price}, sector={sector}, market_cap={market_cap}")
+
                             # Store market cap in session state for later use
                             if market_cap and market_cap > 0:
                                 if not hasattr(self.session_state, 'market_caps'):
@@ -1594,9 +1596,13 @@ class PortfolioAnalytics:
                             live_price = None
                             sector = 'Unknown'
 
+            print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
             if live_price and live_price > 0:
                 live_prices[ticker] = live_price
                 sectors[ticker] = sector
+                print(f"✅ STORED: {ticker} -> ₹{live_price}")
+            else:
+                print(f"❌ SKIPPED: {ticker} - invalid price or sector")
 
             
             # Store in session state
@@ -1662,6 +1668,11 @@ class PortfolioAnalytics:
             
             # Add live prices to transactions
             df['live_price'] = df['ticker'].map(self.session_state.live_prices)
+
+            # Debug live price mapping
+            live_price_count = df['live_price'].notna().sum()
+            total_count = len(df)
+            print(f"🔍 DEBUG: Live prices mapped: {live_price_count}/{total_count} transactions")
             
             # Fetch sector information from stock_data table for all tickers
             from database_config_supabase import get_stock_data_supabase
@@ -1693,6 +1704,12 @@ class PortfolioAnalytics:
             df['current_value'] = df['quantity'] * df['live_price'].fillna(df['price'])
             df['unrealized_pnl'] = df['current_value'] - df['invested_amount']
             df['pnl_percentage'] = (df['unrealized_pnl'] / df['invested_amount']) * 100
+
+            # Debug portfolio calculations
+            total_invested = df['invested_amount'].sum()
+            total_current = df['current_value'].sum()
+            total_pnl = df['unrealized_pnl'].sum()
+            print(f"🔍 DEBUG: Portfolio totals - Invested: ₹{total_invested:,.2f}, Current: ₹{total_current:,.2f}, P&L: ₹{total_pnl:,.2f}")
             
             # Store processed data
             self.session_state.portfolio_data = df
