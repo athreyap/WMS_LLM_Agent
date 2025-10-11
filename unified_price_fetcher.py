@@ -211,7 +211,54 @@ def get_mutual_fund_price_and_category(ticker: str, clean_ticker: str, user_id: 
         except Exception as e:
             print(f"⚠️ AMFI API failed for {ticker}: {e}")
     
-    # Method 4: Use intelligent default based on fund type
+    # Method 3.5: Try IndStocks API for mutual funds
+    if not price:
+        try:
+            from indstocks_api import get_indstocks_client
+            
+            # Extract scheme code
+            if clean_ticker.startswith('MF_'):
+                scheme_code = clean_ticker.replace('MF_', '')
+            elif clean_ticker.isdigit():
+                scheme_code = clean_ticker
+            else:
+                match = re.search(r'(\d{5,6})', clean_ticker)
+                scheme_code = match.group(1) if match else None
+            
+            if scheme_code:
+                client = get_indstocks_client()
+                if client and client.available:
+                    try:
+                        # Use get_stock_price which handles MF codes too
+                        mf_data = client.get_stock_price(f"MF_{scheme_code}")
+                        if mf_data and 'price' in mf_data:
+                            price = float(mf_data['price'])
+                            print(f"✅ MF {ticker}: Live NAV ₹{price} from IndStocks")
+                            return price, category
+                    except Exception as ind_error:
+                        print(f"⚠️ IndStocks MF fetch failed for {ticker}: {ind_error}")
+        except Exception as e:
+            print(f"⚠️ IndStocks API not available: {e}")
+    
+    # Method 3.6: Use transaction price as fallback (better than default)
+    if not price and not target_date:
+        try:
+            from database_config_supabase import get_transactions_supabase
+            all_user_transactions = get_transactions_supabase(user_id)
+            if all_user_transactions:
+                mf_transactions = [t for t in all_user_transactions if t.get('ticker') == ticker]
+                if mf_transactions:
+                    latest_trans = sorted(mf_transactions, key=lambda x: pd.to_datetime(x.get('date')), reverse=True)[0]
+                    if latest_trans.get('price') and latest_trans.get('price') > 0:
+                        price = float(latest_trans.get('price'))
+                        trans_date = latest_trans.get('date')
+                        print(f"✅ MF {ticker}: Using transaction NAV ₹{price} from {trans_date} (all APIs failed)")
+                        print(f"   💡 Shows 0% return. Fund may be delisted.")
+                        return price, category
+        except Exception as e:
+            print(f"⚠️ Transaction price fallback failed: {e}")
+    
+    # Method 4: Use intelligent default based on fund type (last resort)
     if not price:
         price = get_mutual_fund_default_price(clean_ticker)
         if target_date:
@@ -526,7 +573,7 @@ def get_stock_price_and_sector(ticker: str, clean_ticker: str, target_date: str 
             elif not price:
                 hist_bo = stock_bo.history(period="1d")
                 if not hist_bo.empty and hist_bo['Close'].iloc[-1] > 0:
-                    price = hist_bo.loc[closest_idx, 'Close']
+                    price = hist_bo['Close'].iloc[-1]
                     print(f"✅ {ticker}: Live price ₹{price} from yfinance (.BO)")
         
         if not price:
@@ -534,7 +581,7 @@ def get_stock_price_and_sector(ticker: str, clean_ticker: str, target_date: str 
             
     except Exception as e:
         print(f"⚠️ yfinance failed for {ticker}: {e}")
-
+    
     print(f"🔍 DEBUG: {ticker} returning price={price}, sector={sector}, market_cap={market_cap}")
     return price, sector, market_cap
 

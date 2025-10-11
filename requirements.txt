@@ -10,7 +10,7 @@ matplotlib>=3.5.0
 yfinance>=0.2.0
 mftool>=0.3.0
 deprecated>=1.2.0  # Required by mftool
-# indstocks>=0.1.0  # Requires Python >=3.10, not compatible with Python 3.9
+indstocks>=0.1.0  # Requires Python >=3.10, not compatible with Python 3.9
 requests>=2.28.0
 httpx>=0.24.0
 beautifulsoup4>=4.11.0

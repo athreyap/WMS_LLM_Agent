@@ -35,10 +35,10 @@ class MFToolClient:
     def get_scheme_code_from_name(self, fund_name: str) -> Optional[int]:
         """
         Get AMFI scheme code from mutual fund name
-
+        
         Args:
             fund_name (str): Mutual fund name (e.g., 'HDFC Mid-Cap Opportunities Fund')
-
+            
         Returns:
             int: AMFI scheme code or None if not found
 
@@ -47,7 +47,7 @@ class MFToolClient:
         """
         if not self.available:
             return None
-
+            
         # For now, return None since we don't have a reliable way to map names to codes
         # In production, you might use a database of fund names to scheme codes
         logger.warning(f"Name-to-scheme-code mapping not available for: {fund_name}")
@@ -150,11 +150,11 @@ class MFToolClient:
     def get_mutual_fund_nav_by_name(self, fund_name: str, date: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Fetches NAV for a mutual fund by name
-
+        
         Args:
             fund_name (str): Mutual fund name
             date (str): Date in YYYY-MM-DD format (optional)
-
+            
         Returns:
             dict: NAV data or None if not found
 
