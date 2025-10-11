@@ -2168,7 +2168,7 @@ class PortfolioAnalytics:
         st.sidebar.title("Navigation")
         page = st.sidebar.selectbox(
             "Choose a page:",
-            ["🏠 Overview", "📈 Performance", "📊 Allocation", "💰 P&L Analysis", "📁 Files", "⚙️ Settings"],
+            ["🏠 Portfolio Overview", "🎯 Performance Analysis", "💰 P&L Analysis", "📈 1-Year Performance", "📁 Files", "⚙️ Settings"],
             key="main_navigation"
         )
         
@@ -2508,15 +2508,14 @@ class PortfolioAnalytics:
             st.rerun()
         
         # Render selected page
-        if page == "🏠 Overview":
+        if page == "🏠 Portfolio Overview":
             self.render_overview_page()
-        elif page == "📈 Performance":
-            self.render_performance_page()
-        elif page == "📊 Allocation":
-            self.render_allocation_page()
+        elif page == "🎯 Performance Analysis":
+            self.render_performance_analysis_page()
         elif page == "💰 P&L Analysis":
             self.render_pnl_analysis_page()
-        # AI Assistant page removed - now in sidebar
+        elif page == "📈 1-Year Performance":
+            self.render_one_year_performance_page()
         elif page == "📁 Files":
             self.render_files_page()
         elif page == "⚙️ Settings":
@@ -2714,11 +2713,11 @@ class PortfolioAnalytics:
             width='stretch'
         )
     
-    def render_performance_page(self):
-        """Render performance analysis charts"""
+    def render_performance_analysis_page(self):
+        """Render performance analysis for ALL holdings with sector/channel details"""
         from datetime import datetime, timedelta
 
-        st.header("📈 Performance Analysis")
+        st.header("🎯 Performance Analysis - All Holdings")
 
         if self.session_state.portfolio_data is None:
             self.show_page_loading_animation("Performance Analysis")
@@ -2726,18 +2725,28 @@ class PortfolioAnalytics:
             return
 
         df = self.session_state.portfolio_data
+        
+        st.markdown("""
+        **This page shows performance analysis for ALL holdings in your portfolio**
+        - Sector-wise performance breakdown
+        - Channel-wise performance analysis
+        - Top gainers and losers
+        - Overall portfolio metrics
+        """)
+        
+        st.markdown("---")
 
         # Create tabs for different performance views
-        tab1, tab2, tab3 = st.tabs(["📊 Portfolio Overview", "📈 1-Year Buy Performance", "📋 Overall Portfolio Performance"])
+        tab1, tab2, tab3 = st.tabs(["📊 Overall Performance", "🏢 Sector Analysis", "📡 Channel Analysis"])
 
         with tab1:
-            self.render_portfolio_overview(df)
+            self.render_overall_portfolio_performance(df)
 
         with tab2:
-            self.render_one_year_buy_performance(df)
+            self.render_sector_performance_analysis(df)
 
         with tab3:
-            self.render_overall_portfolio_performance(df)
+            self.render_channel_performance_analysis(df)
 
     def render_portfolio_overview(self, df):
         """Render portfolio overview with general metrics and debug info"""
@@ -3410,6 +3419,217 @@ class PortfolioAnalytics:
             recent_transactions[['date', 'ticker', 'quantity', 'price', 'live_price', 'unrealized_pnl']],
             width='stretch'
         )
+
+    def render_overall_portfolio_performance(self, df):
+        """Render overall portfolio performance metrics"""
+        st.subheader("📊 Overall Portfolio Performance")
+        
+        try:
+            # Calculate overall metrics
+            total_invested = df['invested_amount'].sum()
+            total_current = df['current_value'].sum()
+            total_pnl = df['unrealized_pnl'].sum()
+            total_pnl_pct = (total_pnl / total_invested * 100) if total_invested > 0 else 0
+            
+            # Display key metrics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("💰 Total Invested", f"₹{total_invested:,.0f}")
+            
+            with col2:
+                st.metric("📈 Current Value", f"₹{total_current:,.0f}")
+            
+            with col3:
+                pnl_color = "normal" if total_pnl >= 0 else "inverse"
+                st.metric("💵 Total P&L", f"₹{total_pnl:,.0f}", delta=f"{total_pnl_pct:.2f}%", delta_color=pnl_color)
+            
+            with col4:
+                num_holdings = len(df['ticker'].unique())
+                st.metric("📊 Total Holdings", f"{num_holdings}")
+            
+            st.markdown("---")
+            
+            # Top and Bottom performers
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("🚀 Top 5 Gainers")
+                gainers = df[df['unrealized_pnl'] > 0].nlargest(5, 'pnl_percentage')
+                if not gainers.empty:
+                    for _, row in gainers.iterrows():
+                        st.markdown(f"**{row.get('stock_name', row['ticker'])}**: ₹{row['unrealized_pnl']:,.0f} ({row['pnl_percentage']:.2f}%)")
+                else:
+                    st.info("No gainers yet")
+            
+            with col2:
+                st.subheader("📉 Top 5 Losers")
+                losers = df[df['unrealized_pnl'] < 0].nsmallest(5, 'pnl_percentage')
+                if not losers.empty:
+                    for _, row in losers.iterrows():
+                        st.markdown(f"**{row.get('stock_name', row['ticker'])}**: ₹{row['unrealized_pnl']:,.0f} ({row['pnl_percentage']:.2f}%)")
+                else:
+                    st.info("No losers - Great job!")
+            
+        except Exception as e:
+            st.error(f"Error in overall performance: {e}")
+    
+    def render_sector_performance_analysis(self, df):
+        """Render sector-wise performance breakdown"""
+        st.subheader("🏢 Sector-Wise Performance")
+        
+        try:
+            if 'sector' not in df.columns or df['sector'].isna().all():
+                st.warning("Sector information not available")
+                return
+            
+            # Group by sector
+            sector_data = df.groupby('sector').agg({
+                'invested_amount': 'sum',
+                'current_value': 'sum',
+                'unrealized_pnl': 'sum'
+            }).reset_index()
+            
+            sector_data['pnl_percentage'] = (sector_data['unrealized_pnl'] / sector_data['invested_amount'] * 100)
+            sector_data = sector_data.sort_values('pnl_percentage', ascending=False)
+            
+            # Display sector performance table
+            st.dataframe(
+                sector_data.style.format({
+                    'invested_amount': '₹{:,.0f}',
+                    'current_value': '₹{:,.0f}',
+                    'unrealized_pnl': '₹{:,.0f}',
+                    'pnl_percentage': '{:.2f}%'
+                }),
+                use_container_width=True
+            )
+            
+            # Sector pie chart
+            import plotly.express as px
+            fig = px.pie(
+                sector_data,
+                values='current_value',
+                names='sector',
+                title='Portfolio Allocation by Sector'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+        except Exception as e:
+            st.error(f"Error in sector analysis: {e}")
+    
+    def render_channel_performance_analysis(self, df):
+        """Render channel-wise performance breakdown"""
+        st.subheader("📡 Channel-Wise Performance")
+        
+        try:
+            if 'channel' not in df.columns or df['channel'].isna().all():
+                st.warning("Channel information not available")
+                return
+            
+            # Group by channel
+            channel_data = df.groupby('channel').agg({
+                'invested_amount': 'sum',
+                'current_value': 'sum',
+                'unrealized_pnl': 'sum'
+            }).reset_index()
+            
+            channel_data['pnl_percentage'] = (channel_data['unrealized_pnl'] / channel_data['invested_amount'] * 100)
+            channel_data = channel_data.sort_values('pnl_percentage', ascending=False)
+            
+            # Display channel performance table
+            st.dataframe(
+                channel_data.style.format({
+                    'invested_amount': '₹{:,.0f}',
+                    'current_value': '₹{:,.0f}',
+                    'unrealized_pnl': '₹{:,.0f}',
+                    'pnl_percentage': '{:.2f}%'
+                }),
+                use_container_width=True
+            )
+            
+            # Channel bar chart
+            import plotly.express as px
+            fig = px.bar(
+                channel_data,
+                x='channel',
+                y='pnl_percentage',
+                title='Performance by Channel (%)',
+                color='pnl_percentage',
+                color_continuous_scale=['red', 'yellow', 'green']
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+        except Exception as e:
+            st.error(f"Error in channel analysis: {e}")
+    
+    def render_one_year_performance_page(self):
+        """Render 1-year performance page for holdings purchased in last 12 months"""
+        from datetime import datetime, timedelta
+        
+        st.header("📈 1-Year Performance")
+        
+        if self.session_state.portfolio_data is None:
+            self.show_page_loading_animation("1-Year Performance")
+            st.info("💡 **Tip:** If this page doesn't load automatically, use the '🔄 Refresh Portfolio Data' button in Settings.")
+            return
+        
+        df = self.session_state.portfolio_data
+        
+        st.markdown("""
+        **This page shows performance of holdings purchased in the last 12 months**
+        - Track recent investments
+        - Compare with older holdings
+        - Analyze new investment performance
+        """)
+        
+        st.markdown("---")
+        
+        try:
+            # Filter for holdings purchased in last 12 months
+            one_year_ago = datetime.now() - timedelta(days=365)
+            df['date'] = pd.to_datetime(df['date'])
+            recent_holdings = df[df['date'] >= one_year_ago].copy()
+            
+            if recent_holdings.empty:
+                st.info("No holdings purchased in the last 12 months")
+                return
+            
+            # Summary metrics
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                recent_invested = recent_holdings['invested_amount'].sum()
+                st.metric("💰 Invested (Last Year)", f"₹{recent_invested:,.0f}")
+            
+            with col2:
+                recent_current = recent_holdings['current_value'].sum()
+                st.metric("📈 Current Value", f"₹{recent_current:,.0f}")
+            
+            with col3:
+                recent_pnl = recent_holdings['unrealized_pnl'].sum()
+                recent_pnl_pct = (recent_pnl / recent_invested * 100) if recent_invested > 0 else 0
+                st.metric("💵 P&L", f"₹{recent_pnl:,.0f}", delta=f"{recent_pnl_pct:.2f}%")
+            
+            st.markdown("---")
+            
+            # Holdings table
+            st.subheader("📋 Holdings Purchased in Last 12 Months")
+            display_df = recent_holdings[['date', 'ticker', 'stock_name', 'invested_amount', 'current_value', 'unrealized_pnl', 'pnl_percentage']].copy()
+            st.dataframe(
+                display_df.style.format({
+                    'date': lambda x: x.strftime('%Y-%m-%d'),
+                    'invested_amount': '₹{:,.0f}',
+                    'current_value': '₹{:,.0f}',
+                    'unrealized_pnl': '₹{:,.0f}',
+                    'pnl_percentage': '{:.2f}%'
+                }),
+                use_container_width=True
+            )
+            
+        except Exception as e:
+            st.error(f"Error in 1-year performance: {e}")
+            import traceback
+            st.error(traceback.format_exc())
 
     def render_allocation_page(self):
         """Render portfolio allocation analysis"""
