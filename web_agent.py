@@ -1186,7 +1186,7 @@ class PortfolioAnalytics:
                                 fetch_thread.start()
 
                                 # Wait for completion with timeout
-                                fetch_thread.join(timeout=30)  # 30 second timeout
+                                fetch_thread.join(timeout=60)  # 60 second timeout for better reliability
 
                                 if fetch_thread.is_alive():
                                     print(f"⚠️ Timeout fetching price for {ticker} on {week_date_str}")
@@ -1234,7 +1234,7 @@ class PortfolioAnalytics:
                                 fetch_thread.start()
 
                                 # Wait for completion with timeout
-                                fetch_thread.join(timeout=30)  # 30 second timeout
+                                fetch_thread.join(timeout=60)  # 60 second timeout for better reliability
 
                                 if fetch_thread.is_alive():
                                     print(f"⚠️ Timeout fetching price for {ticker} on {week_date_str}")
@@ -1431,13 +1431,23 @@ class PortfolioAnalytics:
             # Note: Live prices are fetched from external APIs (yfinance, mftool, etc.)
             # which don't support bulk operations. However, database cache operations
             # in populate_weekly_and_monthly_cache() now use bulk queries for optimal performance.
+
+            # Add rate limiting to prevent API overload
+            import time
+            successful_fetches = 0
+            max_consecutive_failures = 5
+            consecutive_failures = 0
+
             for ticker in unique_tickers:
+                # Rate limiting: small delay between requests
+                if successful_fetches > 0:
+                    time.sleep(0.5)  # 500ms between requests
                 try:
                     ticker_str = str(ticker).strip().upper()
-                    
+
                     # Check if PMS/AIF
-                    if (ticker_str.startswith('INP') or ticker_str.endswith('_PMS') or ticker_str.endswith('PMS') or 
-                        'AIF' in ticker_str or ticker_str.startswith('BUOYANT') or 
+                    if (ticker_str.startswith('INP') or ticker_str.endswith('_PMS') or ticker_str.endswith('PMS') or
+                        'AIF' in ticker_str or ticker_str.startswith('BUOYANT') or
                         ticker_str.startswith('CARNELIAN') or ticker_str.startswith('JULIUS') or
                         ticker_str.startswith('VALENTIS') or ticker_str.startswith('UNIFI')):
                         # PMS/AIF - calculate value using SEBI returns
@@ -1539,6 +1549,27 @@ class PortfolioAnalytics:
                                     self.session_state.market_caps = {}
                                 self.session_state.market_caps[ticker] = market_cap
 
+                            # For stocks that don't have live prices, try alternative approaches
+                            if not live_price or live_price <= 0:
+                                print(f"⚠️ {ticker}: No live price from yfinance, trying alternative sources")
+                                # Try with different ticker formats
+                                alternative_tickers = [
+                                    f"{ticker}.NS",
+                                    f"{ticker}.BO",
+                                    ticker.replace('.NS', '').replace('.BO', '')
+                                ]
+
+                                for alt_ticker in alternative_tickers:
+                                    if alt_ticker != ticker:
+                                        try:
+                                            alt_price, _, _ = get_stock_price_and_sector(alt_ticker, alt_ticker, None)
+                                            if alt_price and alt_price > 0:
+                                                live_price = alt_price
+                                                print(f"✅ {ticker}: Got price ₹{live_price} using alternative ticker {alt_ticker}")
+                                                break
+                                        except:
+                                            continue
+
                             # If no sector from yfinance, try to get it from stock data table
                             if not sector or sector == 'Unknown':
                                 stock_data = get_stock_data_supabase(ticker)
@@ -1600,9 +1631,17 @@ class PortfolioAnalytics:
             if live_price and live_price > 0:
                 live_prices[ticker] = live_price
                 sectors[ticker] = sector
+                successful_fetches += 1
+                consecutive_failures = 0
                 print(f"✅ STORED: {ticker} -> ₹{live_price}")
             else:
+                consecutive_failures += 1
                 print(f"❌ SKIPPED: {ticker} - invalid price or sector")
+
+                # Stop if too many consecutive failures (likely API issues)
+                if consecutive_failures >= max_consecutive_failures:
+                    print(f"⚠️ Too many consecutive failures ({consecutive_failures}), stopping live price fetching")
+                    break
 
             
             # Store in session state
@@ -1618,7 +1657,17 @@ class PortfolioAnalytics:
             portfolio_refresh_key = f'portfolio_needs_refresh_{user_id}'
             st.session_state[portfolio_refresh_key] = True
 
-            st.success(f"✅ Fetched live prices for {len(live_prices)} tickers and sectors for {len(sectors)} tickers")
+            # Show results summary
+            total_tickers = len(unique_tickers)
+            successful_tickers = len(live_prices)
+            success_rate = (successful_tickers / total_tickers * 100) if total_tickers > 0 else 0
+
+            if successful_tickers > 0:
+                st.success(f"✅ Fetched live prices for {successful_tickers}/{total_tickers} tickers ({success_rate:.1f}%)")
+                print(f"📊 Live price fetch summary: {successful_tickers}/{total_tickers} successful ({success_rate:.1f}%)")
+            else:
+                st.warning("⚠️ No live prices could be fetched. Portfolio will use historical prices.")
+                print("⚠️ No live prices fetched - all tickers failed or were invalid")
             
         except Exception as e:
             st.error(f"Error fetching live prices: {e}")
