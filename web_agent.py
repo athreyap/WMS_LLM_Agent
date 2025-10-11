@@ -113,6 +113,11 @@ class PortfolioAnalytics:
         st.title("🚀 WMS-LLM Portfolio Analytics")
         st.markdown("---")
         
+        # Check if registration is in progress
+        if self.session_state.get('registration_in_progress', False):
+            self.handle_registration_with_files()
+            return
+        
         tab1, tab2 = st.tabs(["🔐 Login", "📝 Register"])
         
         with tab1:
@@ -239,26 +244,22 @@ class PortfolioAnalytics:
                 """)
             
             if st.button("Create Account & Process Files", type="primary"):
-                if new_password != confirm_password:
-                    st.error("Passwords do not match")
+                # Validate inputs
+                if not new_username or not new_password:
+                    st.error("❌ Please fill in all fields")
+                elif new_password != confirm_password:
+                    st.error("❌ Passwords do not match")
                 elif len(new_password) < 6:
-                    st.error("Password must be at least 6 characters")
-                elif self.register_user(new_username, new_password, "user", uploaded_files):
-                    # Clear any previous messages and show prominent success message
-                    st.empty()  # Clear previous content
-                    st.success("🎉 Registration successful! Automatically logging you in...")
-                    
-                    # Automatically authenticate the user after registration
-                    if self.authenticate_user(new_username, new_password):
-                        st.success("✅ Welcome! You're now logged in and viewing your portfolio.")
-                        st.info("📊 Your portfolio dashboard is loading with the files you uploaded...")
-                        
-                        # Force a rerun to show the main dashboard
-                        st.rerun()
-                    else:
-                        st.error("❌ Auto-login failed. Please try logging in manually.")
+                    st.error("❌ Password must be at least 6 characters")
+                elif not uploaded_files:
+                    st.error("❌ Please upload at least one CSV file")
                 else:
-                    st.error("Username already exists or registration failed")
+                    # Start registration flow with files
+                    self.session_state.registration_in_progress = True
+                    self.session_state.registration_username = new_username
+                    self.session_state.registration_password = new_password
+                    self.session_state.pending_files = uploaded_files
+                    st.rerun()
     
     def authenticate_user(self, username, password):
         """Authenticate user and initialize session"""
@@ -951,6 +952,132 @@ class PortfolioAnalytics:
         except Exception as e:
             st.error(f"Registration error: {e}")
             return False
+    
+    def handle_registration_with_files(self):
+        """Handle registration with file processing - shows progress and waits for completion"""
+        st.markdown("### 🔄 Processing Your Account and Files")
+        st.markdown(f"**Username:** {self.session_state.registration_username}")
+        st.markdown(f"**Files to Process:** {len(self.session_state.pending_files)}")
+        st.markdown("---")
+        
+        # Step 1: Create user account
+        st.info("**Step 1:** Creating your account...")
+        
+        try:
+            result = create_user_supabase(
+                self.session_state.registration_username,
+                self.session_state.registration_password,
+                "salt",
+                role="user"
+            )
+            
+            if not result:
+                st.error("❌ Username already exists. Please choose another username.")
+                if st.button("← Back to Registration"):
+                    self.session_state.registration_in_progress = False
+                    self.session_state.pending_files = []
+                    st.rerun()
+                return
+            
+            user_id = result['id']
+            st.success(f"✅ Account created successfully!")
+            
+            # Step 2: Process all files
+            st.markdown("---")
+            st.info(f"**Step 2:** Processing {len(self.session_state.pending_files)} file(s)...")
+            
+            processed_count = 0
+            failed_count = 0
+            failed_files = []
+            
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            for idx, uploaded_file in enumerate(self.session_state.pending_files):
+                try:
+                    status_text.text(f"Processing {idx+1}/{len(self.session_state.pending_files)}: {uploaded_file.name}")
+                    progress_bar.progress(idx / len(self.session_state.pending_files))
+                    
+                    # Process the file
+                    success = self.process_csv_file(uploaded_file, user_id)
+                    
+                    if success:
+                        st.success(f"✅ {uploaded_file.name}")
+                        processed_count += 1
+                    else:
+                        st.error(f"❌ {uploaded_file.name}")
+                        failed_count += 1
+                        failed_files.append(uploaded_file.name)
+                    
+                    time.sleep(0.2)  # Visual feedback
+                    
+                except Exception as e:
+                    st.error(f"❌ {uploaded_file.name}: {str(e)}")
+                    failed_count += 1
+                    failed_files.append(f"{uploaded_file.name} ({str(e)})")
+                    continue
+            
+            # Complete progress
+            progress_bar.progress(1.0)
+            status_text.text("✅ File processing complete!")
+            time.sleep(0.5)
+            progress_bar.empty()
+            status_text.empty()
+            
+            # Step 3: Show summary
+            st.markdown("---")
+            st.markdown("### 📊 Processing Summary")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("✅ Successful", processed_count)
+            with col2:
+                st.metric("❌ Failed", failed_count)
+            with col3:
+                st.metric("📁 Total", len(self.session_state.pending_files))
+            
+            if failed_files:
+                with st.expander("❌ Failed Files"):
+                    for failed_file in failed_files:
+                        st.write(f"- {failed_file}")
+            
+            if processed_count > 0:
+                st.success(f"🎉 Registration complete! {processed_count} file(s) processed successfully!")
+                st.info("👉 Click below to log in to your account")
+                
+                if st.button("🚀 Log In to Your Account", type="primary", use_container_width=True):
+                    # Complete login
+                    self.session_state.user_authenticated = True
+                    self.session_state.user_id = user_id
+                    self.session_state.username = self.session_state.registration_username
+                    self.session_state.user_role = "user"
+                    self.session_state.login_time = datetime.now()
+                    
+                    # Clear registration state
+                    self.session_state.registration_in_progress = False
+                    self.session_state.registration_username = None
+                    self.session_state.registration_password = None
+                    self.session_state.pending_files = []
+                    
+                    # Update last login
+                    update_user_login_supabase(user_id)
+                    
+                    st.rerun()
+            else:
+                st.error("❌ All files failed to process. Please check your files and try again.")
+                if st.button("← Back to Registration"):
+                    self.session_state.registration_in_progress = False
+                    self.session_state.pending_files = []
+                    st.rerun()
+        
+        except Exception as e:
+            st.error(f"❌ Registration error: {e}")
+            import traceback
+            st.error(traceback.format_exc())
+            if st.button("← Back to Registration"):
+                self.session_state.registration_in_progress = False
+                self.session_state.pending_files = []
+                st.rerun()
     
     def initialize_portfolio_data(self, skip_cache_population=False):
         """
