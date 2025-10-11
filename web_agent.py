@@ -1873,11 +1873,12 @@ class PortfolioAnalytics:
                             print(f"⚠️ {ticker}: yfinance fallback failed: {e}")
                             live_price = None
                             sector = 'Unknown'
-                except Exception as e:
-                    print(f"❌ Error processing {ticker}: {e}")
                     consecutive_failures += 1
                     continue
-
+                except Exception as e:
+                    print(f"⚠️ {ticker}: failed: {e}")
+                    live_price = None
+                    sector = 'Unknown'
                 print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
             if live_price and live_price > 0:
                 live_prices[ticker] = live_price
