@@ -4152,22 +4152,13 @@ class PortfolioAnalytics:
             holdings_list = stock_performance['ticker'].tolist()
             
             if holdings_list:
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    selected_holdings = st.multiselect(
-                        "Select holding(s) to compare (multiple selections allowed):",
-                        options=holdings_list,
-                        default=[holdings_list[0]] if holdings_list else [],
-                        format_func=lambda x: f"{x} - {stock_and_mf_buys[stock_and_mf_buys['ticker']==x]['stock_name'].iloc[0]}" if not stock_and_mf_buys[stock_and_mf_buys['ticker']==x].empty else x,
-                        key="oneyear_holding_weekly_multi_dropdown"
-                    )
-                
-                with col2:
-                    st.markdown("###")  # Spacing
-                    if st.button("📊 Select Top 5", key="select_top5_oneyear"):
-                        st.session_state.oneyear_holding_weekly_multi_dropdown = holdings_list[:5]
-                        st.rerun()
+                selected_holdings = st.multiselect(
+                    "Select holding(s) to compare (multiple selections allowed):",
+                    options=holdings_list,
+                    default=[holdings_list[0]] if holdings_list else [],
+                    format_func=lambda x: f"{x} - {stock_and_mf_buys[stock_and_mf_buys['ticker']==x]['stock_name'].iloc[0]}" if not stock_and_mf_buys[stock_and_mf_buys['ticker']==x].empty else x,
+                    key="oneyear_holding_weekly_multi_dropdown"
+                )
                 
                 if selected_holdings and len(selected_holdings) > 0:
                     # Show aggregate stats for selected holdings
@@ -4423,22 +4414,13 @@ class PortfolioAnalytics:
             
             if not all_holdings.empty:
                 # Add "Select All" option
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    selected_holdings = st.multiselect(
-                        "Select holding(s) to compare (multiple selections allowed):",
-                        options=all_holdings['ticker'].tolist(),
-                        default=[all_holdings['ticker'].tolist()[0]] if len(all_holdings) > 0 else [],
-                        format_func=lambda x: f"{x} - {all_holdings[all_holdings['ticker']==x]['stock_name'].iloc[0]} ({all_holdings[all_holdings['ticker']==x]['pnl_percentage'].iloc[0]:.2f}%)" if not all_holdings[all_holdings['ticker']==x].empty else x,
-                        key="overall_holding_weekly_multi_dropdown"
-                    )
-                
-                with col2:
-                    st.markdown("###")  # Spacing
-                    if st.button("📊 Select Top 5", key="select_top5_overall"):
-                        st.session_state.overall_holding_weekly_multi_dropdown = all_holdings['ticker'].tolist()[:5]
-                        st.rerun()
+                selected_holdings = st.multiselect(
+                    "Select holding(s) to compare (multiple selections allowed):",
+                    options=all_holdings['ticker'].tolist(),
+                    default=[all_holdings['ticker'].tolist()[0]] if len(all_holdings) > 0 else [],
+                    format_func=lambda x: f"{x} - {all_holdings[all_holdings['ticker']==x]['stock_name'].iloc[0]} ({all_holdings[all_holdings['ticker']==x]['pnl_percentage'].iloc[0]:.2f}%)" if not all_holdings[all_holdings['ticker']==x].empty else x,
+                    key="overall_holding_weekly_multi_dropdown"
+                )
                 
                 if selected_holdings and len(selected_holdings) > 0:
                     # Show aggregate stats for selected holdings
@@ -4778,34 +4760,14 @@ class PortfolioAnalytics:
                                 st.markdown("---")
                                 st.subheader("📈 Compare Holdings - Weekly Price Trends")
                                 
-                                col1, col2 = st.columns([3, 1])
-                                
-                                # Check if button was clicked in previous run and set default
                                 holding_list = holdings_summary['ticker'].tolist()
-                                default_holdings = [holding_list[0]] if holding_list else []
-                                
-                                # Handle "Select Top 5" button
-                                with col2:
-                                    st.markdown("###")  # Spacing
-                                    if st.button("📊 Select Top 5", key="select_top5_all_channels_sector"):
-                                        # Use a different session state key to trigger update
-                                        st.session_state['select_top5_all_channels_sector_triggered'] = True
-                                        st.rerun()
-                                
-                                # If top 5 was triggered, use top 5 as default
-                                if st.session_state.get('select_top5_all_channels_sector_triggered', False):
-                                    default_holdings = holding_list[:5]
-                                    # Clear the trigger for next time
-                                    st.session_state['select_top5_all_channels_sector_triggered'] = False
-                                
-                                with col1:
-                                    selected_holdings = st.multiselect(
-                                        "3️⃣ Select Holding(s) to compare:",
-                                        options=holding_list,
-                                        default=default_holdings,
-                                        format_func=lambda x: f"{x} - {holdings_summary[holdings_summary['ticker']==x]['stock_name'].iloc[0]}" if not holdings_summary[holdings_summary['ticker']==x].empty else x,
-                                        key="all_channels_sector_holding_multi"
-                                    )
+                                selected_holdings = st.multiselect(
+                                    "3️⃣ Select Holding(s) to compare:",
+                                    options=holding_list,
+                                    default=[holding_list[0]] if holding_list else [],
+                                    format_func=lambda x: f"{x} - {holdings_summary[holdings_summary['ticker']==x]['stock_name'].iloc[0]}" if not holdings_summary[holdings_summary['ticker']==x].empty else x,
+                                    key="all_channels_sector_holding_multi"
+                                )
                                 
                                 if selected_holdings and len(selected_holdings) > 0:
                                     # Show aggregate stats
@@ -4860,34 +4822,14 @@ class PortfolioAnalytics:
                                 st.markdown("---")
                                 st.subheader("📈 Compare Any Holdings - Weekly Price Trends")
                                 
-                                col1, col2 = st.columns([3, 1])
-                                
-                                # Check if button was clicked in previous run and set default
                                 holding_list = holdings_summary['ticker'].tolist()
-                                default_holdings = [holding_list[0]] if holding_list else []
-                                
-                                # Handle "Select Top 5" button
-                                with col2:
-                                    st.markdown("###")  # Spacing
-                                    if st.button("📊 Select Top 5", key="select_top5_all_all"):
-                                        # Use a different session state key to trigger update
-                                        st.session_state['select_top5_all_all_triggered'] = True
-                                        st.rerun()
-                                
-                                # If top 5 was triggered, use top 5 as default
-                                if st.session_state.get('select_top5_all_all_triggered', False):
-                                    default_holdings = holding_list[:5]
-                                    # Clear the trigger for next time
-                                    st.session_state['select_top5_all_all_triggered'] = False
-                                
-                                with col1:
-                                    selected_holdings = st.multiselect(
-                                        "Select Holding(s) to compare:",
-                                        options=holding_list,
-                                        default=default_holdings,
-                                        format_func=lambda x: f"{x} - {holdings_summary[holdings_summary['ticker']==x]['stock_name'].iloc[0]} ({holdings_summary[holdings_summary['ticker']==x]['sector'].iloc[0]})" if not holdings_summary[holdings_summary['ticker']==x].empty else x,
-                                        key="all_channels_all_sectors_holding_multi"
-                                    )
+                                selected_holdings = st.multiselect(
+                                    "Select Holding(s) to compare:",
+                                    options=holding_list,
+                                    default=[holding_list[0]] if holding_list else [],
+                                    format_func=lambda x: f"{x} - {holdings_summary[holdings_summary['ticker']==x]['stock_name'].iloc[0]} ({holdings_summary[holdings_summary['ticker']==x]['sector'].iloc[0]})" if not holdings_summary[holdings_summary['ticker']==x].empty else x,
+                                    key="all_channels_all_sectors_holding_multi"
+                                )
                                 
                                 if selected_holdings and len(selected_holdings) > 0:
                                     # Show aggregate stats
@@ -4940,34 +4882,14 @@ class PortfolioAnalytics:
                         st.markdown("---")
                         st.subheader("📈 Compare Holdings - Weekly Price Trends")
                         
-                        col1, col2 = st.columns([3, 1])
-                        
-                        # Check if button was clicked in previous run and set default
                         holding_list = holdings_summary['ticker'].tolist()
-                        default_holdings = [holding_list[0]] if holding_list else []
-                        
-                        # Handle "Select Top 5" button
-                        with col2:
-                            st.markdown("###")  # Spacing
-                            if st.button("📊 Select Top 5", key="select_top5_all_no_sector"):
-                                # Use a different session state key to trigger update
-                                st.session_state['select_top5_all_no_sector_triggered'] = True
-                                st.rerun()
-                        
-                        # If top 5 was triggered, use top 5 as default
-                        if st.session_state.get('select_top5_all_no_sector_triggered', False):
-                            default_holdings = holding_list[:5]
-                            # Clear the trigger for next time
-                            st.session_state['select_top5_all_no_sector_triggered'] = False
-                        
-                        with col1:
-                            selected_holdings = st.multiselect(
-                                "Select Holding(s) to compare:",
-                                options=holding_list,
-                                default=default_holdings,
-                                format_func=lambda x: f"{x} - {holdings_summary[holdings_summary['ticker']==x]['stock_name'].iloc[0]}" if not holdings_summary[holdings_summary['ticker']==x].empty else x,
-                                key="all_channels_no_sector_holding_multi"
-                            )
+                        selected_holdings = st.multiselect(
+                            "Select Holding(s) to compare:",
+                            options=holding_list,
+                            default=[holding_list[0]] if holding_list else [],
+                            format_func=lambda x: f"{x} - {holdings_summary[holdings_summary['ticker']==x]['stock_name'].iloc[0]}" if not holdings_summary[holdings_summary['ticker']==x].empty else x,
+                            key="all_channels_no_sector_holding_multi"
+                        )
                         
                         if selected_holdings and len(selected_holdings) > 0:
                             # Show aggregate stats
