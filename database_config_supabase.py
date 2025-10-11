@@ -1428,6 +1428,8 @@ def diagnose_database_issues():
 def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_source: str = 'yfinance') -> bool:
     """Save stock price to database using Supabase"""
     try:
+        print(f"💾 Attempting to save {ticker} price for {price_date} (₹{price}) to stock_prices table...")
+
         # Try the new unified stock_prices table first
         result = supabase.table('stock_prices').upsert({
             'ticker': ticker,
@@ -1435,12 +1437,20 @@ def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_
             'price': price,
             'price_source': price_source
         }).execute()
-        
-        return True
-        
+
+        # Verify the save was successful
+        if result.data and len(result.data) > 0:
+            print(f"✅ Successfully saved {ticker} price for {price_date} to stock_prices table")
+            print(f"   Saved data: {result.data[0]}")
+            return True
+        else:
+            print(f"⚠️ Save returned no data for {ticker} on {price_date} - result: {result}")
+            return False
+
     except Exception as e:
         error_msg = str(e)
-        
+        print(f"❌ Exception in stock_prices save for {ticker} on {price_date}: {error_msg}")
+
         # If stock_prices table doesn't exist, try using historical_prices table as fallback
         # Check for PGRST205 error code (table not found) or any error mentioning stock_prices
         if ("pgrst205" in error_msg.lower() or "stock_pric" in error_msg.lower()):
@@ -1456,15 +1466,21 @@ def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_
                     'transaction_id': None,  # Not applicable for cached prices
                     'file_id': None  # Not applicable for cached prices
                 }).execute()
-                
-                print(f"✅ Saved to historical_prices table as fallback")
-                return True
-                
+
+                if result.data and len(result.data) > 0:
+                    print(f"✅ Saved to historical_prices table as fallback")
+                    print(f"   Fallback data: {result.data[0]}")
+                    return True
+                else:
+                    print(f"❌ Fallback save returned no data for {ticker}")
+                    return False
+
             except Exception as fallback_error:
-                print(f"❌ Error saving to historical_prices fallback: {fallback_error}")
+                print(f"❌ Error saving to historical_prices fallback for {ticker}: {fallback_error}")
                 return False
         else:
             print(f"❌ Error saving stock price for {ticker} on {price_date}: {e}")
+            print(f"   Error type: {type(e).__name__}")
             return False
 
 def get_stock_price_supabase(ticker: str, price_date: str) -> Optional[float]:

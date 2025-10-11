@@ -570,6 +570,11 @@ class PortfolioAnalytics:
             clean_ticker = str(ticker).strip().upper()
             clean_ticker = clean_ticker.replace('.NS', '').replace('.BO', '').replace('.NSE', '').replace('.BSE', '')
             
+            # Check if it's a BSE ticker code (6-digit number) and add .BO suffix for yfinance
+            is_bse_code = clean_ticker.isdigit() and len(clean_ticker) == 6
+            if is_bse_code:
+                print(f"🔍 {ticker}: Detected as BSE code, will try {clean_ticker}.BO")
+            
             # === EARLY CHECK: Is this a PMS/AIF? ===
             ticker_upper = ticker.upper()
             is_pms_aif = any(keyword in ticker_upper for keyword in [
@@ -616,8 +621,22 @@ class PortfolioAnalytics:
                 print(f"⚠️ {ticker}: PMS/AIF but no transaction found for {target_date_str}")
                 return None
             
-            # === STRATEGY 1: Try yfinance with .NS (NSE) ===
-            if not price:
+            # === STRATEGY 1: Try yfinance (BSE first for BSE codes, then NSE) ===
+            if not price and is_bse_code:
+                # BSE codes should try .BO first
+                try:
+                    import yfinance as yf
+                    stock = yf.Ticker(f"{clean_ticker}.BO")
+                    hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
+                    if not hist_data.empty:
+                        price = float(hist_data['Close'].iloc[0])
+                        price_source = 'yfinance_bse'
+                        print(f"✅ {ticker}: yfinance BSE (code {clean_ticker}) - ₹{price}")
+                except Exception as e:
+                    pass
+            
+            # === STRATEGY 2: Try yfinance with .NS (NSE) for non-BSE codes ===
+            if not price and not is_bse_code:
                 try:
                     import yfinance as yf
                     stock = yf.Ticker(f"{clean_ticker}.NS")
@@ -629,20 +648,21 @@ class PortfolioAnalytics:
                 except Exception as e:
                     pass
             
-            # === STRATEGY 2: Try yfinance with .BO (BSE) ===
+            # === STRATEGY 3: Try alternate exchange (NSE if BSE failed, BSE if NSE failed) ===
             if not price:
                 try:
                     import yfinance as yf
-                    stock = yf.Ticker(f"{clean_ticker}.BO")
+                    suffix = '.NS' if is_bse_code else '.BO'
+                    stock = yf.Ticker(f"{clean_ticker}{suffix}")
                     hist_data = stock.history(start=target_date, end=target_date + timedelta(days=1))
                     if not hist_data.empty:
                         price = float(hist_data['Close'].iloc[0])
-                        price_source = 'yfinance_bse'
-                        print(f"✅ {ticker}: yfinance BSE - ₹{price}")
+                        price_source = f'yfinance_{"nse" if is_bse_code else "bse"}_fallback'
+                        print(f"✅ {ticker}: yfinance {'NSE' if is_bse_code else 'BSE'} (fallback) - ₹{price}")
                 except Exception as e:
                     pass
             
-            # === STRATEGY 3: Try indstocks (works for both stocks and MFs) ===
+            # === STRATEGY 4: Try indstocks (works for both stocks and MFs) ===
             if not price:
                 try:
                     from indstocks_api import get_indstocks_client
@@ -656,7 +676,7 @@ class PortfolioAnalytics:
                 except Exception as e:
                     pass
             
-            # === STRATEGY 4: Try mftool (mutual funds) ===
+            # === STRATEGY 5: Try mftool (mutual funds) ===
             if not price:
                 try:
                     from mf_price_fetcher import fetch_mutual_fund_price
@@ -668,7 +688,7 @@ class PortfolioAnalytics:
                 except Exception as e:
                     pass
             
-            # === STRATEGY 5: Try PMS/AIF (if ticker suggests it) ===
+            # === STRATEGY 6: Try PMS/AIF (if ticker suggests it) ===
             if not price:
                 ticker_upper = ticker.upper()
                 if any(keyword in ticker_upper for keyword in ['PMS', 'AIF', 'INP', 'BUOYANT', 'CARNELIAN', 'JULIUS', 'VALENTIS', 'UNIFI']) or ticker_upper.endswith('_PMS'):
@@ -704,9 +724,22 @@ class PortfolioAnalytics:
             # Save to database if we got a valid price
             if price and price > 0:
                 try:
-                    save_stock_price_supabase(ticker, target_date_str, price, price_source)
+                    save_result = save_stock_price_supabase(ticker, target_date_str, price, price_source)
+                    if save_result:
+                        print(f"✅ Saved {ticker} price for {target_date_str} to database")
+
+                        # Verify the save by reading it back immediately
+                        verify_price = get_stock_price_supabase(ticker, target_date_str)
+                        if verify_price and abs(float(verify_price) - price) < 0.01:  # Allow small floating point differences
+                            print(f"✅ Verification successful: {ticker} {target_date_str} saved correctly")
+                        else:
+                            print(f"⚠️ Verification failed: {ticker} {target_date_str} not found after save (expected: {price}, got: {verify_price})")
+                    else:
+                        print(f"⚠️ Failed to save {ticker} price to database (returned False)")
                 except Exception as e:
-                    print(f"Failed to save price to cache: {e}")
+                    print(f"❌ Exception saving price to cache for {ticker}: {e}")
+                    import traceback
+                    traceback.print_exc()
                 return price
             
             print(f"❌ {ticker}: No price found from any source for {target_date_str}")
@@ -739,7 +772,23 @@ class PortfolioAnalytics:
             
             # Save to monthly cache if we got a valid price
             if price and price > 0:
-                save_monthly_stock_price_supabase(ticker, target_date_str, price, 'monthly_cache')
+                try:
+                    save_result = save_monthly_stock_price_supabase(ticker, target_date_str, price, 'monthly_cache')
+                    if save_result:
+                        print(f"✅ Saved {ticker} monthly price for {target_date_str} to database")
+
+                        # Verify the save by reading it back immediately
+                        verify_price = get_monthly_stock_price_supabase(ticker, target_date_str)
+                        if verify_price and abs(float(verify_price) - price) < 0.01:
+                            print(f"✅ Monthly verification successful: {ticker} {target_date_str} saved correctly")
+                        else:
+                            print(f"⚠️ Monthly verification failed: {ticker} {target_date_str} not found after save (expected: {price}, got: {verify_price})")
+                    else:
+                        print(f"⚠️ Failed to save {ticker} monthly price to database (returned False)")
+                except Exception as e:
+                    print(f"❌ Exception saving monthly price for {ticker}: {e}")
+                    import traceback
+                    traceback.print_exc()
                 return price
             
             return None
@@ -932,7 +981,7 @@ class PortfolioAnalytics:
             
             # Determine date range for incremental update
             current_date = datetime.now()
-            two_years_ago = current_date - timedelta(days=730)  # 2 years
+            one_year_ago = current_date - timedelta(days=365)  # 1 year
             
             # Check what's the latest cached date across all tickers (BULK QUERY if available)
             from database_config_supabase import get_stock_price_supabase
@@ -943,7 +992,7 @@ class PortfolioAnalytics:
             for ticker in unique_tickers:
                 ticker_purchases = buy_transactions[buy_transactions['ticker'] == ticker]
                 purchase_date = ticker_purchases['date'].min()
-                start_date = max(purchase_date, two_years_ago)
+                start_date = max(purchase_date, one_year_ago)
                 ticker_purchase_dates[ticker] = start_date
             
             # Check last 10 weeks for all tickers
@@ -1001,11 +1050,11 @@ class PortfolioAnalytics:
                 return
             
             # Show appropriate message
-            if any(latest_cached_dates[t] > two_years_ago + timedelta(days=7) for t in unique_tickers):
+            if any(latest_cached_dates[t] > one_year_ago + timedelta(days=7) for t in unique_tickers):
                 st.info(f"🔄 Incremental update: Fetching {total_weeks_to_fetch} new weekly prices...")
                 st.caption("💡 Only fetching data for new weeks since last update!")
             else:
-                st.info(f"🔄 Initial cache: Fetching weekly prices for {len(unique_tickers)} holdings (2 years)...")
+                st.info(f"🔄 Initial cache: Fetching weekly prices for {len(unique_tickers)} holdings (1 year)...")
                 st.caption("💡 This is a one-time process. Future updates will be incremental!")
             
             # Create progress bar
@@ -4338,7 +4387,11 @@ class PortfolioAnalytics:
                                         st.warning(f"⚠️ No cached data for {ticker}, fetching from API...")
                                     
                                     fetched_count = 0
-                                    for date in date_range:
+                                    save_errors = []
+                                    
+                                    for date_idx, date in enumerate(date_range):
+                                        status_text.text(f"Fetching {ticker} ({idx+1}/{min(len(all_tickers), 20)}) - {date.strftime('%b %Y')} ({date_idx+1}/{len(date_range)})...")
+                                        
                                         hist_price = self.fetch_historical_price_for_month(ticker, date)
                                         
                                         if hist_price and hist_price > 0:
@@ -4349,14 +4402,87 @@ class PortfolioAnalytics:
                                                 'Price': hist_price
                                             })
                                             fetched_count += 1
+                                        else:
+                                            # Track failed dates
+                                            save_errors.append(date.strftime('%b %Y'))
+                                    
+                                    # Show results
+                                    if fetched_count > 0:
+                                        st.success(f"✅ {ticker}: Fetched and cached {fetched_count}/{len(date_range)} prices")
+                                    
+                                    if save_errors and len(save_errors) <= 5:
+                                        st.warning(f"⚠️ {ticker}: Could not fetch data for: {', '.join(save_errors)}")
                                     
                                     if fetched_count == 0:
-                                        st.warning(f"⚠️ {ticker}: Could not fetch any historical data. Please verify ticker is valid.")
+                                        # Check if it's a delisted or invalid ticker
+                                        ticker_str = str(ticker).strip()
+                                        
+                                        # Provide helpful error messages
+                                        if ticker_str.isdigit() and len(ticker_str) == 6:
+                                            st.error(f"⚠️ {ticker}: BSE code - may be delisted or data unavailable. Try adding ticker symbol instead.")
+                                        elif ticker_str.upper() in ['OBEROIRLTY', 'TANFACIND']:
+                                            st.error(f"⚠️ {ticker}: Stock may be delisted or suspended. No historical data available.")
+                                        elif ticker_str.isdigit() and len(ticker_str) >= 5:
+                                            st.error(f"⚠️ {ticker}: Mutual fund scheme not found. Please verify the scheme code.")
+                                        else:
+                                            st.warning(f"⚠️ {ticker}: Could not fetch any historical data. Ticker may be invalid, delisted, or temporarily unavailable.")
                             
                             progress_bar.progress((idx + 1) / min(len(all_tickers), 20))
                         
                         progress_bar.empty()
                         status_text.empty()
+                        
+                        # Verify data was actually saved to database
+                        if historical_data:
+                            st.info("🔍 Verifying saved data in database...")
+                            unique_fetched_tickers = list(set([d['Ticker'] for d in historical_data]))
+                            
+                            # Sample verification: check if first ticker's data is in database
+                            if unique_fetched_tickers:
+                                sample_ticker = unique_fetched_tickers[0]
+                                sample_date = date_range[0].strftime('%Y-%m-%d')
+                                
+                                try:
+                                    from database_config_supabase import get_stock_price_supabase
+                                    verified_price = get_stock_price_supabase(sample_ticker, sample_date)
+                                    
+                                    if verified_price and verified_price > 0:
+                                        st.success(f"✅ Database verification passed: {sample_ticker} data is properly cached")
+                                    else:
+                                        st.error(f"⚠️ Database verification failed: {sample_ticker} data not found in cache after save!")
+                                        st.info("💡 This might indicate a database permissions or connection issue. Check logs for errors.")
+                                except Exception as verify_error:
+                                    st.error(f"❌ Database verification error: {verify_error}")
+                        
+                        # Add retry button for failed tickers
+                        failed_tickers = list(set(all_tickers[:20]) - set([d['Ticker'] for d in historical_data]))
+                        if failed_tickers and len(failed_tickers) > 0:
+                            st.warning(f"⚠️ {len(failed_tickers)} tickers failed to load: {', '.join(failed_tickers[:5])}{'...' if len(failed_tickers) > 5 else ''}")
+                            
+                            col1, col2 = st.columns([3, 1])
+                            with col1:
+                                st.info("💡 **Tip**: Run 'Update Price Cache' from the main menu to populate missing historical data.")
+                            with col2:
+                                if st.button("🔄 Go to Cache Update", key="goto_cache_update"):
+                                    st.session_state.page = "Dashboard"
+                                    st.rerun()
+
+                        # Add database verification button
+                        if st.button("🔍 Verify Database Storage", key="verify_db_storage"):
+                            st.info("🔍 Checking if data is being saved to database...")
+                            try:
+                                from database_config_supabase import get_all_stock_prices_supabase
+                                from datetime import timedelta
+                                all_prices = get_all_stock_prices_supabase()
+                                if all_prices:
+                                    recent_prices = [p for p in all_prices if p.get('created_at', '') > str(datetime.now() - timedelta(hours=1))]
+                                    st.success(f"✅ Found {len(all_prices)} total prices in database, {len(recent_prices)} saved in last hour")
+                                    if recent_prices:
+                                        st.json(recent_prices[:5])  # Show first 5 recent entries
+                                else:
+                                    st.warning("⚠️ No prices found in database. Data may not be saving properly.")
+                            except Exception as db_error:
+                                st.error(f"❌ Database verification failed: {db_error}")
                         
                         if historical_data:
                             hist_df = pd.DataFrame(historical_data)
@@ -4531,7 +4657,7 @@ class PortfolioAnalytics:
             # Weekly Analysis Section
             st.markdown("---")
             st.subheader("📅 Weekly Stock Analysis")
-            st.info("💡 Detailed weekly price tracking for all your stocks and mutual funds over the last 2 years")
+            st.info("💡 Detailed weekly price tracking for all your stocks and mutual funds over the last 1 year")
             
             with st.expander("📊 View Weekly Analysis", expanded=False):
                 try:
@@ -4539,14 +4665,14 @@ class PortfolioAnalytics:
                     all_tickers = df['ticker'].unique()
                     
                     if len(all_tickers) > 0:
-                        # Date range for 2 years back
+                        # Date range for 1 year back
                         end_date = pd.Timestamp.now()
-                        start_date = end_date - timedelta(days=730)  # 2 years = 730 days
+                        start_date = end_date - timedelta(days=365)  # 1 year = 365 days
                         
                         # Generate weekly date range (Mondays)
                         weekly_dates = pd.date_range(start=start_date, end=end_date, freq='W-MON')
                         
-                        st.info(f"📅 Tracking {len(all_tickers)} holdings over {len(weekly_dates)} weeks (2 years)")
+                        st.info(f"📅 Tracking {len(all_tickers)} holdings over {len(weekly_dates)} weeks (1 year)")
                         
                         # Collect weekly data for all tickers using bulk database queries
                         st.info("📊 Loading weekly data from cache...")
@@ -5848,11 +5974,25 @@ You can also suggest creating charts/graphs based on this data."""
                     progress_bar = st.progress(0)
                     status_text = st.empty()
                     status_text.text("🔍 Processing PDFs with OCR...")
-                    
+
+                    # Test OCR functionality first
+                    ocr_working = self.test_ocr_functionality()
+                    if not ocr_working:
+                        status_text.text("⚠️ OCR may not be available - PDF text extraction might fail...")
+                        st.warning("⚠️ OCR functionality not detected. PDF processing may not work for image-based documents.")
+
                     file_content = self.process_uploaded_files(uploaded_files)
-                    
+
                     progress_bar.progress(1.0)
-                    status_text.text("✅ PDF processing complete!")
+
+                    # Show results
+                    if "OCR extraction failed" in file_content or "[No text could be extracted" in file_content:
+                        status_text.text("⚠️ PDF processing had issues - some content may be missing")
+                        st.warning("⚠️ PDF processing encountered issues. If the PDF contains images with text, OCR may not be working properly.")
+                    else:
+                        status_text.text("✅ PDF processing complete!")
+                        st.success("✅ PDF content extracted successfully")
+
                     progress_bar.empty()
                     status_text.empty()
                 else:
@@ -6030,7 +6170,7 @@ You can also suggest creating charts/graphs based on this data."""
     def extract_text_from_pdf(self, pdf_bytes):
         """Extract text from PDF using multiple methods including OCR for images"""
         extracted_text = []
-        
+
         try:
             # Method 1: Try pdfplumber for better text extraction
             try:
@@ -6039,27 +6179,33 @@ You can also suggest creating charts/graphs based on this data."""
                         text = page.extract_text()
                         if text and text.strip():
                             extracted_text.append(f"Page {page_num} (Text):\n{text.strip()}\n")
-                        
-                        # Extract images and perform OCR
-                        images = page.images
-                        if images:
-                            for img_num, img in enumerate(images, 1):
-                                try:
-                                    # Convert PDF page to image
-                                    pdf_images = convert_from_bytes(pdf_bytes, first_page=page_num, last_page=page_num)
-                                    if pdf_images:
-                                        # Crop the image to the specific area if possible
-                                        img_obj = pdf_images[0]
-                                        
-                                        # Perform OCR on the image
-                                        ocr_text = pytesseract.image_to_string(img_obj, lang='eng')
-                                        if ocr_text and ocr_text.strip():
-                                            extracted_text.append(f"Page {page_num} Image {img_num} (OCR):\n{ocr_text.strip()}\n")
-                                except Exception as ocr_error:
-                                    extracted_text.append(f"Page {page_num} Image {img_num}: [OCR failed: {str(ocr_error)}]\n")
+
+                        # Try to extract embedded images and perform OCR
+                        try:
+                            # Get page dimensions for cropping
+                            page_width, page_height = page.width, page.height
+
+                            # Try to find image objects in the page
+                            if hasattr(page, 'objects'):
+                                for obj in page.objects:
+                                    if obj.get('type') == 'image':
+                                        try:
+                                            # Extract the image
+                                            img_data = obj.get('data')
+                                            if img_data:
+                                                # Convert to PIL Image
+                                                img = Image.open(io.BytesIO(img_data))
+                                                # Perform OCR
+                                                ocr_text = pytesseract.image_to_string(img, lang='eng')
+                                                if ocr_text and ocr_text.strip():
+                                                    extracted_text.append(f"Page {page_num} Embedded Image (OCR):\n{ocr_text.strip()}\n")
+                                        except Exception as ocr_error:
+                                            pass
+                        except Exception as img_error:
+                            pass
             except Exception as e:
-                st.warning(f"pdfplumber extraction failed: {str(e)}")
-            
+                print(f"pdfplumber extraction failed: {str(e)}")
+
             # Method 2: Fallback to PyPDF2 if pdfplumber fails
             if not extracted_text:
                 try:
@@ -6069,24 +6215,63 @@ You can also suggest creating charts/graphs based on this data."""
                         if text and text.strip():
                             extracted_text.append(f"Page {page_num} (PyPDF2):\n{text.strip()}\n")
                 except Exception as e:
-                    st.warning(f"PyPDF2 extraction failed: {str(e)}")
-            
-            # Method 3: Convert entire PDF to images and perform OCR
-            if not extracted_text:
-                try:
-                    pdf_images = convert_from_bytes(pdf_bytes, dpi=300)
-                    for page_num, img in enumerate(pdf_images, 1):
-                        ocr_text = pytesseract.image_to_string(img, lang='eng')
-                        if ocr_text and ocr_text.strip():
+                    print(f"PyPDF2 extraction failed: {str(e)}")
+
+            # Method 3: Convert entire PDF to images and perform OCR (most reliable for image-heavy PDFs)
+            try:
+                # Use higher DPI for better OCR accuracy
+                pdf_images = convert_from_bytes(pdf_bytes, dpi=200)  # Reduced from 300 for speed
+
+                for page_num, img in enumerate(pdf_images, 1):
+                    try:
+                        # Pre-process image for better OCR (convert to grayscale, enhance contrast)
+                        img_gray = img.convert('L')
+                        img_enhanced = img_gray.point(lambda x: 0 if x < 128 else 255, '1')  # Binarize
+
+                        # Perform OCR with multiple configuration options
+                        ocr_text = pytesseract.image_to_string(img_enhanced, lang='eng', config='--psm 6')
+
+                        if ocr_text and ocr_text.strip() and len(ocr_text.strip()) > 20:  # Filter out very short results
                             extracted_text.append(f"Page {page_num} (Full Page OCR):\n{ocr_text.strip()}\n")
-                except Exception as e:
-                    st.warning(f"Full page OCR failed: {str(e)}")
-            
+                            print(f"✅ OCR successful for page {page_num} - extracted {len(ocr_text.strip())} characters")
+                        else:
+                            # Try original image if enhanced version didn't work
+                            ocr_text_orig = pytesseract.image_to_string(img, lang='eng', config='--psm 3')
+                            if ocr_text_orig and ocr_text_orig.strip() and len(ocr_text_orig.strip()) > 20:
+                                extracted_text.append(f"Page {page_num} (Full Page OCR - Original):\n{ocr_text_orig.strip()}\n")
+                                print(f"✅ OCR successful for page {page_num} (original) - extracted {len(ocr_text_orig.strip())} characters")
+                    except Exception as ocr_error:
+                        print(f"OCR failed for page {page_num}: {str(ocr_error)}")
+
+            except Exception as e:
+                print(f"Full page OCR conversion failed: {str(e)}")
+
         except Exception as e:
-            st.error(f"PDF processing error: {str(e)}")
+            print(f"PDF processing error: {str(e)}")
             return f"[Error processing PDF: {str(e)}]"
-        
-        return "\n".join(extracted_text) if extracted_text else "[No text could be extracted from PDF]"
+
+        # Combine all extracted text
+        result = "\n".join(extracted_text) if extracted_text else "[No text could be extracted from PDF]"
+
+        # Log the result for debugging
+        if result == "[No text could be extracted from PDF]":
+            print("⚠️ No text extracted from PDF - may be image-based or corrupted")
+        else:
+            print(f"✅ PDF processing complete - extracted {len(result)} characters")
+
+        return result
+
+    def test_ocr_functionality(self):
+        """Test if OCR functionality is working"""
+        try:
+            # Create a simple test image
+            test_img = Image.new('RGB', (100, 30), color='white')
+            # This should work if OCR dependencies are installed
+            test_text = pytesseract.image_to_string(test_img, lang='eng')
+            return True
+        except Exception as e:
+            print(f"OCR test failed: {e}")
+            return False
 
     def process_uploaded_files(self, uploaded_files):
         """Process uploaded files and extract text content"""
@@ -6109,7 +6294,12 @@ You can also suggest creating charts/graphs based on this data."""
                     # Enhanced PDF processing with OCR
                     pdf_bytes = file.read()
                     extracted_content = self.extract_text_from_pdf(pdf_bytes)
-                    file_content += f"PDF Content (with OCR):\n{extracted_content}"
+
+                    if extracted_content and extracted_content != "[No text could be extracted from PDF]" and len(extracted_content) > 50:
+                        file_content += f"PDF Content (with OCR):\n{extracted_content}"
+                    else:
+                        # Show warning if OCR failed
+                        file_content += f"PDF Content: [OCR extraction failed or insufficient text extracted. PDF may be image-based or corrupted.]"
                 else:
                     file_content += f"File type {file.type} - content extraction not supported yet"
             
