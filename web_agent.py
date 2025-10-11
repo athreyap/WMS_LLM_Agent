@@ -3046,18 +3046,40 @@ class PortfolioAnalytics:
                 top_performers = performer_data.nlargest(5, 'pnl_percentage')
                 
                 if not top_performers.empty:
-                    fig_top = px.bar(
-                        top_performers,
-                        x='pnl_percentage',
-                        y='ticker',
+                    # Sort by pnl_percentage ascending for better visual (top at bottom)
+                    top_performers = top_performers.sort_values('pnl_percentage', ascending=True)
+                    
+                    # Ensure ticker is string and create display label
+                    top_performers['ticker_str'] = top_performers['ticker'].astype(str)
+                    top_performers['display_label'] = top_performers['ticker_str'] + ' - ' + top_performers['stock_name'].str[:20]
+                    
+                    fig_top = go.Figure()
+                    
+                    fig_top.add_trace(go.Bar(
+                        x=top_performers['pnl_percentage'],
+                        y=top_performers['display_label'],
                         orientation='h',
+                        marker=dict(
+                            color=top_performers['pnl_percentage'],
+                            colorscale='Greens',
+                            showscale=False
+                        ),
+                        text=top_performers['pnl_percentage'].round(2),
+                        texttemplate='%{text:.2f}%',
+                        textposition='outside',
+                        hovertemplate='<b>%{y}</b><br>Return: %{x:.2f}%<br>P&L: ₹%{customdata:,.0f}<extra></extra>',
+                        customdata=top_performers['unrealized_pnl']
+                    ))
+                    
+                    fig_top.update_layout(
                         title="Top 5 Performers by Return %",
-                        labels={'pnl_percentage': 'Return %', 'ticker': 'Ticker'},
-                        color='pnl_percentage',
-                        color_continuous_scale='Greens',
-                        hover_data={'stock_name': True, 'unrealized_pnl': ':,.0f', 'pnl_percentage': ':.2f'}
+                        xaxis_title="Return %",
+                        yaxis_title="",
+                        height=300,
+                        showlegend=False,
+                        margin=dict(l=200)  # More space for labels
                     )
-                    fig_top.update_layout(height=300, showlegend=False)
+                    
                     st.plotly_chart(fig_top, use_container_width=True, key="top_performers_chart")
                 else:
                     st.info("No performance data available")
@@ -3083,18 +3105,41 @@ class PortfolioAnalytics:
                 underperformers = performer_data.nsmallest(5, 'pnl_percentage')
                 
                 if not underperformers.empty:
-                    fig_bottom = px.bar(
-                        underperformers,
-                        x='pnl_percentage',
-                        y='ticker',
+                    # Sort by pnl_percentage descending for better visual (worst at bottom)
+                    underperformers = underperformers.sort_values('pnl_percentage', ascending=False)
+                    
+                    # Ensure ticker is string and create display label
+                    underperformers['ticker_str'] = underperformers['ticker'].astype(str)
+                    underperformers['display_label'] = underperformers['ticker_str'] + ' - ' + underperformers['stock_name'].str[:20]
+                    
+                    fig_bottom = go.Figure()
+                    
+                    fig_bottom.add_trace(go.Bar(
+                        x=underperformers['pnl_percentage'],
+                        y=underperformers['display_label'],
                         orientation='h',
+                        marker=dict(
+                            color=underperformers['pnl_percentage'],
+                            colorscale='Reds',
+                            showscale=False,
+                            reversescale=True  # Darker red for worse performance
+                        ),
+                        text=underperformers['pnl_percentage'].round(2),
+                        texttemplate='%{text:.2f}%',
+                        textposition='outside',
+                        hovertemplate='<b>%{y}</b><br>Return: %{x:.2f}%<br>P&L: ₹%{customdata:,.0f}<extra></extra>',
+                        customdata=underperformers['unrealized_pnl']
+                    ))
+                    
+                    fig_bottom.update_layout(
                         title="Bottom 5 Performers by Return %",
-                        labels={'pnl_percentage': 'Return %', 'ticker': 'Ticker'},
-                        color='pnl_percentage',
-                        color_continuous_scale='Reds',
-                        hover_data={'stock_name': True, 'unrealized_pnl': ':,.0f', 'pnl_percentage': ':.2f'}
+                        xaxis_title="Return %",
+                        yaxis_title="",
+                        height=300,
+                        showlegend=False,
+                        margin=dict(l=200)  # More space for labels
                     )
-                    fig_bottom.update_layout(height=300, showlegend=False)
+                    
                     st.plotly_chart(fig_bottom, use_container_width=True, key="underperformers_chart")
                 else:
                     st.info("No performance data available")
@@ -3397,6 +3442,9 @@ class PortfolioAnalytics:
         ].copy()
 
         if not stock_and_mf_buys.empty:
+            import plotly.express as px
+            import plotly.graph_objects as go
+            
             # Group by ticker and calculate performance metrics
             stock_performance = stock_and_mf_buys.groupby('ticker').agg({
                 'invested_amount': 'sum',
@@ -3430,7 +3478,187 @@ class PortfolioAnalytics:
 
             # Sort by P&L percentage
             stock_performance = stock_performance.sort_values('pnl_percentage', ascending=False)
-
+            
+            # ===== COMPREHENSIVE ANALYSIS SECTION =====
+            st.markdown("---")
+            st.subheader("📈 Performance Distribution")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Asset allocation by current value
+                if 'sector' in stock_and_mf_buys.columns and not stock_and_mf_buys['sector'].isna().all():
+                    sector_allocation = stock_and_mf_buys.groupby('sector').agg({
+                        'current_value': 'sum'
+                    }).reset_index()
+                    sector_allocation = sector_allocation.sort_values('current_value', ascending=False)
+                    
+                    fig_allocation = px.pie(
+                        sector_allocation,
+                        values='current_value',
+                        names='sector',
+                        title='1-Year Buy Portfolio Allocation by Sector',
+                        hole=0.3
+                    )
+                    st.plotly_chart(fig_allocation, use_container_width=True, key="1year_sector_allocation_pie")
+            
+            with col2:
+                # P&L Distribution
+                holdings_pnl = stock_and_mf_buys.groupby('ticker').agg({
+                    'unrealized_pnl': 'sum',
+                    'stock_name': 'first'
+                }).reset_index()
+                holdings_pnl['pnl_type'] = holdings_pnl['unrealized_pnl'].apply(lambda x: 'Profit' if x > 0 else 'Loss' if x < 0 else 'Break-even')
+                
+                pnl_summary = holdings_pnl.groupby('pnl_type').size().reset_index(name='count')
+                
+                fig_pnl_dist = px.pie(
+                    pnl_summary,
+                    values='count',
+                    names='pnl_type',
+                    title='Holdings P&L Distribution (1-Year)',
+                    color='pnl_type',
+                    color_discrete_map={'Profit': 'green', 'Loss': 'red', 'Break-even': 'gray'}
+                )
+                st.plotly_chart(fig_pnl_dist, use_container_width=True, key="1year_pnl_distribution_pie")
+            
+            st.markdown("---")
+            
+            # ===== Top and Bottom Performers =====
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("🚀 Top 10 Gainers (1-Year)")
+                gainers = stock_and_mf_buys.groupby('ticker').agg({
+                    'stock_name': 'first',
+                    'unrealized_pnl': 'sum',
+                    'invested_amount': 'sum',
+                    'current_value': 'sum'
+                }).reset_index()
+                gainers['pnl_percentage'] = (gainers['unrealized_pnl'] / gainers['invested_amount'] * 100)
+                gainers = gainers[gainers['unrealized_pnl'] > 0].nlargest(10, 'pnl_percentage')
+                
+                if not gainers.empty:
+                    for idx, row in gainers.iterrows():
+                        with st.container():
+                            st.markdown(f"**{row.get('stock_name', row['ticker'])}** ({row['ticker']})")
+                            st.markdown(f"💰 P&L: ₹{row['unrealized_pnl']:,.0f} | 📊 {row['pnl_percentage']:.2f}%")
+                            st.progress(min(row['pnl_percentage'] / 100, 1.0))
+                            st.markdown("---")
+                else:
+                    st.info("No gainers yet")
+            
+            with col2:
+                st.subheader("📉 Top 10 Losers (1-Year)")
+                losers = stock_and_mf_buys.groupby('ticker').agg({
+                    'stock_name': 'first',
+                    'unrealized_pnl': 'sum',
+                    'invested_amount': 'sum',
+                    'current_value': 'sum'
+                }).reset_index()
+                losers['pnl_percentage'] = (losers['unrealized_pnl'] / losers['invested_amount'] * 100)
+                losers = losers[losers['unrealized_pnl'] < 0].nsmallest(10, 'pnl_percentage')
+                
+                if not losers.empty:
+                    for idx, row in losers.iterrows():
+                        with st.container():
+                            st.markdown(f"**{row.get('stock_name', row['ticker'])}** ({row['ticker']})")
+                            st.markdown(f"💸 Loss: ₹{row['unrealized_pnl']:,.0f} | 📊 {row['pnl_percentage']:.2f}%")
+                            st.progress(min(abs(row['pnl_percentage']) / 100, 1.0))
+                            st.markdown("---")
+                else:
+                    st.info("No losers - Excellent performance!")
+            
+            st.markdown("---")
+            
+            # ===== Performance by Sector and Channel =====
+            st.subheader("📊 Performance Breakdown")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if 'sector' in stock_and_mf_buys.columns and not stock_and_mf_buys['sector'].isna().all():
+                    st.markdown("### 🏢 By Sector")
+                    sector_perf = stock_and_mf_buys.groupby('sector').agg({
+                        'invested_amount': 'sum',
+                        'current_value': 'sum',
+                        'unrealized_pnl': 'sum'
+                    }).reset_index()
+                    sector_perf['pnl_percentage'] = (sector_perf['unrealized_pnl'] / sector_perf['invested_amount'] * 100)
+                    sector_perf = sector_perf.sort_values('pnl_percentage', ascending=False)
+                    
+                    fig_sector_bar = go.Figure()
+                    fig_sector_bar.add_trace(go.Bar(
+                        x=sector_perf['sector'],
+                        y=sector_perf['pnl_percentage'],
+                        marker_color=['green' if x >= 0 else 'red' for x in sector_perf['pnl_percentage']],
+                        text=sector_perf['pnl_percentage'].round(2),
+                        textposition='auto'
+                    ))
+                    fig_sector_bar.update_layout(
+                        title="Sector Performance % (1-Year)",
+                        xaxis_title="Sector",
+                        yaxis_title="P&L %",
+                        height=400
+                    )
+                    st.plotly_chart(fig_sector_bar, use_container_width=True, key="1year_sector_performance_bar")
+            
+            with col2:
+                if 'channel' in stock_and_mf_buys.columns and not stock_and_mf_buys['channel'].isna().all():
+                    st.markdown("### 📡 By Channel")
+                    channel_perf = stock_and_mf_buys.groupby('channel').agg({
+                        'invested_amount': 'sum',
+                        'current_value': 'sum',
+                        'unrealized_pnl': 'sum'
+                    }).reset_index()
+                    channel_perf['pnl_percentage'] = (channel_perf['unrealized_pnl'] / channel_perf['invested_amount'] * 100)
+                    channel_perf = channel_perf.sort_values('pnl_percentage', ascending=False)
+                    
+                    fig_channel_bar = go.Figure()
+                    fig_channel_bar.add_trace(go.Bar(
+                        x=channel_perf['channel'],
+                        y=channel_perf['pnl_percentage'],
+                        marker_color=['green' if x >= 0 else 'red' for x in channel_perf['pnl_percentage']],
+                        text=channel_perf['pnl_percentage'].round(2),
+                        textposition='auto'
+                    ))
+                    fig_channel_bar.update_layout(
+                        title="Channel Performance % (1-Year)",
+                        xaxis_title="Channel",
+                        yaxis_title="P&L %",
+                        height=400
+                    )
+                    st.plotly_chart(fig_channel_bar, use_container_width=True, key="1year_channel_performance_bar")
+            
+            st.markdown("---")
+            
+            # ===== Portfolio Statistics =====
+            st.subheader("📊 Portfolio Statistics (1-Year Buys)")
+            
+            # Calculate statistics
+            total_holdings = len(stock_performance)
+            winning_holdings = len(stock_performance[stock_performance['unrealized_pnl'] > 0])
+            losing_holdings = len(stock_performance[stock_performance['unrealized_pnl'] < 0])
+            win_rate = (winning_holdings / total_holdings * 100) if total_holdings > 0 else 0
+            avg_return = stock_performance['pnl_percentage'].mean()
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Avg Return per Holding", f"{avg_return:.2f}%")
+            with col2:
+                st.metric("Win Rate", f"{win_rate:.1f}%")
+            with col3:
+                if 'sector' in stock_and_mf_buys.columns:
+                    num_sectors = stock_and_mf_buys['sector'].nunique()
+                    st.metric("Sectors", f"{num_sectors}")
+            with col4:
+                if 'channel' in stock_and_mf_buys.columns:
+                    num_channels = stock_and_mf_buys['channel'].nunique()
+                    st.metric("Channels", f"{num_channels}")
+            
+            st.markdown("---")
+            
             # Display top performers
             st.subheader("🏆 Top Performers (1-Year Buy Transactions)")
 
