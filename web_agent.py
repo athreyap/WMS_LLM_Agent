@@ -1882,15 +1882,17 @@ class PortfolioAnalytics:
                     live_price = None
                     sector = 'Unknown'
                 print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
-            if live_price and live_price > 0:
-                live_prices[ticker] = live_price
-                sectors[ticker] = sector
-                successful_fetches += 1
-                consecutive_failures = 0
-                print(f"✅ STORED: {ticker} -> ₹{live_price}")
+                
+                # Store successful fetch (MUST be inside the for loop)
+                if live_price and live_price > 0:
+                    live_prices[ticker] = live_price
+                    sectors[ticker] = sector
+                    successful_fetches += 1
+                    consecutive_failures = 0
+                    print(f"✅ STORED: {ticker} -> ₹{live_price}")
                     
                     # 💾 SAVE TO DATABASE (Critical fix - persist prices across sessions)
-                try:
+                    try:
                         from database_config_supabase import save_stock_price_supabase
                         today = datetime.now().strftime('%Y-%m-%d')
                         
@@ -1904,10 +1906,10 @@ class PortfolioAnalytics:
                             current_price=live_price  # Maps to live_price column
                         )
                         print(f"💾 Saved {ticker} to database (price + metadata)")
-                except Exception as db_error:
+                    except Exception as db_error:
                         print(f"⚠️ Could not save {ticker} to DB: {db_error}")
                         # Continue anyway - at least we have it in session
-            else:
+                else:
                     consecutive_failures += 1
                     print(f"❌ SKIPPED: {ticker} - invalid price or sector")
 
