@@ -656,11 +656,21 @@ class PortfolioAnalytics:
                 print(f"🔍 {ticker}: Unknown ticker type - will try all sources")
             
             # === EARLY CHECK: Is this a PMS/AIF? ===
-            ticker_upper = ticker.upper()
-            is_pms_aif = any(keyword in ticker_upper for keyword in [
-                'PMS', 'AIF', 'INP', 'BUOYANT', 'CARNELIAN', 'JULIUS', 
-                'VALENTIS', 'UNIFI', 'PORTFOLIO', 'FUND'
-            ]) or ticker_upper.endswith('_PMS') or ticker.startswith('INP')
+            # Check for SEBI registration codes and common PMS/AIF patterns
+            from pms_aif_fetcher import is_pms_code, is_aif_code
+            ticker_str = str(ticker).strip()
+            ticker_upper = ticker_str.upper()
+            
+            is_pms_aif = (
+                is_pms_code(ticker_str) or  # Detects INP... codes
+                is_aif_code(ticker_str) or  # Detects AIF_IN_... codes
+                'PMS' in ticker_upper or 
+                'AIF' in ticker_upper or
+                any(keyword in ticker_upper for keyword in [
+                    'BUOYANT', 'CARNELIAN', 'JULIUS', 'VALENTIS', 
+                    'UNIFI', 'NUVAMA', 'PORTFOLIO MANAGEMENT'
+                ])
+            )
             
             if is_pms_aif:
                 # For PMS/AIF, we use the TRANSACTION PRICE as historical price
@@ -943,7 +953,15 @@ class PortfolioAnalytics:
             if success:
                 st.success(f"✅ Saved {len(df)} transactions to database")
                 
-                # Fetch live prices and sectors for new tickers (saves to DB)
+                # STEP 1: Fetch and cache historical prices for transaction dates
+                st.info("🔄 Caching historical prices for transaction dates...")
+                try:
+                    self.update_missing_historical_prices(user_id)
+                    st.success("✅ Historical prices cached!")
+                except Exception as e:
+                    st.warning(f"⚠️ Historical price caching had warnings: {e}")
+                
+                # STEP 2: Fetch live prices and sectors for new tickers (saves to DB)
                 st.info("🔄 Fetching live prices and sectors for new tickers...")
                 try:
                     self.fetch_live_prices_and_sectors(user_id)
@@ -951,11 +969,7 @@ class PortfolioAnalytics:
                 except Exception as e:
                     st.warning(f"⚠️ Live price update had warnings: {e}")
                 
-                # Note: Historical and weekly price caching is done automatically 
-                # during portfolio data loading and refresh operations
-                st.info("💡 Price history will be cached when you refresh portfolio data in Settings")
-                
-                # STEP 4: Refresh portfolio data to include new transactions
+                # STEP 3: Refresh portfolio data to include new transactions
                 st.info("🔄 Refreshing portfolio data...")
                 try:
                     self.load_portfolio_data(user_id)
@@ -1516,11 +1530,54 @@ class PortfolioAnalytics:
         """Legacy function - now redirects to comprehensive weekly+monthly caching"""
         return self.populate_weekly_and_monthly_cache(user_id)
     
+    def cache_transaction_historical_prices(self, df, user_id):
+        """
+        Cache historical prices for all transactions to historical_prices table.
+        This ensures we have price data for transaction dates for charts and analysis.
+        
+        Args:
+            df: DataFrame with transaction data (must have 'ticker', 'date' columns)
+            user_id: User ID
+        """
+        try:
+            from database_config_supabase import save_stock_price_supabase
+            from datetime import datetime
+            
+            # Get unique ticker-date combinations
+            unique_transactions = df[['ticker', 'date']].drop_duplicates()
+            
+            success_count = 0
+            skip_count = 0
+            error_count = 0
+            
+            for _, row in unique_transactions.iterrows():
+                ticker = row['ticker']
+                transaction_date = pd.to_datetime(row['date'])
+                date_str = transaction_date.strftime('%Y-%m-%d')
+                
+                try:
+                    # Fetch historical price using comprehensive fetcher
+                    historical_price = self.fetch_historical_price_comprehensive(ticker, transaction_date)
+                    
+                    if historical_price and historical_price > 0:
+                        success_count += 1
+                    else:
+                        skip_count += 1
+                        
+                except Exception as e:
+                    error_count += 1
+                    print(f"⚠️ Error caching price for {ticker} on {date_str}: {e}")
+            
+            print(f"📊 Historical price caching: {success_count} cached, {skip_count} skipped, {error_count} errors")
+            return success_count
+                            
+        except Exception as e:
+            print(f"❌ Error in cache_transaction_historical_prices: {e}")
+            raise
+    
     def update_missing_historical_prices(self, user_id):
         """Update missing historical prices in database"""
         try:
-            st.info("🔄 Updating missing historical prices...")
-            
             # Get user transactions
             transactions = get_transactions_supabase(user_id=user_id)
             if not transactions:
@@ -1528,62 +1585,12 @@ class PortfolioAnalytics:
             
             df = pd.DataFrame(transactions)
             
-            # Identify transactions with missing historical prices
-            missing_prices = df[df['price'].isna() | (df['price'] == 0)]
-            
-            if len(missing_prices) > 0:
-                st.info(f"📊 Found {len(missing_prices)} transactions with missing historical prices")
-                
-                try:
-                    # Create progress bar for updating historical prices
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    status_text.text(f"🔄 Updating historical prices for {len(missing_prices)} transactions...")
-                    
-                    for i, (_, row) in enumerate(missing_prices.iterrows()):
-                        ticker = row['ticker']
-                        transaction_date = pd.to_datetime(row['date'])
-                        
-                        # Fetch historical price
-                        if str(ticker).isdigit() or ticker.startswith('MF_'):
-                            historical_price = get_mutual_fund_price(
-                                ticker, 
-                                ticker, 
-                                user_id, 
-                                transaction_date.strftime('%Y-%m-%d')
-                            )
-                        else:
-                            historical_price = get_stock_price(
-                                ticker, 
-                                ticker, 
-                                transaction_date.strftime('%Y-%m-%d')
-                            )
-                        
-                        if historical_price and historical_price > 0:
-                            # Update transaction price in database
-                            # Note: This would require a database update function
-                            pass  # Silent update - no individual success messages
-                        
-                        # Update progress
-                        progress = (i + 1) / len(missing_prices)
-                        progress_bar.progress(progress)
-                        status_text.text(f"🔄 Updated {i + 1}/{len(missing_prices)} transactions...")
-                    
-                    # Complete progress bar
-                    progress_bar.progress(1.0)
-                    status_text.text("✅ Historical prices updated successfully!")
-                    
-                    # Clear progress elements after a short delay
-                    import time
-                    time.sleep(1)
-                    progress_bar.empty()
-                    status_text.empty()
-                    
-                except Exception as e:
-                    st.error(f"Error updating historical prices: {e}")
+            # Cache historical prices for all transactions
+            return self.cache_transaction_historical_prices(df, user_id)
                             
         except Exception as e:
-            st.error(f"Error in update_missing_historical_prices: {e}")
+            print(f"❌ Error in update_missing_historical_prices: {e}")
+            raise
     
     def fetch_live_prices_and_sectors(self, user_id, force_refresh=False):
         """
@@ -1662,8 +1669,12 @@ class PortfolioAnalytics:
                     ticker_str = str(ticker).strip()
                     ticker_upper = ticker_str.upper()
                     
-                    # Improved PMS/AIF detection - only by name patterns, not by value
+                    # Improved PMS/AIF detection using dedicated functions + name patterns
+                    from pms_aif_fetcher import is_pms_code, is_aif_code
+                    
                     is_pms_aif = (
+                        is_pms_code(ticker_str) or  # Detects INP... SEBI codes
+                        is_aif_code(ticker_str) or  # Detects AIF_IN_... SEBI codes
                         'PMS' in ticker_upper or 'AIF' in ticker_upper or
                         'BUOYANT' in ticker_upper or 'CARNELIAN' in ticker_upper or
                         'JULIUS BAER' in ticker_upper or 'VALENTIS' in ticker_upper or
@@ -1672,7 +1683,7 @@ class PortfolioAnalytics:
                         'ALTERNATIVE INVESTMENT' in ticker_upper
                     )
                     
-                    # Check if PMS/AIF (by name, not value)
+                    # Check if PMS/AIF (by SEBI codes or name patterns, not by value)
                     if is_pms_aif:
                         # PMS/AIF - calculate value using SEBI returns
                         print(f"🔍 PMS/AIF detected: {ticker}")
@@ -1684,24 +1695,31 @@ class PortfolioAnalytics:
                             investment_date = pd.to_datetime(pms_trans['date']).strftime('%Y-%m-%d')
                             investment_amount = float(pms_trans['quantity']) * float(pms_trans['price']) if pms_trans['price'] else 0
                             
-                            # Try to fetch PMS data from SEBI and calculate current value
+                            # Try to fetch PMS/AIF data from SEBI and calculate current value
                             try:
-                                from pms_aif_fetcher import get_pms_nav
+                                from pms_aif_fetcher import get_pms_nav, get_aif_nav, is_aif_code
                                 pms_name = pms_trans.get('stock_name', ticker).replace('_', ' ')
                                 
-                                print(f"🔍 PMS FETCH: Calling get_pms_nav for {ticker}")
-                                print(f"   - PMS Name: {pms_name}")
-                                print(f"   - Investment Date: {investment_date}")
-                                print(f"   - Investment Amount: ₹{investment_amount:,.0f}")
+                                # Use appropriate function based on type
+                                if is_aif_code(ticker_str) or 'AIF' in ticker_upper:
+                                    print(f"🔍 AIF FETCH: Calling get_aif_nav for {ticker}")
+                                    print(f"   - AIF Name: {pms_name}")
+                                    print(f"   - Investment Date: {investment_date}")
+                                    print(f"   - Investment Amount: ₹{investment_amount:,.0f}")
+                                    pms_data = get_aif_nav(ticker, pms_name, investment_date, investment_amount)
+                                else:
+                                    print(f"🔍 PMS FETCH: Calling get_pms_nav for {ticker}")
+                                    print(f"   - PMS Name: {pms_name}")
+                                    print(f"   - Investment Date: {investment_date}")
+                                    print(f"   - Investment Amount: ₹{investment_amount:,.0f}")
+                                    pms_data = get_pms_nav(ticker, pms_name, investment_date, investment_amount)
                                 
-                                pms_data = get_pms_nav(ticker, pms_name, investment_date, investment_amount)
-                                
-                                print(f"🔍 PMS FETCH RESULT: {pms_data}")
+                                print(f"🔍 PMS/AIF FETCH RESULT: {pms_data}")
 
                                 if pms_data and pms_data.get('price'):
                                     live_price = pms_data['price']
-                                    # Set sector based on PMS/AIF type
-                                    if 'AIF' in ticker_str:
+                                    # Set sector based on PMS/AIF type (use proper detection)
+                                    if is_aif_code(ticker_str) or 'AIF' in ticker_upper:
                                         sector = "AIF"
                                     else:
                                         sector = "PMS"
@@ -1714,17 +1732,17 @@ class PortfolioAnalytics:
                                 else:
                                     # Fallback: use transaction price (no growth)
                                     live_price = pms_trans['price']
-                                    if 'AIF' in ticker_str:
+                                    if is_aif_code(ticker_str) or 'AIF' in ticker_upper:
                                         sector = "AIF"
                                     else:
                                         sector = "PMS"
                                     print(f"⚠️ {sector} {ticker}: Using transaction price (SEBI data not available)")
                                     print(f"   💡 Reason: pms_data = {pms_data}")
                             except ImportError as ie:
-                                print(f"⚠️ PMS {ticker}: pms_aif_fetcher import failed: {ie}")
+                                print(f"⚠️ PMS/AIF {ticker}: pms_aif_fetcher import failed: {ie}")
                                 print(f"💡 Try installing: pip install pandas requests beautifulsoup4 html5lib")
                                 live_price = pms_trans['price']
-                                if 'AIF' in ticker_str:
+                                if is_aif_code(ticker_str) or 'AIF' in ticker_upper:
                                     sector = "AIF"
                                 else:
                                     sector = "PMS"
@@ -1732,13 +1750,13 @@ class PortfolioAnalytics:
                                 print(f"⚠️ PMS/AIF calculation failed for {ticker}: {e}")
                                 print(f"💡 This might be due to missing html5lib dependency. Try: pip install html5lib")
                                 live_price = pms_trans['price']
-                                if 'AIF' in ticker_str:
+                                if is_aif_code(ticker_str) or 'AIF' in ticker_upper:
                                     sector = "AIF"
                                 else:
                                     sector = "PMS"
                         else:
                             live_price = None
-                            if 'AIF' in ticker_str:
+                            if is_aif_code(ticker_str) or 'AIF' in ticker_upper:
                                 sector = "AIF"
                             else:
                                 sector = "PMS"
