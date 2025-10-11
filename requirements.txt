@@ -9,6 +9,7 @@ matplotlib>=3.5.0
 # Financial data APIs
 yfinance>=0.2.0
 mftool>=0.3.0
+deprecated>=1.2.0  # Required by mftool
 # indstocks>=0.1.0  # Requires Python >=3.10, not compatible with Python 3.9
 requests>=2.28.0
 httpx>=0.24.0
@@ -16,6 +17,7 @@ beautifulsoup4>=4.11.0
 html5lib>=1.1
 lxml>=4.9.0
 selenium>=4.10.0  # For web scraping if needed
+webdriver-manager>=4.0.0  # For automatic ChromeDriver management
 
 # Database and ORM
 supabase>=1.0.0
