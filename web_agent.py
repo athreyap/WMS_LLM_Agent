@@ -1075,6 +1075,10 @@ class PortfolioAnalytics:
                     # Update last login
                     update_user_login_supabase(user_id)
                     
+                    # Initialize portfolio data after registration (CRITICAL FIX - load portfolio before showing dashboard)
+                    st.info("🔄 Loading your portfolio data...")
+                    self.initialize_portfolio_data(skip_cache_population=False)
+                    
                     st.rerun()
             else:
                 st.error("❌ All files failed to process. Please check your files and try again.")
