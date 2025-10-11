@@ -45,8 +45,17 @@ def get_pms_nav_from_sebi(pms_name: str = None, registration_code: str = None) -
         # SEBI PMS disclosure URL
         url = "https://www.sebi.gov.in/sebiweb/other/OtherAction.do?doPmr=yes"
         
-        # Read all tables from the page
-        tables = pd.read_html(url)
+        # Read all tables from the page with headers to avoid being blocked
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        try:
+            tables = pd.read_html(url, storage_options={'headers': headers})
+        except ValueError as ve:
+            # "No tables found" error
+            logger.warning(f"⚠️ SEBI website returned no tables (website may be down or structure changed): {ve}")
+            return None
         
         if not tables:
             logger.warning("No tables found on SEBI PMS page")
@@ -303,37 +312,41 @@ def get_aif_nav_from_sebi(aif_name: str = None, registration_code: str = None) -
         # Note: SEBI AIF data might be on a different page
         url = "https://www.sebi.gov.in/sebiweb/other/OtherAction.do?doRecognisedFpi=yes&type=aif"
         
+        # Add headers to avoid being blocked
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
         try:
-            tables = pd.read_html(url)
+            tables = pd.read_html(url, storage_options={'headers': headers})
+        except ValueError as ve:
+            logger.warning(f"⚠️ SEBI AIF website returned no tables (website may be down or structure changed): {ve}")
+            return None
             
-            if not tables:
-                logger.warning("No AIF tables found on SEBI page")
-                return None
-            
-            df = pd.concat(tables, ignore_index=True)
-            
-            # Search by name or registration code
-            if aif_name:
-                search_term = aif_name.replace("_", " ").replace("-", " ")
-                match = df[df.apply(lambda row: row.astype(str).str.contains(search_term, case=False, na=False).any(), axis=1)]
-            elif registration_code:
-                match = df[df.apply(lambda row: row.astype(str).str.contains(registration_code, case=False, na=False).any(), axis=1)]
-            else:
-                return None
-            
-            if match.empty:
-                logger.warning(f"No AIF data found for: {aif_name or registration_code}")
-                return None
-            
-            logger.info(f"✅ Found {len(match)} AIF records")
-            return match
-            
-        except Exception as e:
-            logger.warning(f"Could not fetch AIF data from SEBI: {e}")
+        if not tables:
+            logger.warning("No AIF tables found on SEBI page")
             return None
         
+        df = pd.concat(tables, ignore_index=True)
+        
+        # Search by name or registration code
+        if aif_name:
+            search_term = aif_name.replace("_", " ").replace("-", " ")
+            match = df[df.apply(lambda row: row.astype(str).str.contains(search_term, case=False, na=False).any(), axis=1)]
+        elif registration_code:
+            match = df[df.apply(lambda row: row.astype(str).str.contains(registration_code, case=False, na=False).any(), axis=1)]
+        else:
+            return None
+        
+        if match.empty:
+            logger.warning(f"No AIF data found for: {aif_name or registration_code}")
+            return None
+        
+        logger.info(f"✅ Found {len(match)} AIF records")
+        return match
+        
     except Exception as e:
-        logger.error(f"Error fetching AIF data: {e}")
+        logger.error(f"Error fetching AIF data from SEBI: {e}")
         return None
 
 def get_aif_nav(ticker: str, aif_name: str = None) -> Optional[Dict[str, Any]]:

@@ -3709,6 +3709,8 @@ class PortfolioAnalytics:
     def render_overall_portfolio_performance(self, df):
         """Render overall portfolio performance and monthly transaction analysis"""
         from datetime import datetime, timedelta
+        import plotly.express as px
+        import plotly.graph_objects as go
 
         st.subheader("📋 Overall Portfolio Performance")
 
@@ -4213,17 +4215,29 @@ class PortfolioAnalytics:
         try:
             # Debug: Check what's in the sector column
             print(f"🔍 DEBUG: df.columns = {df.columns.tolist()}")
-            if 'sector' in df.columns:
-                print(f"🔍 DEBUG: df['sector'].unique() = {df['sector'].unique()}")
-                print(f"🔍 DEBUG: df['sector'].value_counts() = {df['sector'].value_counts()}")
-                print(f"🔍 DEBUG: df['sector'].isna().sum() = {df['sector'].isna().sum()}")
             
-            if 'sector' not in df.columns or df['sector'].isna().all():
-                st.warning("Sector information not available")
+            # Check for sector column - try multiple variations
+            sector_col = None
+            if 'sector' in df.columns and not df['sector'].isna().all():
+                sector_col = 'sector'
+            elif 'sector_db' in df.columns and not df['sector_db'].isna().all():
+                sector_col = 'sector_db'
+                # Copy sector_db to sector for consistency
+                df['sector'] = df['sector_db']
+                sector_col = 'sector'
+            
+            if sector_col:
+                print(f"🔍 DEBUG: Using sector column: {sector_col}")
+                print(f"🔍 DEBUG: df['{sector_col}'].unique() = {df[sector_col].unique()}")
+                print(f"🔍 DEBUG: df['{sector_col}'].value_counts() = {df[sector_col].value_counts()}")
+                print(f"🔍 DEBUG: df['{sector_col}'].isna().sum() = {df[sector_col].isna().sum()}")
+            
+            if not sector_col or df['sector'].isna().all():
+                st.warning("⚠️ Sector information not available in portfolio data")
+                st.info("💡 Sectors are automatically fetched when prices are loaded. Reload data to populate sectors.")
                 # Show what we have for debugging
                 with st.expander("🔍 Debug: Show available columns"):
-                    st.write(df.columns.tolist())
-                    st.write(df.head())
+                    st.json(df.columns.tolist())
                 return
             
             # Group by sector (exclude Unknown if there are other sectors)
@@ -4389,7 +4403,12 @@ class PortfolioAnalytics:
                 st.info(f"📊 Channel: **{selected_channel}** - {len(channel_df)} transaction(s)")
                 
                 # Step 2: Sector selection within channel
-                if 'sector' in channel_df.columns:
+                # Check for sector column - try sector or sector_db
+                if 'sector' not in channel_df.columns or channel_df['sector'].isna().all():
+                    if 'sector_db' in channel_df.columns and not channel_df['sector_db'].isna().all():
+                        channel_df['sector'] = channel_df['sector_db']
+                
+                if 'sector' in channel_df.columns and not channel_df['sector'].isna().all():
                     sector_list = sorted(channel_df['sector'].dropna().unique().tolist())
                     
                     if sector_list:
@@ -4469,9 +4488,35 @@ class PortfolioAnalytics:
                                 }),
                                 use_container_width=True
                             )
+                    else:
+                        st.info("💡 No sector data available for this channel. Showing all holdings.")
+                        # Show all holdings without sector breakdown
+                        holdings_summary = channel_df.groupby('ticker').agg({
+                            'stock_name': 'first',
+                            'quantity': 'sum',
+                            'invested_amount': 'sum',
+                            'current_value': 'sum',
+                            'unrealized_pnl': 'sum'
+                        }).reset_index()
+                        
+                        holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
+                        holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
+                        
+                        st.dataframe(
+                            holdings_summary[['ticker', 'stock_name', 'quantity', 'invested_amount', 'current_value', 'unrealized_pnl', 'pnl_percentage']].style.format({
+                                'quantity': '{:,.2f}',
+                                'invested_amount': '₹{:,.0f}',
+                                'current_value': '₹{:,.0f}',
+                                'unrealized_pnl': '₹{:,.0f}',
+                                'pnl_percentage': '{:.2f}%'
+                            }),
+                            use_container_width=True
+                        )
             
         except Exception as e:
             st.error(f"Error in channel analysis: {e}")
+            import traceback
+            st.error(f"Details: {traceback.format_exc()}")
     
     def render_one_year_performance_page(self):
         """Render 1-year performance page for holdings purchased in last 12 months"""
