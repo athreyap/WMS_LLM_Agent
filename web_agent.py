@@ -1414,96 +1414,80 @@ class PortfolioAnalytics:
                         print(f"⚠️ MF {ticker}: No transaction price available, skipping")
                         live_price = None
                     sector = "Mutual Fund"
-                    
-                    elif ticker_str.startswith('INF') and len(ticker_str) == 12:
-                        # Mutual fund ISIN - try to get category from mftool or indstocks
-                        print(f"🔍 MF ISIN detected: {ticker}")
-                        
-                        # Try to get fund category along with price
-                        from unified_price_fetcher import get_mutual_fund_price_and_category
-                        live_price, fund_category = get_mutual_fund_price_and_category(ticker, ticker, user_id, None)
-                        
-                        # Use fund category if available
-                        if fund_category and fund_category != 'Unknown':
-                            sector = fund_category
-                            print(f"✅ MF ISIN {ticker}: NAV ₹{live_price} with category '{sector}'")
-                        else:
-                            sector = "Mutual Fund"  # Fallback
-                            print(f"✅ MF ISIN {ticker}: NAV ₹{live_price} (generic category)")
-                        
-                        if not live_price:
-                            print(f"⚠️ MF ISIN {ticker}: Could not fetch NAV")
-                    
-                    else:
-                        # Stock - fetch price, sector, and market cap from yfinance
-                        from unified_price_fetcher import get_stock_price_and_sector
-                        live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
-                        
-                        # Store market cap in session state for later use
-                        if market_cap and market_cap > 0:
-                            if not hasattr(self.session_state, 'market_caps'):
-                                self.session_state.market_caps = {}
-                            self.session_state.market_caps[ticker] = market_cap
-                        
-                        # If no sector from yfinance, try to get it from stock data table
-                        if not sector or sector == 'Unknown':
-                            stock_data = get_stock_data_supabase(ticker)
-                            sector = stock_data.get('sector', None) if stock_data else None
-                            
-                            # If still no sector, try to fetch it from stock_data_agent
+
+                        # Unknown ticker type or stock ticker - try yfinance as last resort
+                    print(f"🔍 {ticker}: Unknown ticker type, trying yfinance as last resort")
+                    try:
+                            from unified_price_fetcher import get_stock_price_and_sector
+                            live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
+
+                            # Store market cap in session state for later use
+                            if market_cap and market_cap > 0:
+                                if not hasattr(self.session_state, 'market_caps'):
+                                    self.session_state.market_caps = {}
+                                self.session_state.market_caps[ticker] = market_cap
+
+                            # If no sector from yfinance, try to get it from stock data table
                             if not sector or sector == 'Unknown':
-                                try:
-                                    from stock_data_agent import get_sector
-                                    sector = get_sector(ticker)
-                                    if sector and sector != 'Unknown':
-                                        # Update the stock_data table with the sector
-                                        try:
-                                            if stock_data:
-                                                update_stock_data_supabase(ticker, sector=sector)
-                                            else:
-                                                # Create new stock data entry
-                                                from stock_data_agent import get_stock_name
-                                                stock_name = get_stock_name(ticker) or ticker
-                                                # This would require a create function - for now just store in session
-                                                pass
-                                        except Exception as e:
-                                            print(f"Could not update sector for {ticker}: {e}")
-                                except Exception as e:
-                                    print(f"Could not fetch sector for {ticker}: {e}")
-                                    sector = 'Unknown'
-                        
-                        # If still no sector, use a more intelligent categorization
-                        if not sector or sector == 'Unknown':
-                            # Try to categorize based on ticker name patterns
-                            ticker_upper = ticker.upper()
-                            if any(word in ticker_upper for word in ['BANK', 'HDFC', 'ICICI', 'SBI', 'AXIS', 'KOTAK']):
-                                sector = 'Banking'
-                            elif any(word in ticker_upper for word in ['TECH', 'INFY', 'TCS', 'WIPRO', 'HCL']):
-                                sector = 'Technology'
-                            elif any(word in ticker_upper for word in ['PHARMA', 'CIPLA', 'DRREDDY', 'SUNPHARMA']):
-                                sector = 'Pharmaceuticals'
-                            elif any(word in ticker_upper for word in ['AUTO', 'MARUTI', 'TATAMOTORS', 'BAJAJ']):
-                                sector = 'Automobile'
-                            elif any(word in ticker_upper for word in ['STEEL', 'TATASTEEL', 'JSWSTEEL']):
-                                sector = 'Metals & Mining'
-                            elif any(word in ticker_upper for word in ['OIL', 'ONGC', 'COAL']):
-                                sector = 'Oil & Gas'
-                            elif any(word in ticker_upper for word in ['CONSUMER', 'HINDUNILVR', 'ITC', 'NESTLE']):
-                                sector = 'Consumer Goods'
-                            elif any(word in ticker_upper for word in ['REALTY', 'DLF', 'GODREJ']):
-                                sector = 'Real Estate'
-                            elif any(word in ticker_upper for word in ['POWER', 'POWERGRID', 'NTPC']):
-                                sector = 'Power & Energy'
-                            else:
-                                sector = 'Other Stocks'
-                    
-                    if live_price and live_price > 0:
-                        live_prices[ticker] = live_price
-                        sectors[ticker] = sector
-                        
-                except Exception as e:
-                    st.warning(f"⚠️ Could not fetch data for {ticker}: {e}")
-                    continue
+                                stock_data = get_stock_data_supabase(ticker)
+                                sector = stock_data.get('sector', None) if stock_data else None
+
+                                # If still no sector, try to fetch it from stock_data_agent
+                                if not sector or sector == 'Unknown':
+                                    try:
+                                        from stock_data_agent import get_sector
+                                        sector = get_sector(ticker)
+                                        if sector and sector != 'Unknown':
+                                            # Update the stock_data table with the sector
+                                            try:
+                                                if stock_data:
+                                                    update_stock_data_supabase(ticker, sector=sector)
+                                                else:
+                                                    # Create new stock data entry
+                                                    from stock_data_agent import get_stock_name
+                                                    stock_name = get_stock_name(ticker) or ticker
+                                                    # This would require a create function - for now just store in session
+                                                    pass
+                                            except Exception as e:
+                                                print(f"Could not update sector for {ticker}: {e}")
+                                    except Exception as e:
+                                        print(f"Could not fetch sector for {ticker}: {e}")
+                                        sector = 'Unknown'
+
+                            # If still no sector, use a more intelligent categorization
+                            if not sector or sector == 'Unknown':
+                                # Try to categorize based on ticker name patterns
+                                ticker_upper = ticker.upper()
+                                if any(word in ticker_upper for word in ['BANK', 'HDFC', 'ICICI', 'SBI', 'AXIS', 'KOTAK']):
+                                    sector = 'Banking'
+                                elif any(word in ticker_upper for word in ['TECH', 'INFY', 'TCS', 'WIPRO', 'HCL']):
+                                    sector = 'Technology'
+                                elif any(word in ticker_upper for word in ['PHARMA', 'CIPLA', 'DRREDDY', 'SUNPHARMA']):
+                                    sector = 'Pharmaceuticals'
+                                elif any(word in ticker_upper for word in ['AUTO', 'MARUTI', 'TATAMOTORS', 'BAJAJ']):
+                                    sector = 'Automobile'
+                                elif any(word in ticker_upper for word in ['STEEL', 'TATASTEEL', 'JSWSTEEL']):
+                                    sector = 'Metals & Mining'
+                                elif any(word in ticker_upper for word in ['OIL', 'ONGC', 'COAL']):
+                                    sector = 'Oil & Gas'
+                                elif any(word in ticker_upper for word in ['CONSUMER', 'HINDUNILVR', 'ITC', 'NESTLE']):
+                                    sector = 'Consumer Goods'
+                                elif any(word in ticker_upper for word in ['REALTY', 'DLF', 'GODREJ']):
+                                    sector = 'Real Estate'
+                                elif any(word in ticker_upper for word in ['POWER', 'POWERGRID', 'NTPC']):
+                                    sector = 'Power & Energy'
+                                else:
+                                    sector = 'Other Stocks'
+
+                    except Exception as e:
+                            print(f"⚠️ {ticker}: yfinance fallback failed: {e}")
+                            live_price = None
+                            sector = 'Unknown'
+
+            if live_price and live_price > 0:
+                live_prices[ticker] = live_price
+                sectors[ticker] = sector
+
             
             # Store in session state
             self.session_state.live_prices = live_prices
