@@ -3658,38 +3658,51 @@ class PortfolioAnalytics:
                 best_color = "normal" if best_overall >= 0 else "inverse"
                 st.metric("Best Return", f"{best_arrow} {best_overall:.2f}%", delta_color=best_color)
             
-            # ===== NEW: Holdings Dropdown with Weekly Values =====
+            # ===== NEW: Holdings Multi-Select with Weekly Values Comparison =====
             st.markdown("---")
-            st.subheader("📈 View Weekly Values for Individual Holdings")
+            st.subheader("📈 Compare 1-Year Buy Holdings - Weekly Trends")
             
             # Get list of unique holdings bought in last year
             holdings_list = stock_performance['ticker'].tolist()
             
             if holdings_list:
-                selected_holding = st.selectbox(
-                    "Select holding to view weekly price chart:",
-                    options=holdings_list,
-                    format_func=lambda x: f"{x} - {stock_and_mf_buys[stock_and_mf_buys['ticker']==x]['stock_name'].iloc[0]}" if not stock_and_mf_buys[stock_and_mf_buys['ticker']==x].empty else x,
-                    key="oneyear_holding_weekly_dropdown"
-                )
+                col1, col2 = st.columns([3, 1])
                 
-                if selected_holding:
-                    # Show holding details
-                    holding_info = stock_performance[stock_performance['ticker'] == selected_holding].iloc[0]
+                with col1:
+                    selected_holdings = st.multiselect(
+                        "Select holding(s) to compare (multiple selections allowed):",
+                        options=holdings_list,
+                        default=[holdings_list[0]] if holdings_list else [],
+                        format_func=lambda x: f"{x} - {stock_and_mf_buys[stock_and_mf_buys['ticker']==x]['stock_name'].iloc[0]}" if not stock_and_mf_buys[stock_and_mf_buys['ticker']==x].empty else x,
+                        key="oneyear_holding_weekly_multi_dropdown"
+                    )
+                
+                with col2:
+                    st.markdown("###")  # Spacing
+                    if st.button("📊 Select Top 5", key="select_top5_oneyear"):
+                        st.session_state.oneyear_holding_weekly_multi_dropdown = holdings_list[:5]
+                        st.rerun()
+                
+                if selected_holdings and len(selected_holdings) > 0:
+                    # Show aggregate stats for selected holdings
+                    selected_data = stock_performance[stock_performance['ticker'].isin(selected_holdings)]
+                    total_invested = selected_data['invested_amount'].sum()
+                    total_current = selected_data['current_value'].sum()
+                    total_pnl = selected_data['unrealized_pnl'].sum()
+                    avg_pnl_pct = selected_data['pnl_percentage'].mean()
                     
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Invested", f"₹{holding_info['invested_amount']:,.0f}")
+                        st.metric("Total Invested", f"₹{total_invested:,.0f}")
                     with col2:
-                        st.metric("Current Value", f"₹{holding_info['current_value']:,.0f}")
+                        st.metric("Total Current Value", f"₹{total_current:,.0f}")
                     with col3:
-                        st.metric("P&L", f"₹{holding_info['unrealized_pnl']:,.0f}")
+                        st.metric("Total P&L", f"₹{total_pnl:,.0f}")
                     with col4:
-                        pnl_pct = holding_info['pnl_percentage']
-                        st.metric("P&L %", f"{pnl_pct:.2f}%", delta=f"{pnl_pct:.2f}%")
+                        st.metric("Avg P&L %", f"{avg_pnl_pct:.2f}%", delta=f"{avg_pnl_pct:.2f}%")
                     
-                    # Render weekly values
-                    self.render_weekly_values(selected_holding, self.session_state.user_id)
+                    # Render weekly values comparison
+                    self.render_weekly_values_multi(selected_holdings, self.session_state.user_id)
         else:
             st.info("No stock buy transactions found in the last 1 year")
 
@@ -4116,8 +4129,8 @@ class PortfolioAnalytics:
             
             st.markdown("---")
             
-            # ===== Holdings Dropdown with Weekly Values =====
-            st.subheader("📈 View Weekly Values for Individual Holdings")
+            # ===== Holdings Multi-Select with Weekly Values Comparison =====
+            st.subheader("📈 Compare Holdings - Weekly Price Charts")
             
             # Get all unique holdings
             all_holdings = df.groupby('ticker').agg({
@@ -4128,28 +4141,35 @@ class PortfolioAnalytics:
             }).reset_index().sort_values('pnl_percentage', ascending=False)
             
             if not all_holdings.empty:
-                selected_holding = st.selectbox(
-                    "Select holding to view weekly price chart:",
-                    options=all_holdings['ticker'].tolist(),
-                    format_func=lambda x: f"{x} - {all_holdings[all_holdings['ticker']==x]['stock_name'].iloc[0]} ({all_holdings[all_holdings['ticker']==x]['pnl_percentage'].iloc[0]:.2f}%)" if not all_holdings[all_holdings['ticker']==x].empty else x,
-                    key="overall_holding_weekly_dropdown"
-                )
+                # Add "Select All" option
+                col1, col2 = st.columns([3, 1])
                 
-                if selected_holding:
-                    # Show holding details
-                    holding_info = all_holdings[all_holdings['ticker'] == selected_holding].iloc[0]
+                with col1:
+                    selected_holdings = st.multiselect(
+                        "Select holding(s) to compare (multiple selections allowed):",
+                        options=all_holdings['ticker'].tolist(),
+                        default=[all_holdings['ticker'].tolist()[0]] if len(all_holdings) > 0 else [],
+                        format_func=lambda x: f"{x} - {all_holdings[all_holdings['ticker']==x]['stock_name'].iloc[0]} ({all_holdings[all_holdings['ticker']==x]['pnl_percentage'].iloc[0]:.2f}%)" if not all_holdings[all_holdings['ticker']==x].empty else x,
+                        key="overall_holding_weekly_multi_dropdown"
+                    )
+                
+                with col2:
+                    st.markdown("###")  # Spacing
+                    if st.button("📊 Select Top 5", key="select_top5_overall"):
+                        st.session_state.overall_holding_weekly_multi_dropdown = all_holdings['ticker'].tolist()[:5]
+                        st.rerun()
+                
+                if selected_holdings and len(selected_holdings) > 0:
+                    # Show aggregate stats for selected holdings
+                    selected_holdings_data = all_holdings[all_holdings['ticker'].isin(selected_holdings)]
+                    total_value = selected_holdings_data['current_value'].sum()
+                    total_pnl = selected_holdings_data['unrealized_pnl'].sum()
+                    avg_pnl_pct = selected_holdings_data['pnl_percentage'].mean()
                     
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Current Value", f"₹{holding_info['current_value']:,.0f}")
-                    with col2:
-                        st.metric("P&L", f"₹{holding_info['unrealized_pnl']:,.0f}")
-                    with col3:
-                        pnl_pct = holding_info['pnl_percentage']
-                        st.metric("P&L %", f"{pnl_pct:.2f}%", delta=f"{pnl_pct:.2f}%")
+                    st.markdown(f"**Selected Holdings:** {len(selected_holdings)} | **Total Value:** ₹{total_value:,.0f} | **Total P&L:** ₹{total_pnl:,.0f} | **Avg P&L:** {avg_pnl_pct:.2f}%")
                     
-                    # Render weekly values
-                    self.render_weekly_values(selected_holding, self.session_state.user_id)
+                    # Render weekly values comparison
+                    self.render_weekly_values_multi(selected_holdings, self.session_state.user_id)
             
             st.markdown("---")
             
@@ -4289,20 +4309,21 @@ class PortfolioAnalytics:
                         use_container_width=True
                     )
                     
-                    # Stock dropdown for weekly values
+                    # Stock multi-select for weekly values comparison
                     st.markdown("---")
-                    st.subheader("📈 Weekly Values for Individual Stock")
+                    st.subheader("📈 Weekly Values Comparison")
                     
                     stock_list = holdings_summary['ticker'].tolist()
-                    selected_stock = st.selectbox(
-                        "Select Stock/Fund to view weekly values:",
+                    selected_stocks = st.multiselect(
+                        "Select Stock(s)/Fund(s) to compare (multiple selections allowed):",
                         options=stock_list,
+                        default=[stock_list[0]] if stock_list else [],
                         format_func=lambda x: f"{x} - {holdings_summary[holdings_summary['ticker']==x]['stock_name'].iloc[0]}" if not holdings_summary[holdings_summary['ticker']==x].empty else x,
-                        key="stock_weekly_dropdown"
+                        key="stock_weekly_multi_dropdown"
                     )
                     
-                    if selected_stock:
-                        self.render_weekly_values(selected_stock, self.session_state.user_id)
+                    if selected_stocks and len(selected_stocks) > 0:
+                        self.render_weekly_values_multi(selected_stocks, self.session_state.user_id)
             
         except Exception as e:
             st.error(f"Error in sector analysis: {e}")
@@ -4409,20 +4430,21 @@ class PortfolioAnalytics:
                                     use_container_width=True
                                 )
                                 
-                                # Step 4: Select individual holding for weekly values
+                                # Step 4: Select holdings for weekly values comparison
                                 st.markdown("---")
-                                st.subheader("📈 Weekly Values for Individual Holding")
+                                st.subheader("📈 Weekly Values Comparison")
                                 
                                 holding_list = holdings_summary['ticker'].tolist()
-                                selected_holding = st.selectbox(
-                                    "3️⃣ Select Holding to view weekly values:",
+                                selected_holdings = st.multiselect(
+                                    "3️⃣ Select Holding(s) to compare (multiple selections allowed):",
                                     options=holding_list,
+                                    default=[holding_list[0]] if holding_list else [],
                                     format_func=lambda x: f"{x} - {holdings_summary[holdings_summary['ticker']==x]['stock_name'].iloc[0]}" if not holdings_summary[holdings_summary['ticker']==x].empty else x,
-                                    key="channel_holding_weekly_dropdown"
+                                    key="channel_holding_weekly_multi_dropdown"
                                 )
                                 
-                                if selected_holding:
-                                    self.render_weekly_values(selected_holding, self.session_state.user_id)
+                                if selected_holdings and len(selected_holdings) > 0:
+                                    self.render_weekly_values_multi(selected_holdings, self.session_state.user_id)
                         else:
                             # Show all holdings in channel across all sectors
                             holdings_summary = channel_df.groupby('ticker').agg({
@@ -8976,78 +8998,134 @@ You can also suggest creating charts/graphs based on this data."""
     
     def render_weekly_values(self, ticker, user_id):
         """
-        Render weekly price values chart for a specific ticker
+        Render weekly price values chart for a specific ticker (single mode)
+        """
+        # Call multi-select version with single ticker
+        self.render_weekly_values_multi([ticker], user_id)
+    
+    def render_weekly_values_multi(self, tickers, user_id):
+        """
+        Render weekly price values chart for multiple tickers (comparative mode)
         
         Args:
-            ticker: Stock/MF ticker symbol
+            tickers: List of stock/MF ticker symbols
             user_id: User ID for fetching data
         """
         try:
-            from database_config_supabase import get_monthly_stock_prices_supabase
+            from database_config_supabase import get_stock_prices_range_supabase
             import plotly.graph_objects as go
             from datetime import datetime, timedelta
             
-            st.subheader(f"📊 Weekly Price Chart: {ticker}")
-            
-            # Get historical prices from database
-            # Note: We store weekly prices as monthly prices in the database
-            prices_data = get_monthly_stock_prices_supabase(ticker)
-            
-            if not prices_data or len(prices_data) == 0:
-                st.warning(f"No historical price data available for {ticker}")
-                st.info("💡 Weekly prices are cached when you first upload a file with this ticker.")
+            if not tickers or len(tickers) == 0:
+                st.warning("No tickers selected")
                 return
             
-            # Convert to DataFrame
-            df_prices = pd.DataFrame(prices_data)
-            
-            # Ensure we have date and price columns
-            if 'date' not in df_prices.columns or 'price' not in df_prices.columns:
-                st.error("Price data format error")
-                return
-            
-            # Sort by date
-            df_prices['date'] = pd.to_datetime(df_prices['date'])
-            df_prices = df_prices.sort_values('date')
-            
-            # Filter to last 52 weeks (1 year)
-            one_year_ago = datetime.now() - timedelta(days=365)
-            df_prices = df_prices[df_prices['date'] >= one_year_ago]
-            
-            if df_prices.empty:
-                st.warning(f"No price data in the last year for {ticker}")
-                return
+            # Calculate date range (last 1 year)
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=365)
             
             # Create the chart
             fig = go.Figure()
             
-            # Add price line
-            fig.add_trace(go.Scatter(
-                x=df_prices['date'],
-                y=df_prices['price'],
-                mode='lines+markers',
-                name='Price',
-                line=dict(color='#1f77b4', width=2),
-                marker=dict(size=6),
-                hovertemplate='<b>Date:</b> %{x|%Y-%m-%d}<br><b>Price:</b> ₹%{y:,.2f}<extra></extra>'
-            ))
+            # Colors for different lines
+            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                     '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
             
-            # Calculate statistics
-            min_price = df_prices['price'].min()
-            max_price = df_prices['price'].max()
-            avg_price = df_prices['price'].mean()
-            latest_price = df_prices['price'].iloc[-1]
-            first_price = df_prices['price'].iloc[0]
-            price_change = ((latest_price - first_price) / first_price * 100) if first_price > 0 else 0
+            # Store statistics for each ticker
+            all_stats = []
+            tickers_with_data = []
+            
+            for idx, ticker in enumerate(tickers):
+                # Get historical prices from database for date range
+                prices_data = get_stock_prices_range_supabase(
+                    ticker=ticker,
+                    start_date=start_date.strftime('%Y-%m-%d'),
+                    end_date=end_date.strftime('%Y-%m-%d')
+                )
+                
+                if not prices_data or len(prices_data) == 0:
+                    st.warning(f"⚠️ No price data available for {ticker}")
+                    continue
+                
+                # Convert to DataFrame
+                df_prices = pd.DataFrame(prices_data)
+                
+                # Ensure we have the required columns (handle both date and price_date naming)
+                if 'price_date' in df_prices.columns:
+                    df_prices['date'] = df_prices['price_date']
+                
+                if 'date' not in df_prices.columns or 'price' not in df_prices.columns:
+                    continue
+                
+                # Sort by date
+                df_prices['date'] = pd.to_datetime(df_prices['date'])
+                df_prices = df_prices.sort_values('date')
+                
+                # Filter to last 52 weeks (1 year)
+                one_year_ago = datetime.now() - timedelta(days=365)
+                df_prices = df_prices[df_prices['date'] >= one_year_ago]
+                
+                if df_prices.empty:
+                    continue
+                
+                # Add line to chart
+                color = colors[idx % len(colors)]
+                fig.add_trace(go.Scatter(
+                    x=df_prices['date'],
+                    y=df_prices['price'],
+                    mode='lines+markers',
+                    name=ticker,
+                    line=dict(color=color, width=2),
+                    marker=dict(size=4),
+                    hovertemplate=f'<b>{ticker}</b><br>' +
+                                 '<b>Date:</b> %{x|%Y-%m-%d}<br>' +
+                                 '<b>Price:</b> ₹%{y:,.2f}<extra></extra>'
+                ))
+                
+                # Calculate statistics
+                min_price = df_prices['price'].min()
+                max_price = df_prices['price'].max()
+                avg_price = df_prices['price'].mean()
+                latest_price = df_prices['price'].iloc[-1]
+                first_price = df_prices['price'].iloc[0]
+                price_change = ((latest_price - first_price) / first_price * 100) if first_price > 0 else 0
+                
+                all_stats.append({
+                    'ticker': ticker,
+                    'current': latest_price,
+                    'min': min_price,
+                    'max': max_price,
+                    'avg': avg_price,
+                    'change_pct': price_change,
+                    'color': color
+                })
+                
+                tickers_with_data.append(ticker)
+            
+            if len(tickers_with_data) == 0:
+                st.error("❌ No price data available for any selected holdings")
+                st.info("💡 Price data is cached when you first upload a file. Make sure the tickers have been processed.")
+                return
             
             # Update layout
+            title = f"Price Comparison: {', '.join(tickers_with_data[:3])}"
+            if len(tickers_with_data) > 3:
+                title += f" and {len(tickers_with_data) - 3} more"
+            
             fig.update_layout(
-                title=f"{ticker} - Weekly Price Trend (Last 1 Year)",
+                title=title + " (Last 1 Year)",
                 xaxis_title="Date",
                 yaxis_title="Price (₹)",
-                height=500,
+                height=600,
                 hovermode='x unified',
                 showlegend=True,
+                legend=dict(
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="left",
+                    x=0.01,
+                    bgcolor="rgba(255, 255, 255, 0.8)"
+                ),
                 xaxis=dict(
                     rangeslider=dict(visible=True),
                     type='date'
@@ -9057,32 +9135,31 @@ You can also suggest creating charts/graphs based on this data."""
             # Display chart
             st.plotly_chart(fig, use_container_width=True)
             
-            # Display statistics
-            st.markdown("### 📈 Price Statistics")
-            col1, col2, col3, col4, col5 = st.columns(5)
-            
-            with col1:
-                st.metric("Current", f"₹{latest_price:,.2f}")
-            with col2:
-                st.metric("Min (52W)", f"₹{min_price:,.2f}")
-            with col3:
-                st.metric("Max (52W)", f"₹{max_price:,.2f}")
-            with col4:
-                st.metric("Average", f"₹{avg_price:,.2f}")
-            with col5:
-                delta_color = "normal" if price_change >= 0 else "inverse"
-                st.metric("1Y Change", f"{price_change:.2f}%", delta=f"{price_change:.2f}%", delta_color=delta_color)
-            
-            # Show data table (expandable)
-            with st.expander(f"📋 View Raw Data ({len(df_prices)} records)"):
-                df_display = df_prices[['date', 'price']].copy()
-                df_display['date'] = df_display['date'].dt.strftime('%Y-%m-%d')
-                df_display['price'] = df_display['price'].apply(lambda x: f"₹{x:,.2f}")
-                st.dataframe(df_display, use_container_width=True, hide_index=True)
+            # Display statistics for each ticker
+            if len(all_stats) > 0:
+                st.markdown("### 📈 Price Statistics (Last 52 Weeks)")
+                
+                # Create expandable sections for each ticker
+                for stat in all_stats:
+                    with st.expander(f"📊 {stat['ticker']}", expanded=(len(all_stats) == 1)):
+                        col1, col2, col3, col4, col5 = st.columns(5)
+                        
+                        with col1:
+                            st.metric("Current", f"₹{stat['current']:,.2f}")
+                        with col2:
+                            st.metric("Min (52W)", f"₹{stat['min']:,.2f}")
+                        with col3:
+                            st.metric("Max (52W)", f"₹{stat['max']:,.2f}")
+                        with col4:
+                            st.metric("Average", f"₹{stat['avg']:,.2f}")
+                        with col5:
+                            delta_color = "normal" if stat['change_pct'] >= 0 else "inverse"
+                            st.metric("1Y Change", f"{stat['change_pct']:.2f}%", 
+                                    delta=f"{stat['change_pct']:.2f}%", delta_color=delta_color)
             
         except Exception as e:
             st.error(f"Error rendering weekly values: {e}")
-            print(f"❌ Error in render_weekly_values for {ticker}: {e}")
+            print(f"❌ Error in render_weekly_values_multi: {e}")
             import traceback
             traceback.print_exc()
     
