@@ -35,29 +35,23 @@ class MFToolClient:
     def get_scheme_code_from_name(self, fund_name: str) -> Optional[int]:
         """
         Get AMFI scheme code from mutual fund name
-        
+
         Args:
             fund_name (str): Mutual fund name (e.g., 'HDFC Mid-Cap Opportunities Fund')
-            
+
         Returns:
             int: AMFI scheme code or None if not found
+
+        Note: This is a simplified implementation. In a production system,
+        you would need a more sophisticated name-to-code mapping.
         """
         if not self.available:
             return None
-            
-        try:
-            # Search for the fund by name
-            search_results = self.mf.search_schemes(fund_name)
-            
-            if search_results and len(search_results) > 0:
-                # Return the first matching scheme code
-                return search_results[0].get('schemeCode')
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error searching for scheme code for {fund_name}: {str(e)}")
-            return None
+
+        # For now, return None since we don't have a reliable way to map names to codes
+        # In production, you might use a database of fund names to scheme codes
+        logger.warning(f"Name-to-scheme-code mapping not available for: {fund_name}")
+        return None
     
     def get_mutual_fund_nav(self, scheme_code: int, date: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
@@ -156,17 +150,18 @@ class MFToolClient:
     def get_mutual_fund_nav_by_name(self, fund_name: str, date: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Fetches NAV for a mutual fund by name
-        
+
         Args:
             fund_name (str): Mutual fund name
             date (str): Date in YYYY-MM-DD format (optional)
-            
+
         Returns:
             dict: NAV data or None if not found
+
+        Note: This method currently returns None since we don't have name-to-code mapping.
+        In production, you would need a database or API that maps fund names to scheme codes.
         """
-        scheme_code = self.get_scheme_code_from_name(fund_name)
-        if scheme_code:
-            return self.get_mutual_fund_nav(scheme_code, date)
+        logger.warning(f"NAV fetching by name not available for: {fund_name}")
         return None
     
     def get_bulk_navs(self, scheme_codes: List[int], date: Optional[str] = None) -> Dict[int, Any]:

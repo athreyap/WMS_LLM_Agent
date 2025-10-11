@@ -17,7 +17,11 @@ logger = logging.getLogger(__name__)
 def is_pms_code(ticker: str) -> bool:
     """Check if ticker is a PMS registration code"""
     ticker_str = str(ticker).strip().upper()
-    return ticker_str.startswith('INP')
+    # Match the detection logic from web_agent.py
+    pms_keywords = ['PMS', 'INP', 'BUOYANT', 'CARNELIAN', 'JULIUS', 'VALENTIS', 'UNIFI']
+    return (any(keyword in ticker_str for keyword in pms_keywords) or
+            ticker_str.endswith('_PMS') or
+            ticker_str.startswith('INP'))
 
 def is_aif_code(ticker: str) -> bool:
     """Check if ticker is an AIF registration code"""

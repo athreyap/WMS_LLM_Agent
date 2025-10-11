@@ -480,13 +480,12 @@ class PortfolioAnalytics:
                 if 'price' in df.columns and pd.notna(df.at[idx, 'price']) and df.at[idx, 'price'] > 0:
                     continue
                 
-                # Detect if this is a mutual fund (ISIN code or numeric)
+                # Detect if this is a mutual fund (ISIN code or numeric scheme code)
                 ticker_str = str(ticker).strip()
+                # More accurate MF detection - only numeric scheme codes or MF_ prefix
                 is_mutual_fund = (
-                    ticker_str.isdigit() or 
-                    ticker_str.startswith('MF_') or
-                    ticker_str.startswith('INF') or  # ISIN codes start with INF
-                    len(ticker_str) == 12  # ISIN codes are 12 characters
+                    (ticker_str.isdigit() and len(ticker_str) >= 5 and len(ticker_str) <= 6) or
+                    ticker_str.startswith('MF_')
                 )
                 
                 # Fetch historical price
@@ -570,7 +569,7 @@ class PortfolioAnalytics:
             # Mutual fund scheme codes are typically 5-6 digits (not traded on NSE/BSE)
             # Valid MF scheme codes are usually 5-6 digits starting with 1-2
             is_mutual_fund = (
-                (clean_ticker.isdigit() and len(clean_ticker) >= 5 and len(clean_ticker) <= 6 and clean_ticker.startswith(('1', '2'))) or
+                (clean_ticker.isdigit() and len(clean_ticker) >= 5 and len(clean_ticker) <= 6) or
                 clean_ticker.startswith('MF_')
             )
 
@@ -1067,33 +1066,26 @@ class PortfolioAnalytics:
                 return
             
             # Show appropriate message
+            pms_count = sum(1 for t in unique_tickers if any(keyword in str(t).upper() for keyword in [
+                'PMS', 'AIF', 'INP', 'BUOYANT', 'CARNELIAN', 'JULIUS', 'VALENTIS', 'UNIFI'
+            ]) or str(t).upper().endswith('_PMS') or str(t).startswith('INP'))
+
             if any(latest_cached_dates[t] > one_year_ago + timedelta(days=7) for t in unique_tickers):
-                st.info(f"🔄 Incremental update: Fetching {total_weeks_to_fetch} new weekly prices...")
+                st.info(f"🔄 Incremental update: Fetching {total_weeks_to_fetch} new weekly prices for {len(unique_tickers)} holdings...")
                 st.caption("💡 Only fetching data for new weeks since last update!")
             else:
-                st.info(f"🔄 Initial cache: Fetching weekly prices for {len(unique_tickers)} holdings (1 year)...")
+                st.info(f"🔄 Initial cache: Fetching weekly prices for {len(unique_tickers)} holdings ({pms_count} PMS/AIF, {len(unique_tickers) - pms_count} stocks/MF) (1 year)...")
                 st.caption("💡 This is a one-time process. Future updates will be incremental!")
             
             # Create progress bar
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            # Filter out PMS/AIF tickers (they don't have historical market prices)
+            # Filter tickers that need price fetching (exclude only if already cached)
             valid_tickers = []
             for ticker in unique_tickers:
-                ticker_upper = str(ticker).upper()
-                is_pms_aif = (
-                    'PMS' in ticker_upper or 
-                    'AIF' in ticker_upper or
-                    ticker_upper.startswith('INP') or
-                    ticker_upper.endswith('_PMS') or
-                    ticker_upper in ['BUOYANT', 'CARNELIAN', 'JULIUS', 'VALENTIS', 'UNIFI']
-                )
-                # Don't skip numeric tickers (mutual funds)
-                if str(ticker).strip().replace('.', '').isdigit():
-                    is_pms_aif = False
-                
-                if not is_pms_aif and latest_cached_dates[ticker] < current_date:
+                # Check if this ticker needs price fetching
+                if latest_cached_dates[ticker] < current_date:
                     valid_tickers.append(ticker)
             
             if not valid_tickers:
@@ -1559,7 +1551,7 @@ class PortfolioAnalytics:
             df['sector'] = df['ticker'].map(ticker_sectors)
             
             # For mutual funds, set sector to "Mutual Fund"
-            df.loc[df['ticker'].astype(str).str.isdigit() | df['ticker'].str.startswith('MF_'), 'sector'] = 'Mutual Fund'
+            df.loc[(df['ticker'].astype(str).str.isdigit() & (df['ticker'].astype(str).str.len() >= 5) & (df['ticker'].astype(str).str.len() <= 6)) | df['ticker'].str.startswith('MF_'), 'sector'] = 'Mutual Fund'
             
             # Calculate portfolio metrics
             df['invested_amount'] = df['quantity'] * df['price']
