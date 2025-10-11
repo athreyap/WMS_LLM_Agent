@@ -1084,28 +1084,58 @@ class PortfolioAnalytics:
             
             # Filter tickers that need price fetching (exclude only if already cached)
             valid_tickers = []
+            max_tickers_to_process = 20  # Limit to prevent system hanging
+
             for ticker in unique_tickers:
                 # Check if this ticker needs price fetching
                 if latest_cached_dates[ticker] < current_date:
                     valid_tickers.append(ticker)
+
+                    # Limit number of tickers to prevent system overload
+                    if len(valid_tickers) >= max_tickers_to_process:
+                        st.warning(f"⚠️ Too many tickers need updating ({len(unique_tickers)}). Processing first {max_tickers_to_process} only.")
+                        break
             
             if not valid_tickers:
                 st.info("✅ All prices are already up to date!")
                 return
             
-            # Generate all weekly dates needed across all tickers
+            # Generate all weekly dates needed across all tickers (with reasonable limits)
             all_week_dates = set()
             ticker_week_map = {}  # Map ticker to list of weeks it needs
+            max_weeks_per_ticker = 52  # Limit to prevent infinite loops
+
             for ticker in valid_tickers:
                 start_from = latest_cached_dates[ticker]
-                weekly_dates = pd.date_range(start=start_from, end=current_date, freq='W-MON')
+
+                # Limit the date range to prevent excessive processing
+                # If start_from is very old, only go back 1 year max
+                one_year_ago = current_date - timedelta(days=365)
+                effective_start = max(start_from, one_year_ago)
+
+                if effective_start >= current_date:
+                    continue  # No weeks to fetch
+
+                weekly_dates = pd.date_range(start=effective_start, end=current_date, freq='W-MON')
+
+                # Limit to prevent excessive API calls
+                if len(weekly_dates) > max_weeks_per_ticker:
+                    weekly_dates = weekly_dates[-max_weeks_per_ticker:]  # Only fetch last 52 weeks
+
                 ticker_week_map[ticker] = list(weekly_dates)
                 all_week_dates.update(weekly_dates)
             
             # Sort weeks chronologically
             all_week_dates = sorted(list(all_week_dates))
             total_weeks = len(all_week_dates)
-            
+
+            # Additional safeguard: if too many weeks, limit to prevent system hanging
+            max_total_weeks = 200  # Reasonable limit for batch processing
+            if total_weeks > max_total_weeks:
+                st.warning(f"⚠️ Too many weeks to fetch ({total_weeks}). Limiting to {max_total_weeks} most recent weeks.")
+                all_week_dates = all_week_dates[-max_total_weeks:]
+                total_weeks = max_total_weeks
+
             weekly_cached_count = 0
             monthly_derived_count = 0
             all_weekly_prices = {ticker: {} for ticker in valid_tickers}  # Store all prices per ticker
@@ -1135,11 +1165,35 @@ class PortfolioAnalytics:
                             # Already cached
                             all_weekly_prices[ticker][week_date] = cached_prices[ticker]
                         else:
-                            # Need to fetch
-                            price = self.fetch_historical_price_comprehensive(ticker, week_date)
-                            if price and price > 0:
-                                all_weekly_prices[ticker][week_date] = price
-                                weekly_cached_count += 1
+                            # Need to fetch - with timeout protection
+                            try:
+                                import signal
+                                import time
+
+                                def timeout_handler(signum, frame):
+                                    raise TimeoutError("Price fetch timeout")
+
+                                # Set 30 second timeout for individual price fetches
+                                signal.signal(signal.SIGALRM, timeout_handler)
+                                signal.alarm(30)
+
+                                price = self.fetch_historical_price_comprehensive(ticker, week_date)
+
+                                # Cancel the alarm
+                                signal.alarm(0)
+
+                                if price and price > 0:
+                                    all_weekly_prices[ticker][week_date] = price
+                                    weekly_cached_count += 1
+
+                            except TimeoutError:
+                                print(f"⚠️ Timeout fetching price for {ticker} on {week_date_str}")
+                                # Continue with next ticker
+                                pass
+                            except Exception as e:
+                                print(f"⚠️ Error fetching price for {ticker} on {week_date_str}: {e}")
+                                # Continue with next ticker
+                                pass
                 else:
                     # Fallback: Check each ticker individually
                     for ticker in tickers_for_week:
@@ -1149,11 +1203,35 @@ class PortfolioAnalytics:
                         if cached_price and cached_price > 0:
                             all_weekly_prices[ticker][week_date] = cached_price
                         else:
-                            # Need to fetch
-                            price = self.fetch_historical_price_comprehensive(ticker, week_date)
-                            if price and price > 0:
-                                all_weekly_prices[ticker][week_date] = price
-                                weekly_cached_count += 1
+                            # Need to fetch - with timeout protection
+                            try:
+                                import signal
+                                import time
+
+                                def timeout_handler(signum, frame):
+                                    raise TimeoutError("Price fetch timeout")
+
+                                # Set 30 second timeout for individual price fetches
+                                signal.signal(signal.SIGALRM, timeout_handler)
+                                signal.alarm(30)
+
+                                price = self.fetch_historical_price_comprehensive(ticker, week_date)
+
+                                # Cancel the alarm
+                                signal.alarm(0)
+
+                                if price and price > 0:
+                                    all_weekly_prices[ticker][week_date] = price
+                                    weekly_cached_count += 1
+
+                            except TimeoutError:
+                                print(f"⚠️ Timeout fetching price for {ticker} on {week_date_str}")
+                                # Continue with next ticker
+                                pass
+                            except Exception as e:
+                                print(f"⚠️ Error fetching price for {ticker} on {week_date_str}: {e}")
+                                # Continue with next ticker
+                                pass
             
             # Derive and save monthly prices for all tickers
             status_text.text("📊 Deriving monthly prices from weekly data...")
