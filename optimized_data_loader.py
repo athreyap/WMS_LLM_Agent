@@ -113,10 +113,11 @@ class OptimizedPortfolioLoader:
             
             # Step 3: Bulk fetch stock_data for all tickers (1 query - SHARED DATA)
             # Ensures stock_data exists for all tickers (FK relationship)
+            # Actual columns: ticker, stock_name, sector, live_price, last_updated
             stock_metadata = {}
             if unique_tickers:
                 stock_data_result = supabase.table('stock_data')\
-                    .select('ticker, sector, market_cap, company_name, exchange, industry, last_updated')\
+                    .select('ticker, stock_name, sector, live_price, last_updated')\
                     .in_('ticker', unique_tickers)\
                     .execute()
                 
@@ -131,17 +132,18 @@ class OptimizedPortfolioLoader:
                     for ticker in missing_tickers:
                         try:
                             # Create basic stock_data entry to maintain FK integrity
+                            # Using actual column names: ticker, stock_name, sector, live_price
                             update_stock_data_supabase(
                                 ticker=ticker,
+                                stock_name=ticker,  # Use ticker as stock_name initially
                                 sector="Unknown",
-                                market_cap=None,
-                                last_price=None
+                                current_price=None  # Maps to live_price
                             )
                             stock_metadata[ticker] = {
                                 'ticker': ticker,
+                                'stock_name': ticker,
                                 'sector': 'Unknown',
-                                'market_cap': None,
-                                'company_name': ticker
+                                'live_price': None
                             }
                         except Exception as e:
                             print(f"⚠️ Could not create stock_data for {ticker}: {e}")
@@ -177,11 +179,12 @@ class OptimizedPortfolioLoader:
             for idx, row in df.iterrows():
                 ticker = row['ticker']
                 
-                # Add metadata from stock_data
+                # Add metadata from stock_data (actual columns: stock_name, sector, live_price)
                 if ticker in stock_metadata:
-                    for key, value in stock_metadata[ticker].items():
-                        if key != 'ticker':
-                            df.at[idx, f'stock_{key}'] = value
+                    meta = stock_metadata[ticker]
+                    df.at[idx, 'stock_name_db'] = meta.get('stock_name')
+                    df.at[idx, 'sector_db'] = meta.get('sector')
+                    df.at[idx, 'live_price_db'] = meta.get('live_price')
                 
                 # Add current price
                 if ticker in current_prices:
@@ -218,12 +221,12 @@ class OptimizedPortfolioLoader:
                 pnl = current_value - invested_amount
                 pnl_percent = (pnl / invested_amount * 100) if invested_amount > 0 else 0
                 
-                # Get metadata
+                # Get metadata (actual columns: stock_name, sector, live_price)
                 metadata = stock_metadata.get(ticker, {})
                 
                 holding = {
                     'ticker': ticker,
-                    'stock_name': metadata.get('company_name', ticker),
+                    'stock_name': metadata.get('stock_name', ticker),
                     'quantity': float(net_quantity),
                     'avg_price': float(avg_price),
                     'current_price': float(current_price),
@@ -232,8 +235,6 @@ class OptimizedPortfolioLoader:
                     'pnl': float(pnl),
                     'pnl_percent': float(pnl_percent),
                     'sector': metadata.get('sector'),
-                    'market_cap': metadata.get('market_cap'),
-                    'industry': metadata.get('industry'),
                     'first_buy_date': str(buys['date'].min()),
                     'last_transaction_date': str(ticker_df['date'].max()),
                     'total_buys': int(len(buys)),

@@ -1694,11 +1694,11 @@ def get_portfolio_data_with_prices(user_id: int) -> List[Dict]:
         if not unique_tickers:
             return transactions.data
         
-        # Step 3: Bulk fetch stock_data for all tickers (metadata like sector, market_cap)
+        # Step 3: Bulk fetch stock_data for all tickers (actual columns: stock_name, sector, live_price)
         stock_data_map = {}
         try:
             stock_data = supabase.table('stock_data')\
-                .select('ticker, sector, market_cap, company_name')\
+                .select('ticker, stock_name, sector, live_price')\
                 .in_('ticker', unique_tickers)\
                 .execute()
             
@@ -1737,11 +1737,11 @@ def get_portfolio_data_with_prices(user_id: int) -> List[Dict]:
         for txn in transactions.data:
             ticker = txn.get('ticker')
             
-            # Add stock metadata
+            # Add stock metadata (actual columns)
             if ticker in stock_data_map:
                 txn['stock_sector'] = stock_data_map[ticker].get('sector')
-                txn['stock_market_cap'] = stock_data_map[ticker].get('market_cap')
-                txn['stock_company_name'] = stock_data_map[ticker].get('company_name')
+                txn['stock_name'] = stock_data_map[ticker].get('stock_name')
+                txn['live_price'] = stock_data_map[ticker].get('live_price')
             
             # Add current price
             if ticker in stock_prices_map:
@@ -1959,7 +1959,7 @@ def get_complete_portfolio_with_calculations(user_id: int) -> Dict:
         stock_metadata_map = {}
         try:
             stock_data = supabase.table('stock_data')\
-                .select('ticker, sector, market_cap, company_name')\
+                .select('ticker, stock_name, sector, live_price')\
                 .in_('ticker', unique_tickers)\
                 .execute()
             
@@ -1985,11 +1985,11 @@ def get_complete_portfolio_with_calculations(user_id: int) -> Dict:
                 df.at[idx, 'current_price'] = current_prices_map[ticker]['price']
                 df.at[idx, 'current_price_date'] = current_prices_map[ticker]['date']
             
-            # Add metadata from JOIN
+            # Add metadata from JOIN (actual columns)
             if ticker in stock_metadata_map:
                 df.at[idx, 'sector'] = stock_metadata_map[ticker].get('sector') or row.get('sector')
-                df.at[idx, 'market_cap'] = stock_metadata_map[ticker].get('market_cap')
-                df.at[idx, 'company_name'] = stock_metadata_map[ticker].get('company_name')
+                df.at[idx, 'stock_name_db'] = stock_metadata_map[ticker].get('stock_name')
+                df.at[idx, 'live_price_db'] = stock_metadata_map[ticker].get('live_price')
         
         # Step 6: Calculate holdings (aggregate by ticker)
         holdings = []
@@ -2025,7 +2025,7 @@ def get_complete_portfolio_with_calculations(user_id: int) -> Dict:
             
             holdings.append({
                 'ticker': ticker,
-                'stock_name': metadata.get('company_name', ticker),
+                'stock_name': metadata.get('stock_name', ticker),
                 'quantity': total_quantity,
                 'avg_price': avg_price,
                 'current_price': current_price,
@@ -2034,7 +2034,6 @@ def get_complete_portfolio_with_calculations(user_id: int) -> Dict:
                 'pnl': pnl,
                 'pnl_percent': pnl_percent,
                 'sector': metadata.get('sector'),
-                'market_cap': metadata.get('market_cap'),
                 'first_buy_date': buys['date'].min(),
                 'last_transaction_date': ticker_df['date'].max()
             })

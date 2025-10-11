@@ -1673,13 +1673,11 @@ class PortfolioAnalytics:
                     # Save live price to database
                     save_stock_price_supabase(ticker, today, live_price, 'live_fetch')
                     
-                    # Update stock_data with latest metadata
-                    market_cap_value = market_caps.get(ticker) if 'market_caps' in locals() else None
+                    # Update stock_data with latest metadata (using actual columns)
                     update_stock_data_supabase(
                         ticker=ticker,
                         sector=sector or "Unknown",
-                        market_cap=market_cap_value,
-                        last_price=live_price
+                        current_price=live_price  # Maps to live_price column
                     )
                     print(f"💾 Saved {ticker} to database (price + metadata)")
                 except Exception as db_error:
@@ -3643,14 +3641,65 @@ class PortfolioAnalytics:
         )
 
         if uploaded_files:
-            for uploaded_file in uploaded_files:
-                if st.button(f"Process {uploaded_file.name}", key=f"process_{uploaded_file.name}"):
-                    with st.spinner(f"Processing {uploaded_file.name}..."):
-                        success = self.process_csv_file(uploaded_file, self.session_state.user_id)
-                        if success:
-                            st.success(f"✅ {uploaded_file.name} processed successfully!")
-                        else:
-                            st.error(f"❌ Failed to process {uploaded_file.name}")
+            st.info(f"📁 {len(uploaded_files)} file(s) ready to upload")
+            
+            if st.button("🚀 Process All Files", type="primary", use_container_width=True):
+                processed_count = 0
+                failed_count = 0
+                failed_files = []
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for idx, uploaded_file in enumerate(uploaded_files):
+                    try:
+                        status_text.text(f"Processing {idx+1}/{len(uploaded_files)}: {uploaded_file.name}")
+                        progress_bar.progress((idx) / len(uploaded_files))
+                        
+                        with st.spinner(f"Processing {uploaded_file.name}..."):
+                            success = self.process_csv_file(uploaded_file, self.session_state.user_id)
+                            if success:
+                                st.success(f"✅ {uploaded_file.name} processed successfully!")
+                                processed_count += 1
+                            else:
+                                st.error(f"❌ Failed to process {uploaded_file.name}")
+                                failed_count += 1
+                                failed_files.append(uploaded_file.name)
+                                
+                    except Exception as e:
+                        st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
+                        failed_count += 1
+                        failed_files.append(f"{uploaded_file.name} ({str(e)})")
+                        # Continue to next file instead of stopping
+                        continue
+                
+                # Clear progress indicators
+                progress_bar.progress(1.0)
+                status_text.empty()
+                progress_bar.empty()
+                
+                # Show summary
+                st.markdown("---")
+                st.subheader("📊 Upload Summary")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("✅ Successful", processed_count)
+                with col2:
+                    st.metric("❌ Failed", failed_count)
+                with col3:
+                    st.metric("📁 Total", len(uploaded_files))
+                
+                if failed_files:
+                    st.error("**Failed files:**")
+                    for failed_file in failed_files:
+                        st.write(f"- {failed_file}")
+                
+                if processed_count > 0:
+                    st.success(f"✅ Successfully processed {processed_count} file(s)!")
+                    # Refresh portfolio data
+                    with st.spinner("Refreshing portfolio data..."):
+                        self.load_portfolio_data(self.session_state.user_id)
+                    st.rerun()
 
         # Show existing files
         st.subheader("📋 Existing Files")
