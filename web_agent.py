@@ -3029,49 +3029,75 @@ class PortfolioAnalytics:
         
         with col1:
             st.subheader("🏆 Top Performers")
-            if 'pnl_percentage' in df.columns and not df['pnl_percentage'].isna().all():
-                valid_data = df.dropna(subset=['pnl_percentage'])
-                if not valid_data.empty:
-                    top_performers = valid_data.groupby('ticker')['pnl_percentage'].sum().sort_values(ascending=False).head(5)
-                    if not top_performers.empty:
-                        fig_top = px.bar(
-                            x=top_performers.values,
-                            y=top_performers.index,
-                            orientation='h',
-                            title="Top 5 Performers by Return %",
-                            labels={'x': 'Return %', 'y': 'Ticker'},
-                            color=top_performers.values,
-                            color_continuous_scale='Greens'
-                        )
-                        st.plotly_chart(fig_top, config={'displayModeBar': True, 'responsive': True})
-                    else:
-                        st.info("No performance data available")
+            if 'unrealized_pnl' in df.columns and 'invested_amount' in df.columns:
+                # Aggregate by ticker to get total P&L
+                performer_data = df.groupby('ticker').agg({
+                    'stock_name': 'first',
+                    'invested_amount': 'sum',
+                    'unrealized_pnl': 'sum'
+                }).reset_index()
+                
+                # Calculate weighted P&L percentage
+                performer_data['pnl_percentage'] = (
+                    performer_data['unrealized_pnl'] / performer_data['invested_amount'] * 100
+                ).fillna(0)
+                
+                # Get top 5 performers
+                top_performers = performer_data.nlargest(5, 'pnl_percentage')
+                
+                if not top_performers.empty:
+                    fig_top = px.bar(
+                        top_performers,
+                        x='pnl_percentage',
+                        y='ticker',
+                        orientation='h',
+                        title="Top 5 Performers by Return %",
+                        labels={'pnl_percentage': 'Return %', 'ticker': 'Ticker'},
+                        color='pnl_percentage',
+                        color_continuous_scale='Greens',
+                        hover_data={'stock_name': True, 'unrealized_pnl': ':,.0f', 'pnl_percentage': ':.2f'}
+                    )
+                    fig_top.update_layout(height=300, showlegend=False)
+                    st.plotly_chart(fig_top, use_container_width=True, key="top_performers_chart")
                 else:
-                    st.info("No valid performance data available")
+                    st.info("No performance data available")
             else:
                 st.info("Performance data not available")
         
         with col2:
             st.subheader("📉 Underperformers")
-            if 'pnl_percentage' in df.columns and not df['pnl_percentage'].isna().all():
-                valid_data = df.dropna(subset=['pnl_percentage'])
-                if not valid_data.empty:
-                    underperformers = valid_data.groupby('ticker')['pnl_percentage'].sum().sort_values().head(5)
-                    if not underperformers.empty:
-                        fig_bottom = px.bar(
-                            x=underperformers.values,
-                            y=underperformers.index,
-                            orientation='h',
-                            title="Bottom 5 Performers by Return %",
-                            labels={'x': 'Return %', 'y': 'Ticker'},
-                            color=underperformers.values,
-                            color_continuous_scale='Reds'
-                        )
-                        st.plotly_chart(fig_bottom, config={'displayModeBar': True, 'responsive': True})
-                    else:
-                        st.info("No performance data available")
+            if 'unrealized_pnl' in df.columns and 'invested_amount' in df.columns:
+                # Aggregate by ticker to get total P&L
+                performer_data = df.groupby('ticker').agg({
+                    'stock_name': 'first',
+                    'invested_amount': 'sum',
+                    'unrealized_pnl': 'sum'
+                }).reset_index()
+                
+                # Calculate weighted P&L percentage
+                performer_data['pnl_percentage'] = (
+                    performer_data['unrealized_pnl'] / performer_data['invested_amount'] * 100
+                ).fillna(0)
+                
+                # Get bottom 5 performers
+                underperformers = performer_data.nsmallest(5, 'pnl_percentage')
+                
+                if not underperformers.empty:
+                    fig_bottom = px.bar(
+                        underperformers,
+                        x='pnl_percentage',
+                        y='ticker',
+                        orientation='h',
+                        title="Bottom 5 Performers by Return %",
+                        labels={'pnl_percentage': 'Return %', 'ticker': 'Ticker'},
+                        color='pnl_percentage',
+                        color_continuous_scale='Reds',
+                        hover_data={'stock_name': True, 'unrealized_pnl': ':,.0f', 'pnl_percentage': ':.2f'}
+                    )
+                    fig_bottom.update_layout(height=300, showlegend=False)
+                    st.plotly_chart(fig_bottom, use_container_width=True, key="underperformers_chart")
                 else:
-                    st.info("No valid performance data available")
+                    st.info("No performance data available")
             else:
                 st.info("Performance data not available")
         
@@ -3552,17 +3578,18 @@ class PortfolioAnalytics:
                     st.plotly_chart(fig_sector, use_container_width=True, key="1year_sector_chart", config={'displayModeBar': True})
                     
                     st.markdown("---")
-                    st.markdown("### 🔍 Drill-Down by Sector")
+                    st.markdown("### 🔍 Drill-Down by Sector (Multiple Selections Allowed)")
                     
-                    # Sector dropdown
-                    sector_options = ["All Sectors"] + sector_performance['sector'].tolist()
-                    selected_sector = st.selectbox(
-                        "Select Sector to view holdings:",
+                    # Sector multiselect
+                    sector_options = sector_performance['sector'].tolist()
+                    selected_sectors_1y = st.multiselect(
+                        "Select Sector(s) to view holdings (multiple selections allowed):",
                         options=sector_options,
-                        key="1year_sector_dropdown"
+                        default=[],
+                        key="1year_sector_multiselect"
                     )
                     
-                    if selected_sector == "All Sectors":
+                    if not selected_sectors_1y or len(selected_sectors_1y) == 0:
                         # Show all sectors summary
                         st.markdown("#### 📊 All Sectors Summary")
                         sector_table_data = []
@@ -3584,10 +3611,56 @@ class PortfolioAnalytics:
                         st.dataframe(sector_df, use_container_width=True, hide_index=True)
                     
                     else:
-                        # Show holdings in selected sector
-                        sector_holdings = stock_and_mf_buys[stock_and_mf_buys['sector'] == selected_sector]
+                        # Show holdings in selected sectors
+                        sector_holdings = stock_and_mf_buys[stock_and_mf_buys['sector'].isin(selected_sectors_1y)]
                         
                         if not sector_holdings.empty:
+                            sectors_str = ", ".join(selected_sectors_1y)
+                            st.markdown(f"#### 📈 Holdings in {sectors_str}")
+                            
+                            # Show sector-by-sector breakdown if multiple sectors selected
+                            if len(selected_sectors_1y) > 1:
+                                st.markdown("### 📊 Performance Comparison by Selected Sectors")
+                                sector_breakdown = sector_holdings.groupby('sector').agg({
+                                    'invested_amount': 'sum',
+                                    'current_value': 'sum',
+                                    'unrealized_pnl': 'sum'
+                                }).reset_index()
+                                sector_breakdown['pnl_percentage'] = (
+                                    sector_breakdown['unrealized_pnl'] / sector_breakdown['invested_amount'] * 100
+                                )
+                                sector_breakdown = sector_breakdown.sort_values('pnl_percentage', ascending=False)
+                                
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.dataframe(
+                                        sector_breakdown.style.format({
+                                            'invested_amount': '₹{:,.0f}',
+                                            'current_value': '₹{:,.0f}',
+                                            'unrealized_pnl': '₹{:,.0f}',
+                                            'pnl_percentage': '{:.2f}%'
+                                        }),
+                                        use_container_width=True,
+                                        hide_index=True
+                                    )
+                                
+                                with col2:
+                                    # Bar chart comparing sectors
+                                    fig_sector_compare = px.bar(
+                                        sector_breakdown,
+                                        x='sector',
+                                        y='pnl_percentage',
+                                        title='Sector P&L Comparison (1-Year Buys)',
+                                        color='pnl_percentage',
+                                        color_continuous_scale='RdYlGn',
+                                        text='pnl_percentage'
+                                    )
+                                    fig_sector_compare.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
+                                    fig_sector_compare.update_layout(height=300)
+                                    st.plotly_chart(fig_sector_compare, use_container_width=True, key="1year_multi_sector_compare")
+                                
+                                st.markdown("---")
+                            
                             # Aggregate by ticker
                             holdings_in_sector = sector_holdings.groupby('ticker').agg({
                                 'stock_name': 'first',
@@ -3601,7 +3674,7 @@ class PortfolioAnalytics:
                             )
                             holdings_in_sector = holdings_in_sector.sort_values('pnl_percentage', ascending=False)
                             
-                            st.markdown(f"#### 📈 {len(holdings_in_sector)} Holding(s) in {selected_sector}")
+                            st.markdown(f"#### 📋 {len(holdings_in_sector)} Individual Holding(s)")
                             
                             # Display holdings table
                             st.dataframe(
@@ -3679,17 +3752,18 @@ class PortfolioAnalytics:
                     st.plotly_chart(fig_channel, use_container_width=True, key="1year_channel_chart", config={'displayModeBar': True})
                     
                     st.markdown("---")
-                    st.markdown("### 🔍 Drill-Down by Channel")
+                    st.markdown("### 🔍 Drill-Down by Channel (Multiple Selections Allowed)")
                     
-                    # Channel dropdown
-                    channel_options = ["All Channels"] + channel_performance['channel'].tolist()
-                    selected_channel = st.selectbox(
-                        "Select Channel to view holdings:",
+                    # Channel multiselect
+                    channel_options = channel_performance['channel'].tolist()
+                    selected_channels_1y = st.multiselect(
+                        "Select Channel(s) to view holdings (multiple selections allowed):",
                         options=channel_options,
-                        key="1year_channel_dropdown"
+                        default=[],
+                        key="1year_channel_multiselect"
                     )
                     
-                    if selected_channel == "All Channels":
+                    if not selected_channels_1y or len(selected_channels_1y) == 0:
                         # Show all channels summary
                         st.markdown("#### 📊 All Channels Summary")
                         channel_table_data = []
@@ -3711,10 +3785,56 @@ class PortfolioAnalytics:
                         st.dataframe(channel_df, use_container_width=True, hide_index=True)
                     
                     else:
-                        # Show holdings in selected channel
-                        channel_holdings = stock_and_mf_buys[stock_and_mf_buys['channel'] == selected_channel]
+                        # Show holdings in selected channels
+                        channel_holdings = stock_and_mf_buys[stock_and_mf_buys['channel'].isin(selected_channels_1y)]
                         
                         if not channel_holdings.empty:
+                            channels_str = ", ".join(selected_channels_1y)
+                            st.markdown(f"#### 📈 Holdings in {channels_str}")
+                            
+                            # Show channel-by-channel breakdown if multiple channels selected
+                            if len(selected_channels_1y) > 1:
+                                st.markdown("### 📊 Performance Comparison by Selected Channels")
+                                channel_breakdown = channel_holdings.groupby('channel').agg({
+                                    'invested_amount': 'sum',
+                                    'current_value': 'sum',
+                                    'unrealized_pnl': 'sum'
+                                }).reset_index()
+                                channel_breakdown['pnl_percentage'] = (
+                                    channel_breakdown['unrealized_pnl'] / channel_breakdown['invested_amount'] * 100
+                                )
+                                channel_breakdown = channel_breakdown.sort_values('pnl_percentage', ascending=False)
+                                
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.dataframe(
+                                        channel_breakdown.style.format({
+                                            'invested_amount': '₹{:,.0f}',
+                                            'current_value': '₹{:,.0f}',
+                                            'unrealized_pnl': '₹{:,.0f}',
+                                            'pnl_percentage': '{:.2f}%'
+                                        }),
+                                        use_container_width=True,
+                                        hide_index=True
+                                    )
+                                
+                                with col2:
+                                    # Bar chart comparing channels
+                                    fig_channel_compare = px.bar(
+                                        channel_breakdown,
+                                        x='channel',
+                                        y='pnl_percentage',
+                                        title='Channel P&L Comparison (1-Year Buys)',
+                                        color='pnl_percentage',
+                                        color_continuous_scale='RdYlGn',
+                                        text='pnl_percentage'
+                                    )
+                                    fig_channel_compare.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
+                                    fig_channel_compare.update_layout(height=300)
+                                    st.plotly_chart(fig_channel_compare, use_container_width=True, key="1year_multi_channel_compare")
+                                
+                                st.markdown("---")
+                            
                             # Aggregate by ticker
                             holdings_in_channel = channel_holdings.groupby('ticker').agg({
                                 'stock_name': 'first',
@@ -3729,7 +3849,7 @@ class PortfolioAnalytics:
                             )
                             holdings_in_channel = holdings_in_channel.sort_values('pnl_percentage', ascending=False)
                             
-                            st.markdown(f"#### 📈 {len(holdings_in_channel)} Holding(s) in {selected_channel}")
+                            st.markdown(f"#### 📋 {len(holdings_in_channel)} Individual Holding(s)")
                             
                             # Display holdings table
                             st.dataframe(
@@ -4217,24 +4337,68 @@ class PortfolioAnalytics:
                 )
                 st.plotly_chart(fig, use_container_width=True, key="sector_analysis_pie")
                 
-                # ===== NEW: Sector Dropdown Filter =====
+                # ===== NEW: Sector Multi-Select Filter =====
                 st.markdown("---")
-                st.subheader("🔍 Drill-Down by Sector")
+                st.subheader("🔍 Drill-Down by Sector (Multiple Selections Allowed)")
                 
-                # Sector selection dropdown
+                # Sector selection multiselect
                 sector_list = sorted(df['sector'].dropna().unique().tolist())
-                selected_sector = st.selectbox(
-                    "Select Sector to view holdings:",
-                    options=["All Sectors"] + sector_list,
-                    key="sector_filter_dropdown"
+                selected_sectors = st.multiselect(
+                    "Select Sector(s) to view holdings (multiple selections allowed):",
+                    options=sector_list,
+                    default=[],
+                    key="sector_filter_multiselect"
                 )
                 
-                if selected_sector != "All Sectors":
-                    # Filter holdings by selected sector
-                    sector_holdings = df[df['sector'] == selected_sector].copy()
+                if selected_sectors and len(selected_sectors) > 0:
+                    # Filter holdings by selected sectors
+                    sector_holdings = df[df['sector'].isin(selected_sectors)].copy()
                     
                     if not sector_holdings.empty:
-                        st.info(f"📊 Showing {len(sector_holdings)} holding(s) in **{selected_sector}**")
+                        sectors_str = ", ".join(selected_sectors)
+                        st.info(f"📊 Showing {len(sector_holdings)} holding(s) in **{sectors_str}**")
+                        
+                        # Show sector-by-sector breakdown if multiple sectors selected
+                        if len(selected_sectors) > 1:
+                            st.markdown("### 📊 Performance by Selected Sectors")
+                            sector_breakdown = sector_holdings.groupby('sector').agg({
+                                'invested_amount': 'sum',
+                                'current_value': 'sum',
+                                'unrealized_pnl': 'sum'
+                            }).reset_index()
+                            sector_breakdown['pnl_percentage'] = (
+                                sector_breakdown['unrealized_pnl'] / sector_breakdown['invested_amount'] * 100
+                            )
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.dataframe(
+                                    sector_breakdown.style.format({
+                                        'invested_amount': '₹{:,.0f}',
+                                        'current_value': '₹{:,.0f}',
+                                        'unrealized_pnl': '₹{:,.0f}',
+                                        'pnl_percentage': '{:.2f}%'
+                                    }),
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
+                            
+                            with col2:
+                                # Bar chart comparing sectors
+                                fig_sector_compare = px.bar(
+                                    sector_breakdown,
+                                    x='sector',
+                                    y='pnl_percentage',
+                                    title='Sector P&L Comparison',
+                                    color='pnl_percentage',
+                                    color_continuous_scale='RdYlGn',
+                                    text='pnl_percentage'
+                                )
+                                fig_sector_compare.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
+                                fig_sector_compare.update_layout(height=300)
+                                st.plotly_chart(fig_sector_compare, use_container_width=True, key="multi_sector_compare")
+                            
+                            st.markdown("---")
                         
                         # Group by ticker
                         holdings_summary = sector_holdings.groupby('ticker').agg({
@@ -4322,19 +4486,20 @@ class PortfolioAnalytics:
                 )
                 st.plotly_chart(fig, use_container_width=True, key="channel_analysis_bar")
                 
-                # ===== NEW: Hierarchical Channel > Sector > Holding Dropdown =====
+                # ===== NEW: Hierarchical Channel > Sector > Holding Multi-Select =====
                 st.markdown("---")
-                st.subheader("🔍 Drill-Down by Channel → Sector → Holding")
+                st.subheader("🔍 Drill-Down by Channel(s) → Sector(s) → Holdings (Multiple Selections Allowed)")
                 
-                # Step 1: Channel selection
+                # Step 1: Channel multi-selection
                 channel_list = sorted(df['channel'].dropna().unique().tolist())
-                selected_channel = st.selectbox(
-                    "1️⃣ Select Channel:",
-                    options=["All Channels"] + channel_list,
-                    key="channel_filter_dropdown"
+                selected_channels = st.multiselect(
+                    "1️⃣ Select Channel(s) (leave empty for all):",
+                    options=channel_list,
+                    default=[],
+                    key="channel_filter_multiselect"
                 )
                 
-                if selected_channel == "All Channels":
+                if not selected_channels or len(selected_channels) == 0:
                     # Show all data across all channels
                     st.info(f"📊 Viewing: **All Channels** - {len(df)} transaction(s)")
                     
@@ -4566,11 +4731,54 @@ class PortfolioAnalytics:
                             # Render weekly values comparison
                             self.render_weekly_values_multi(selected_holdings, self.session_state.user_id, context="all_channels_no_sector")
                 
-                elif selected_channel != "All Channels":
-                    # Filter by channel
-                    channel_df = df[df['channel'] == selected_channel].copy()
+                else:
+                    # Filter by selected channels
+                    channel_df = df[df['channel'].isin(selected_channels)].copy()
                     
-                    st.info(f"📊 Channel: **{selected_channel}** - {len(channel_df)} transaction(s)")
+                    channels_str = ", ".join(selected_channels)
+                    st.info(f"📊 Channel(s): **{channels_str}** - {len(channel_df)} transaction(s)")
+                    
+                    # Show channel-by-channel breakdown if multiple channels selected
+                    if len(selected_channels) > 1:
+                        st.markdown("### 📊 Performance by Selected Channels")
+                        channel_breakdown = channel_df.groupby('channel').agg({
+                            'invested_amount': 'sum',
+                            'current_value': 'sum',
+                            'unrealized_pnl': 'sum'
+                        }).reset_index()
+                        channel_breakdown['pnl_percentage'] = (
+                            channel_breakdown['unrealized_pnl'] / channel_breakdown['invested_amount'] * 100
+                        )
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.dataframe(
+                                channel_breakdown.style.format({
+                                    'invested_amount': '₹{:,.0f}',
+                                    'current_value': '₹{:,.0f}',
+                                    'unrealized_pnl': '₹{:,.0f}',
+                                    'pnl_percentage': '{:.2f}%'
+                                }),
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                        
+                        with col2:
+                            # Bar chart comparing channels
+                            fig_channel_compare = px.bar(
+                                channel_breakdown,
+                                x='channel',
+                                y='pnl_percentage',
+                                title='Channel P&L Comparison',
+                                color='pnl_percentage',
+                                color_continuous_scale='RdYlGn',
+                                text='pnl_percentage'
+                            )
+                            fig_channel_compare.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
+                            fig_channel_compare.update_layout(height=300)
+                            st.plotly_chart(fig_channel_compare, use_container_width=True, key="multi_channel_compare")
+                        
+                        st.markdown("---")
                     
                     # Step 2: Sector selection within channel
                     # Check for sector column - try sector or sector_db
@@ -4578,21 +4786,69 @@ class PortfolioAnalytics:
                         if 'sector_db' in channel_df.columns and not channel_df['sector_db'].isna().all():
                             channel_df['sector'] = channel_df['sector_db']
                     
+                    # Show sector breakdown for this channel
+                    if 'sector' in channel_df.columns and not channel_df['sector'].isna().all():
+                        st.markdown("### 📊 Sector Breakdown in this Channel")
+                        
+                        # Aggregate by sector within channel
+                        sector_breakdown = channel_df.groupby('sector').agg({
+                            'invested_amount': 'sum',
+                            'current_value': 'sum',
+                            'unrealized_pnl': 'sum'
+                        }).reset_index()
+                        
+                        sector_breakdown['pnl_percentage'] = (
+                            sector_breakdown['unrealized_pnl'] / sector_breakdown['invested_amount'] * 100
+                        )
+                        sector_breakdown = sector_breakdown.sort_values('pnl_percentage', ascending=False)
+                        
+                        # Display sector summary table
+                        col1, col2 = st.columns([2, 1])
+                        
+                        with col1:
+                            st.dataframe(
+                                sector_breakdown.style.format({
+                                    'invested_amount': '₹{:,.0f}',
+                                    'current_value': '₹{:,.0f}',
+                                    'unrealized_pnl': '₹{:,.0f}',
+                                    'pnl_percentage': '{:.2f}%'
+                                }),
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                        
+                        with col2:
+                            # Pie chart showing sector allocation in these channels
+                            fig_sector_pie = px.pie(
+                                sector_breakdown,
+                                values='current_value',
+                                names='sector',
+                                title=f'Sector Allocation in {channels_str}'
+                            )
+                            fig_sector_pie.update_layout(height=250, showlegend=True)
+                            # Generate unique key from selected channels
+                            channels_key = "_".join(sorted(selected_channels))
+                            st.plotly_chart(fig_sector_pie, use_container_width=True, key=f"channel_sector_pie_{channels_key}")
+                        
+                        st.markdown("---")
+                    
                     if 'sector' in channel_df.columns and not channel_df['sector'].isna().all():
                         sector_list = sorted(channel_df['sector'].dropna().unique().tolist())
                         
                         if sector_list:
-                            selected_sector = st.selectbox(
-                                "2️⃣ Select Sector within channel:",
-                                options=["All Sectors"] + sector_list,
-                                key="channel_sector_dropdown"
+                            selected_sectors_in_channel = st.multiselect(
+                                "2️⃣ Select Sector(s) within channel(s) (multiple selections allowed):",
+                                options=sector_list,
+                                default=[],
+                                key="channel_sector_multiselect"
                             )
                             
-                            if selected_sector != "All Sectors":
-                                # Filter by sector
-                                sector_df = channel_df[channel_df['sector'] == selected_sector].copy()
+                            if selected_sectors_in_channel and len(selected_sectors_in_channel) > 0:
+                                # Filter by sectors
+                                sector_df = channel_df[channel_df['sector'].isin(selected_sectors_in_channel)].copy()
                                 
-                                st.info(f"📊 Sector: **{selected_sector}** - {len(sector_df)} transaction(s)")
+                                sectors_str = ", ".join(selected_sectors_in_channel)
+                                st.info(f"📊 Sector(s): **{sectors_str}** - {len(sector_df)} transaction(s)")
                                 
                                 # Step 3: Show holdings and allow selection
                                 if not sector_df.empty:
