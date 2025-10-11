@@ -1445,43 +1445,124 @@ def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_
             today = datetime.now().strftime('%Y-%m-%d')
             print(f"💾 Saving live price for {ticker} (₹{price}) with today's date: {today}")
             
-            # Upsert to historical_prices with today's date
-            # This creates a daily price history for each ticker
-            result = supabase.table('historical_prices').upsert({
-                'ticker': ticker,
-                'transaction_date': today,  # Use today's date for live prices
-                'historical_price': price,
-                'current_price': price,
-                'price_source': price_source
-            }, on_conflict='ticker,transaction_date').execute()
-            
-            if result.data and len(result.data) > 0:
-                print(f"✅ Live price saved to historical_prices with date {today}")
-                return True
-            else:
-                print(f"⚠️ Live price save returned no data for {ticker}")
-                return False
+            # Try upsert first (requires UNIQUE constraint)
+            try:
+                result = supabase.table('historical_prices').upsert({
+                    'ticker': ticker,
+                    'transaction_date': today,  # Use today's date for live prices
+                    'historical_price': price,
+                    'current_price': price,
+                    'price_source': price_source
+                }, on_conflict='ticker,transaction_date').execute()
+                
+                if result.data and len(result.data) > 0:
+                    print(f"✅ Live price saved to historical_prices with date {today}")
+                    return True
+                    
+            except Exception as upsert_error:
+                # If upsert fails (likely due to missing UNIQUE constraint), try manual update
+                error_msg = str(upsert_error)
+                if '42P10' in error_msg or 'no unique or exclusion constraint' in error_msg:
+                    print(f"⚠️  UNIQUE constraint missing on historical_prices. Using fallback method...")
+                    
+                    # Try to update existing record
+                    try:
+                        existing = supabase.table('historical_prices')\
+                            .select('id')\
+                            .eq('ticker', ticker)\
+                            .eq('transaction_date', today)\
+                            .execute()
+                        
+                        if existing.data and len(existing.data) > 0:
+                            # Update existing record
+                            record_id = existing.data[0]['id']
+                            update_result = supabase.table('historical_prices')\
+                                .update({
+                                    'historical_price': price,
+                                    'current_price': price,
+                                    'price_source': price_source
+                                })\
+                                .eq('id', record_id)\
+                                .execute()
+                            print(f"✅ Updated existing price record for {ticker}")
+                            return True
+                        else:
+                            # Insert new record
+                            insert_result = supabase.table('historical_prices').insert({
+                                'ticker': ticker,
+                                'transaction_date': today,
+                                'historical_price': price,
+                                'current_price': price,
+                                'price_source': price_source
+                            }).execute()
+                            print(f"✅ Inserted new price record for {ticker}")
+                            return True
+                            
+                    except Exception as fallback_error:
+                        print(f"❌ Fallback also failed: {fallback_error}")
+                        return False
+                else:
+                    raise upsert_error
+                    
         else:
             # For historical transaction prices, use the provided date
             print(f"💾 Saving historical price for {ticker} (₹{price}) for date: {price_date}")
             
-            result = supabase.table('historical_prices').upsert({
-                'ticker': ticker,
-                'transaction_date': price_date,
-                'historical_price': price,
-                'current_price': price,
-                'price_source': price_source
-            }, on_conflict='ticker,transaction_date').execute()
-            
-            if result.data and len(result.data) > 0:
-                print(f"✅ Historical price saved to historical_prices")
-                return True
-            else:
-                print(f"⚠️ Historical price save returned no data for {ticker}")
-                return False
+            # Same fallback logic for historical prices
+            try:
+                result = supabase.table('historical_prices').upsert({
+                    'ticker': ticker,
+                    'transaction_date': price_date,
+                    'historical_price': price,
+                    'current_price': price,
+                    'price_source': price_source
+                }, on_conflict='ticker,transaction_date').execute()
+                
+                if result.data and len(result.data) > 0:
+                    print(f"✅ Historical price saved to historical_prices")
+                    return True
+                    
+            except Exception as upsert_error:
+                error_msg = str(upsert_error)
+                if '42P10' in error_msg or 'no unique or exclusion constraint' in error_msg:
+                    # Fallback: check if exists, update or insert
+                    try:
+                        existing = supabase.table('historical_prices')\
+                            .select('id')\
+                            .eq('ticker', ticker)\
+                            .eq('transaction_date', price_date)\
+                            .execute()
+                        
+                        if existing.data and len(existing.data) > 0:
+                            record_id = existing.data[0]['id']
+                            supabase.table('historical_prices')\
+                                .update({
+                                    'historical_price': price,
+                                    'current_price': price,
+                                    'price_source': price_source
+                                })\
+                                .eq('id', record_id)\
+                                .execute()
+                            print(f"✅ Updated existing historical price for {ticker}")
+                            return True
+                        else:
+                            supabase.table('historical_prices').insert({
+                                'ticker': ticker,
+                                'transaction_date': price_date,
+                                'historical_price': price,
+                                'current_price': price,
+                                'price_source': price_source
+                            }).execute()
+                            print(f"✅ Inserted new historical price for {ticker}")
+                            return True
+                    except Exception as fallback_error:
+                        print(f"❌ Fallback also failed: {fallback_error}")
+                        return False
+                else:
+                    raise upsert_error
 
     except Exception as e:
-        print(f"❌ Error saving price for {ticker} on {price_date}: {e}")
+        print(f"❌ Error saving price for {ticker}: {e}")
         print(f"   Error type: {type(e).__name__}")
         return False
 
