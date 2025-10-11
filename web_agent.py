@@ -1363,7 +1363,7 @@ class PortfolioAnalytics:
                 st.warning(f"⚠️ Too many weeks to fetch ({total_weeks}). Limiting to {max_total_weeks} most recent weeks.")
                 all_week_dates = all_week_dates[-max_total_weeks:]
                 total_weeks = max_total_weeks
-
+            
             weekly_cached_count = 0
             monthly_derived_count = 0
             all_weekly_prices = {ticker: {} for ticker in valid_tickers}  # Store all prices per ticker
@@ -1669,6 +1669,7 @@ class PortfolioAnalytics:
                 # Rate limiting: small delay between requests
                 if successful_fetches > 0:
                     time.sleep(0.5)  # 500ms between requests
+                
                 try:
                     ticker_str = str(ticker).strip()
                     ticker_upper = ticker_str.upper()
@@ -1699,7 +1700,15 @@ class PortfolioAnalytics:
                             try:
                                 from pms_aif_fetcher import get_pms_nav
                                 pms_name = pms_trans.get('stock_name', ticker).replace('_', ' ')
+                                
+                                print(f"🔍 PMS FETCH: Calling get_pms_nav for {ticker}")
+                                print(f"   - PMS Name: {pms_name}")
+                                print(f"   - Investment Date: {investment_date}")
+                                print(f"   - Investment Amount: ₹{investment_amount:,.0f}")
+                                
                                 pms_data = get_pms_nav(ticker, pms_name, investment_date, investment_amount)
+                                
+                                print(f"🔍 PMS FETCH RESULT: {pms_data}")
 
                                 if pms_data and pms_data.get('price'):
                                     live_price = pms_data['price']
@@ -1709,6 +1718,11 @@ class PortfolioAnalytics:
                                     else:
                                         sector = "PMS"
                                     print(f"✅ {sector} {ticker}: Calculated value ₹{live_price:,.2f} using SEBI returns")
+                                    if 'calculated_value' in pms_data:
+                                        calc = pms_data['calculated_value']
+                                        print(f"   💰 Initial: ₹{calc.get('initial_investment', 0):,.0f} → Current: ₹{calc.get('current_value', 0):,.0f}")
+                                        print(f"   📈 Gain: ₹{calc.get('absolute_gain', 0):,.0f} ({calc.get('percentage_gain', 0):.2f}%)")
+                                        print(f"   📊 Method: {calc.get('return_period', 'N/A')}")
                                 else:
                                     # Fallback: use transaction price (no growth)
                                     live_price = pms_trans['price']
@@ -1717,6 +1731,7 @@ class PortfolioAnalytics:
                                     else:
                                         sector = "PMS"
                                     print(f"⚠️ {sector} {ticker}: Using transaction price (SEBI data not available)")
+                                    print(f"   💡 Reason: pms_data = {pms_data}")
                             except ImportError as ie:
                                 print(f"⚠️ PMS {ticker}: pms_aif_fetcher import failed: {ie}")
                                 print(f"💡 Try installing: pip install pandas requests beautifulsoup4 html5lib")
@@ -1881,15 +1896,17 @@ class PortfolioAnalytics:
                                 else:
                                     sector = 'Other Stocks'
                         except Exception as e:
-                            print(f"⚠️ {ticker}: yfinance fallback failed: {e}")
+                            print(f"⚠️ {ticker}: yfinance failed: {e}")
                             live_price = None
                             sector = 'Unknown'
+                
                 except Exception as e:
                     print(f"⚠️ {ticker}: failed: {e}")
                     live_price = None
                     sector = 'Unknown'
-                print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
                 
+                print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
+
                 # Store successful fetch (MUST be inside the for loop)
                 if live_price and live_price > 0:
                     live_prices[ticker] = live_price
@@ -2001,6 +2018,14 @@ class PortfolioAnalytics:
                 # Convert transactions to DataFrame for use by rendering code
                 df = pd.DataFrame(portfolio_data['transactions'])
                 
+                # Debug: Check raw data
+                print(f"🔍 DEBUG: Loaded {len(df)} transactions from database")
+                if len(df) > 0:
+                    print(f"🔍 DEBUG: Columns: {df.columns.tolist()}")
+                    print(f"🔍 DEBUG: Sample tickers: {df['ticker'].head(10).tolist()}")
+                    print(f"🔍 DEBUG: Sample prices: {df['price'].head(10).tolist()}")
+                    print(f"🔍 DEBUG: Sample quantities: {df['quantity'].head(10).tolist()}")
+                
                 # Add calculated columns for rendering (invested_amount, current_value, unrealized_pnl, pnl_percentage)
                 # Identify PMS/AIF tickers for special handling
                 df['is_pms'] = df['ticker'].apply(lambda t: 
@@ -2009,6 +2034,11 @@ class PortfolioAnalytics:
                     'AIF' in str(t).upper() or
                     str(t).upper().startswith(('BUOYANT', 'CARNELIAN', 'JULIUS', 'VALENTIS', 'UNIFI', 'INP'))
                 )
+                
+                # Debug PMS detection
+                pms_tickers = df[df['is_pms']]['ticker'].unique()
+                if len(pms_tickers) > 0:
+                    print(f"🔍 DEBUG: Detected {len(pms_tickers)} PMS/AIF tickers: {pms_tickers}")
                 
                 # Map live prices from session state or use transaction price as fallback
                 if hasattr(self.session_state, 'live_prices') and self.session_state.live_prices:
@@ -2033,19 +2063,35 @@ class PortfolioAnalytics:
                         # PMS: Calculate based on live_price (current value) vs invested_amount
                         ticker = row['ticker']
                         
+                        # Debug PMS calculation
+                        print(f"🔍 PMS DEBUG: {ticker}")
+                        print(f"   - is_pms: {row['is_pms']}")
+                        print(f"   - invested: {invested}")
+                        print(f"   - quantity: {row['quantity']}")
+                        print(f"   - price: {row['price']}")
+                        print(f"   - live_price: {row.get('live_price', 'N/A')}")
+                        
                         # Check if we have a live_price from PMS fetch
                         if pd.notna(row['live_price']) and row['live_price'] > 0:
-                            # live_price for PMS is the current NAV/value (already calculated by pms_aif_fetcher)
-                            # For PMS, live_price is stored as total current value, not per-unit NAV
-                            # We need to determine if it's total value or per-unit
-                            
-                            # If live_price is much larger than price, it's likely total value
-                            # Otherwise it might be per-unit NAV that needs to be multiplied by quantity
-                            if row['live_price'] > row['price'] * 100:  # Heuristic: if live_price >> price, it's total value
-                                current_value = row['live_price']
+                            # Check if live_price is the same as original price (means no growth data available)
+                            if abs(row['live_price'] - row['price']) < 0.01:
+                                # No growth data - use original investment amount
+                                print(f"⚠️ {ticker}: No growth data available, using original investment")
+                                current_value = invested
                             else:
-                                # It's per-unit NAV, multiply by quantity
-                                current_value = row['quantity'] * row['live_price']
+                                # We have actual NAV data
+                                # For PMS, live_price from pms_aif_fetcher is the TOTAL current value (not per unit)
+                                # But for safety, check if it needs to be multiplied by quantity
+                                
+                                # If live_price is much larger than price, it's likely total value already
+                                # Otherwise it might be per-unit NAV that needs to be multiplied by quantity
+                                if row['live_price'] > row['price'] * 10:  # Heuristic: if live_price >> price, it's total value
+                                    current_value = row['live_price']
+                                    print(f"✅ {ticker}: Using total value ₹{current_value:,.0f}")
+                                else:
+                                    # It's per-unit NAV, multiply by quantity
+                                    current_value = row['quantity'] * row['live_price']
+                                    print(f"✅ {ticker}: Using per-unit NAV × quantity = ₹{current_value:,.0f}")
                         else:
                             # Fallback: Try to calculate from transaction history
                             # Get all transactions for this PMS and calculate based on latest NAV if available
@@ -3611,6 +3657,39 @@ class PortfolioAnalytics:
                 best_arrow = "🔼" if best_overall >= 0 else "🔽"
                 best_color = "normal" if best_overall >= 0 else "inverse"
                 st.metric("Best Return", f"{best_arrow} {best_overall:.2f}%", delta_color=best_color)
+            
+            # ===== NEW: Holdings Dropdown with Weekly Values =====
+            st.markdown("---")
+            st.subheader("📈 View Weekly Values for Individual Holdings")
+            
+            # Get list of unique holdings bought in last year
+            holdings_list = stock_performance['ticker'].tolist()
+            
+            if holdings_list:
+                selected_holding = st.selectbox(
+                    "Select holding to view weekly price chart:",
+                    options=holdings_list,
+                    format_func=lambda x: f"{x} - {stock_and_mf_buys[stock_and_mf_buys['ticker']==x]['stock_name'].iloc[0]}" if not stock_and_mf_buys[stock_and_mf_buys['ticker']==x].empty else x,
+                    key="oneyear_holding_weekly_dropdown"
+                )
+                
+                if selected_holding:
+                    # Show holding details
+                    holding_info = stock_performance[stock_performance['ticker'] == selected_holding].iloc[0]
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Invested", f"₹{holding_info['invested_amount']:,.0f}")
+                    with col2:
+                        st.metric("Current Value", f"₹{holding_info['current_value']:,.0f}")
+                    with col3:
+                        st.metric("P&L", f"₹{holding_info['unrealized_pnl']:,.0f}")
+                    with col4:
+                        pnl_pct = holding_info['pnl_percentage']
+                        st.metric("P&L %", f"{pnl_pct:.2f}%", delta=f"{pnl_pct:.2f}%")
+                    
+                    # Render weekly values
+                    self.render_weekly_values(selected_holding, self.session_state.user_id)
         else:
             st.info("No stock buy transactions found in the last 1 year")
 
@@ -3824,7 +3903,7 @@ class PortfolioAnalytics:
         )
 
     def render_overall_portfolio_performance(self, df):
-        """Render overall portfolio performance metrics"""
+        """Render comprehensive overall portfolio performance metrics and analysis"""
         st.subheader("📊 Overall Portfolio Performance")
         
         try:
@@ -3834,7 +3913,7 @@ class PortfolioAnalytics:
             total_pnl = df['unrealized_pnl'].sum()
             total_pnl_pct = (total_pnl / total_invested * 100) if total_invested > 0 else 0
             
-            # Display key metrics
+            # Key metrics row
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
@@ -3853,48 +3932,296 @@ class PortfolioAnalytics:
             
             st.markdown("---")
             
-            # Top and Bottom performers
+            # ===== Performance Charts =====
+            st.subheader("📈 Performance Distribution")
+            
             col1, col2 = st.columns(2)
             
             with col1:
-                st.subheader("🚀 Top 5 Gainers")
-                gainers = df[df['unrealized_pnl'] > 0].nlargest(5, 'pnl_percentage')
+                # Asset allocation by current value
+                if 'sector' in df.columns and not df['sector'].isna().all():
+                    sector_allocation = df.groupby('sector').agg({
+                        'current_value': 'sum'
+                    }).reset_index()
+                    sector_allocation = sector_allocation.sort_values('current_value', ascending=False)
+                    
+                    import plotly.express as px
+                    fig_allocation = px.pie(
+                        sector_allocation,
+                        values='current_value',
+                        names='sector',
+                        title='Portfolio Allocation by Sector',
+                        hole=0.3
+                    )
+                    st.plotly_chart(fig_allocation, use_container_width=True)
+            
+            with col2:
+                # P&L Distribution
+                holdings_pnl = df.groupby('ticker').agg({
+                    'unrealized_pnl': 'sum',
+                    'stock_name': 'first'
+                }).reset_index()
+                holdings_pnl['pnl_type'] = holdings_pnl['unrealized_pnl'].apply(lambda x: 'Profit' if x > 0 else 'Loss' if x < 0 else 'Break-even')
+                
+                pnl_summary = holdings_pnl.groupby('pnl_type').size().reset_index(name='count')
+                
+                fig_pnl_dist = px.pie(
+                    pnl_summary,
+                    values='count',
+                    names='pnl_type',
+                    title='Holdings P&L Distribution',
+                    color='pnl_type',
+                    color_discrete_map={'Profit': 'green', 'Loss': 'red', 'Break-even': 'gray'}
+                )
+                st.plotly_chart(fig_pnl_dist, use_container_width=True)
+            
+            st.markdown("---")
+            
+            # ===== Top and Bottom Performers =====
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("🚀 Top 10 Gainers")
+                gainers = df.groupby('ticker').agg({
+                    'stock_name': 'first',
+                    'unrealized_pnl': 'sum',
+                    'invested_amount': 'sum',
+                    'current_value': 'sum'
+                }).reset_index()
+                gainers['pnl_percentage'] = (gainers['unrealized_pnl'] / gainers['invested_amount'] * 100)
+                gainers = gainers[gainers['unrealized_pnl'] > 0].nlargest(10, 'pnl_percentage')
+                
                 if not gainers.empty:
-                    for _, row in gainers.iterrows():
-                        st.markdown(f"**{row.get('stock_name', row['ticker'])}**: ₹{row['unrealized_pnl']:,.0f} ({row['pnl_percentage']:.2f}%)")
+                    for idx, row in gainers.iterrows():
+                        with st.container():
+                            st.markdown(f"**{row.get('stock_name', row['ticker'])}** ({row['ticker']})")
+                            st.markdown(f"💰 P&L: ₹{row['unrealized_pnl']:,.0f} | 📊 {row['pnl_percentage']:.2f}%")
+                            st.progress(min(row['pnl_percentage'] / 100, 1.0))
+                            st.markdown("---")
                 else:
                     st.info("No gainers yet")
             
             with col2:
-                st.subheader("📉 Top 5 Losers")
-                losers = df[df['unrealized_pnl'] < 0].nsmallest(5, 'pnl_percentage')
+                st.subheader("📉 Top 10 Losers")
+                losers = df.groupby('ticker').agg({
+                    'stock_name': 'first',
+                    'unrealized_pnl': 'sum',
+                    'invested_amount': 'sum',
+                    'current_value': 'sum'
+                }).reset_index()
+                losers['pnl_percentage'] = (losers['unrealized_pnl'] / losers['invested_amount'] * 100)
+                losers = losers[losers['unrealized_pnl'] < 0].nsmallest(10, 'pnl_percentage')
+                
                 if not losers.empty:
-                    for _, row in losers.iterrows():
-                        st.markdown(f"**{row.get('stock_name', row['ticker'])}**: ₹{row['unrealized_pnl']:,.0f} ({row['pnl_percentage']:.2f}%)")
+                    for idx, row in losers.iterrows():
+                        with st.container():
+                            st.markdown(f"**{row.get('stock_name', row['ticker'])}** ({row['ticker']})")
+                            st.markdown(f"💸 Loss: ₹{row['unrealized_pnl']:,.0f} | 📊 {row['pnl_percentage']:.2f}%")
+                            st.progress(min(abs(row['pnl_percentage']) / 100, 1.0))
+                            st.markdown("---")
                 else:
-                    st.info("No losers - Great job!")
+                    st.info("No losers - Excellent performance!")
+            
+            st.markdown("---")
+            
+            # ===== Performance by Sector and Channel =====
+            st.subheader("📊 Performance Breakdown")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if 'sector' in df.columns and not df['sector'].isna().all():
+                    st.markdown("### 🏢 By Sector")
+                    sector_perf = df.groupby('sector').agg({
+                        'invested_amount': 'sum',
+                        'current_value': 'sum',
+                        'unrealized_pnl': 'sum'
+                    }).reset_index()
+                    sector_perf['pnl_percentage'] = (sector_perf['unrealized_pnl'] / sector_perf['invested_amount'] * 100)
+                    sector_perf = sector_perf.sort_values('pnl_percentage', ascending=False)
+                    
+                    fig_sector_bar = go.Figure()
+                    fig_sector_bar.add_trace(go.Bar(
+                        x=sector_perf['sector'],
+                        y=sector_perf['pnl_percentage'],
+                        marker_color=['green' if x >= 0 else 'red' for x in sector_perf['pnl_percentage']],
+                        text=sector_perf['pnl_percentage'].round(2),
+                        textposition='auto'
+                    ))
+                    fig_sector_bar.update_layout(
+                        title="Sector Performance (%)",
+                        xaxis_title="Sector",
+                        yaxis_title="P&L %",
+                        height=400
+                    )
+                    st.plotly_chart(fig_sector_bar, use_container_width=True)
+            
+            with col2:
+                if 'channel' in df.columns and not df['channel'].isna().all():
+                    st.markdown("### 📡 By Channel")
+                    channel_perf = df.groupby('channel').agg({
+                        'invested_amount': 'sum',
+                        'current_value': 'sum',
+                        'unrealized_pnl': 'sum'
+                    }).reset_index()
+                    channel_perf['pnl_percentage'] = (channel_perf['unrealized_pnl'] / channel_perf['invested_amount'] * 100)
+                    channel_perf = channel_perf.sort_values('pnl_percentage', ascending=False)
+                    
+                    fig_channel_bar = go.Figure()
+                    fig_channel_bar.add_trace(go.Bar(
+                        x=channel_perf['channel'],
+                        y=channel_perf['pnl_percentage'],
+                        marker_color=['green' if x >= 0 else 'red' for x in channel_perf['pnl_percentage']],
+                        text=channel_perf['pnl_percentage'].round(2),
+                        textposition='auto'
+                    ))
+                    fig_channel_bar.update_layout(
+                        title="Channel Performance (%)",
+                        xaxis_title="Channel",
+                        yaxis_title="P&L %",
+                        height=400
+                    )
+                    st.plotly_chart(fig_channel_bar, use_container_width=True)
+            
+            st.markdown("---")
+            
+            # ===== Portfolio Statistics =====
+            st.subheader("📊 Portfolio Statistics")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                avg_pnl_pct = df.groupby('ticker')['pnl_percentage'].first().mean()
+                st.metric("📈 Avg Return per Holding", f"{avg_pnl_pct:.2f}%")
+            
+            with col2:
+                winning_holdings = len(df[df['unrealized_pnl'] > 0].groupby('ticker'))
+                total_holdings_count = len(df.groupby('ticker'))
+                win_rate = (winning_holdings / total_holdings_count * 100) if total_holdings_count > 0 else 0
+                st.metric("🎯 Win Rate", f"{win_rate:.1f}%", delta=f"{winning_holdings}/{total_holdings_count}")
+            
+            with col3:
+                if 'sector' in df.columns:
+                    sector_count = len(df['sector'].dropna().unique())
+                    st.metric("🏢 Sectors", f"{sector_count}")
+                else:
+                    st.metric("🏢 Sectors", "N/A")
+            
+            with col4:
+                if 'channel' in df.columns:
+                    channel_count = len(df['channel'].dropna().unique())
+                    st.metric("📡 Channels", f"{channel_count}")
+                else:
+                    st.metric("📡 Channels", "N/A")
+            
+            st.markdown("---")
+            
+            # ===== Holdings Dropdown with Weekly Values =====
+            st.subheader("📈 View Weekly Values for Individual Holdings")
+            
+            # Get all unique holdings
+            all_holdings = df.groupby('ticker').agg({
+                'stock_name': 'first',
+                'unrealized_pnl': 'sum',
+                'pnl_percentage': 'first',
+                'current_value': 'sum'
+            }).reset_index().sort_values('pnl_percentage', ascending=False)
+            
+            if not all_holdings.empty:
+                selected_holding = st.selectbox(
+                    "Select holding to view weekly price chart:",
+                    options=all_holdings['ticker'].tolist(),
+                    format_func=lambda x: f"{x} - {all_holdings[all_holdings['ticker']==x]['stock_name'].iloc[0]} ({all_holdings[all_holdings['ticker']==x]['pnl_percentage'].iloc[0]:.2f}%)" if not all_holdings[all_holdings['ticker']==x].empty else x,
+                    key="overall_holding_weekly_dropdown"
+                )
+                
+                if selected_holding:
+                    # Show holding details
+                    holding_info = all_holdings[all_holdings['ticker'] == selected_holding].iloc[0]
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Current Value", f"₹{holding_info['current_value']:,.0f}")
+                    with col2:
+                        st.metric("P&L", f"₹{holding_info['unrealized_pnl']:,.0f}")
+                    with col3:
+                        pnl_pct = holding_info['pnl_percentage']
+                        st.metric("P&L %", f"{pnl_pct:.2f}%", delta=f"{pnl_pct:.2f}%")
+                    
+                    # Render weekly values
+                    self.render_weekly_values(selected_holding, self.session_state.user_id)
+            
+            st.markdown("---")
+            
+            # ===== Detailed Holdings Table =====
+            st.subheader("📋 All Holdings Performance Table")
+            
+            # Create comprehensive holdings table
+            holdings_table = df.groupby('ticker').agg({
+                'stock_name': 'first',
+                'sector': 'first',
+                'channel': 'first',
+                'quantity': 'sum',
+                'invested_amount': 'sum',
+                'current_value': 'sum',
+                'unrealized_pnl': 'sum',
+                'pnl_percentage': 'first'
+            }).reset_index().sort_values('pnl_percentage', ascending=False)
+            
+            # Format for display
+            st.dataframe(
+                holdings_table.style.format({
+                    'quantity': '{:,.2f}',
+                    'invested_amount': '₹{:,.0f}',
+                    'current_value': '₹{:,.0f}',
+                    'unrealized_pnl': '₹{:,.0f}',
+                    'pnl_percentage': '{:.2f}%'
+                }),
+                use_container_width=True,
+                height=400
+            )
             
         except Exception as e:
             st.error(f"Error in overall performance: {e}")
+            import traceback
+            st.error(traceback.format_exc())
     
     def render_sector_performance_analysis(self, df):
         """Render sector-wise performance breakdown"""
         st.subheader("🏢 Sector-Wise Performance")
         
         try:
+            # Debug: Check what's in the sector column
+            print(f"🔍 DEBUG: df.columns = {df.columns.tolist()}")
+            if 'sector' in df.columns:
+                print(f"🔍 DEBUG: df['sector'].unique() = {df['sector'].unique()}")
+                print(f"🔍 DEBUG: df['sector'].value_counts() = {df['sector'].value_counts()}")
+                print(f"🔍 DEBUG: df['sector'].isna().sum() = {df['sector'].isna().sum()}")
+            
             if 'sector' not in df.columns or df['sector'].isna().all():
                 st.warning("Sector information not available")
+                # Show what we have for debugging
+                with st.expander("🔍 Debug: Show available columns"):
+                    st.write(df.columns.tolist())
+                    st.write(df.head())
                 return
             
-            # Group by sector
+            # Group by sector (exclude Unknown if there are other sectors)
             sector_data = df.groupby('sector').agg({
                 'invested_amount': 'sum',
                 'current_value': 'sum',
                 'unrealized_pnl': 'sum'
             }).reset_index()
             
+            # Filter out 'Unknown' if we have other sectors
+            if len(sector_data) > 1 and 'Unknown' in sector_data['sector'].values:
+                print(f"🔍 DEBUG: Filtering out 'Unknown' sector, keeping {len(sector_data)-1} known sectors")
+                sector_data = sector_data[sector_data['sector'] != 'Unknown']
+            
             sector_data['pnl_percentage'] = (sector_data['unrealized_pnl'] / sector_data['invested_amount'] * 100)
             sector_data = sector_data.sort_values('pnl_percentage', ascending=False)
+            
+            print(f"🔍 DEBUG: Final sector_data:\n{sector_data}")
             
             # Display sector performance table
             st.dataframe(
@@ -3916,6 +4243,66 @@ class PortfolioAnalytics:
                 title='Portfolio Allocation by Sector'
             )
             st.plotly_chart(fig, use_container_width=True)
+            
+            # ===== NEW: Sector Dropdown Filter =====
+            st.markdown("---")
+            st.subheader("🔍 Drill-Down by Sector")
+            
+            # Sector selection dropdown
+            sector_list = sorted(df['sector'].dropna().unique().tolist())
+            selected_sector = st.selectbox(
+                "Select Sector to view holdings:",
+                options=["All Sectors"] + sector_list,
+                key="sector_filter_dropdown"
+            )
+            
+            if selected_sector != "All Sectors":
+                # Filter holdings by selected sector
+                sector_holdings = df[df['sector'] == selected_sector].copy()
+                
+                if not sector_holdings.empty:
+                    st.info(f"📊 Showing {len(sector_holdings)} holding(s) in **{selected_sector}**")
+                    
+                    # Group by ticker
+                    holdings_summary = sector_holdings.groupby('ticker').agg({
+                        'stock_name': 'first',
+                        'quantity': 'sum',
+                        'invested_amount': 'sum',
+                        'current_value': 'sum',
+                        'unrealized_pnl': 'sum',
+                        'price': 'mean',
+                        'live_price': 'mean'
+                    }).reset_index()
+                    
+                    holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
+                    holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
+                    
+                    # Display holdings table
+                    st.dataframe(
+                        holdings_summary[['ticker', 'stock_name', 'quantity', 'invested_amount', 'current_value', 'unrealized_pnl', 'pnl_percentage']].style.format({
+                            'quantity': '{:,.2f}',
+                            'invested_amount': '₹{:,.0f}',
+                            'current_value': '₹{:,.0f}',
+                            'unrealized_pnl': '₹{:,.0f}',
+                            'pnl_percentage': '{:.2f}%'
+                        }),
+                        use_container_width=True
+                    )
+                    
+                    # Stock dropdown for weekly values
+                    st.markdown("---")
+                    st.subheader("📈 Weekly Values for Individual Stock")
+                    
+                    stock_list = holdings_summary['ticker'].tolist()
+                    selected_stock = st.selectbox(
+                        "Select Stock/Fund to view weekly values:",
+                        options=stock_list,
+                        format_func=lambda x: f"{x} - {holdings_summary[holdings_summary['ticker']==x]['stock_name'].iloc[0]}" if not holdings_summary[holdings_summary['ticker']==x].empty else x,
+                        key="stock_weekly_dropdown"
+                    )
+                    
+                    if selected_stock:
+                        self.render_weekly_values(selected_stock, self.session_state.user_id)
             
         except Exception as e:
             st.error(f"Error in sector analysis: {e}")
@@ -3961,6 +4348,105 @@ class PortfolioAnalytics:
                 color_continuous_scale=['red', 'yellow', 'green']
             )
             st.plotly_chart(fig, use_container_width=True)
+            
+            # ===== NEW: Hierarchical Channel > Sector > Holding Dropdown =====
+            st.markdown("---")
+            st.subheader("🔍 Drill-Down by Channel → Sector → Holding")
+            
+            # Step 1: Channel selection
+            channel_list = sorted(df['channel'].dropna().unique().tolist())
+            selected_channel = st.selectbox(
+                "1️⃣ Select Channel:",
+                options=["All Channels"] + channel_list,
+                key="channel_filter_dropdown"
+            )
+            
+            if selected_channel != "All Channels":
+                # Filter by channel
+                channel_df = df[df['channel'] == selected_channel].copy()
+                
+                st.info(f"📊 Channel: **{selected_channel}** - {len(channel_df)} transaction(s)")
+                
+                # Step 2: Sector selection within channel
+                if 'sector' in channel_df.columns:
+                    sector_list = sorted(channel_df['sector'].dropna().unique().tolist())
+                    
+                    if sector_list:
+                        selected_sector = st.selectbox(
+                            "2️⃣ Select Sector within channel:",
+                            options=["All Sectors"] + sector_list,
+                            key="channel_sector_dropdown"
+                        )
+                        
+                        if selected_sector != "All Sectors":
+                            # Filter by sector
+                            sector_df = channel_df[channel_df['sector'] == selected_sector].copy()
+                            
+                            st.info(f"📊 Sector: **{selected_sector}** - {len(sector_df)} transaction(s)")
+                            
+                            # Step 3: Show holdings and allow selection
+                            if not sector_df.empty:
+                                # Group by ticker
+                                holdings_summary = sector_df.groupby('ticker').agg({
+                                    'stock_name': 'first',
+                                    'quantity': 'sum',
+                                    'invested_amount': 'sum',
+                                    'current_value': 'sum',
+                                    'unrealized_pnl': 'sum'
+                                }).reset_index()
+                                
+                                holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
+                                holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
+                                
+                                st.dataframe(
+                                    holdings_summary[['ticker', 'stock_name', 'quantity', 'invested_amount', 'current_value', 'unrealized_pnl', 'pnl_percentage']].style.format({
+                                        'quantity': '{:,.2f}',
+                                        'invested_amount': '₹{:,.0f}',
+                                        'current_value': '₹{:,.0f}',
+                                        'unrealized_pnl': '₹{:,.0f}',
+                                        'pnl_percentage': '{:.2f}%'
+                                    }),
+                                    use_container_width=True
+                                )
+                                
+                                # Step 4: Select individual holding for weekly values
+                                st.markdown("---")
+                                st.subheader("📈 Weekly Values for Individual Holding")
+                                
+                                holding_list = holdings_summary['ticker'].tolist()
+                                selected_holding = st.selectbox(
+                                    "3️⃣ Select Holding to view weekly values:",
+                                    options=holding_list,
+                                    format_func=lambda x: f"{x} - {holdings_summary[holdings_summary['ticker']==x]['stock_name'].iloc[0]}" if not holdings_summary[holdings_summary['ticker']==x].empty else x,
+                                    key="channel_holding_weekly_dropdown"
+                                )
+                                
+                                if selected_holding:
+                                    self.render_weekly_values(selected_holding, self.session_state.user_id)
+                        else:
+                            # Show all holdings in channel across all sectors
+                            holdings_summary = channel_df.groupby('ticker').agg({
+                                'stock_name': 'first',
+                                'sector': 'first',
+                                'quantity': 'sum',
+                                'invested_amount': 'sum',
+                                'current_value': 'sum',
+                                'unrealized_pnl': 'sum'
+                            }).reset_index()
+                            
+                            holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
+                            holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
+                            
+                            st.dataframe(
+                                holdings_summary[['ticker', 'stock_name', 'sector', 'quantity', 'invested_amount', 'current_value', 'unrealized_pnl', 'pnl_percentage']].style.format({
+                                    'quantity': '{:,.2f}',
+                                    'invested_amount': '₹{:,.0f}',
+                                    'current_value': '₹{:,.0f}',
+                                    'unrealized_pnl': '₹{:,.0f}',
+                                    'pnl_percentage': '{:.2f}%'
+                                }),
+                                use_container_width=True
+                            )
             
         except Exception as e:
             st.error(f"Error in channel analysis: {e}")
@@ -8487,6 +8973,118 @@ You can also suggest creating charts/graphs based on this data."""
             st.write("**Price Sources:** yfinance, mftool, indstocks")
             st.write("**Charts:** Plotly")
             st.write("**Data Processing:** Pandas, NumPy")
+    
+    def render_weekly_values(self, ticker, user_id):
+        """
+        Render weekly price values chart for a specific ticker
+        
+        Args:
+            ticker: Stock/MF ticker symbol
+            user_id: User ID for fetching data
+        """
+        try:
+            from database_config_supabase import get_monthly_stock_prices_supabase
+            import plotly.graph_objects as go
+            from datetime import datetime, timedelta
+            
+            st.subheader(f"📊 Weekly Price Chart: {ticker}")
+            
+            # Get historical prices from database
+            # Note: We store weekly prices as monthly prices in the database
+            prices_data = get_monthly_stock_prices_supabase(ticker)
+            
+            if not prices_data or len(prices_data) == 0:
+                st.warning(f"No historical price data available for {ticker}")
+                st.info("💡 Weekly prices are cached when you first upload a file with this ticker.")
+                return
+            
+            # Convert to DataFrame
+            df_prices = pd.DataFrame(prices_data)
+            
+            # Ensure we have date and price columns
+            if 'date' not in df_prices.columns or 'price' not in df_prices.columns:
+                st.error("Price data format error")
+                return
+            
+            # Sort by date
+            df_prices['date'] = pd.to_datetime(df_prices['date'])
+            df_prices = df_prices.sort_values('date')
+            
+            # Filter to last 52 weeks (1 year)
+            one_year_ago = datetime.now() - timedelta(days=365)
+            df_prices = df_prices[df_prices['date'] >= one_year_ago]
+            
+            if df_prices.empty:
+                st.warning(f"No price data in the last year for {ticker}")
+                return
+            
+            # Create the chart
+            fig = go.Figure()
+            
+            # Add price line
+            fig.add_trace(go.Scatter(
+                x=df_prices['date'],
+                y=df_prices['price'],
+                mode='lines+markers',
+                name='Price',
+                line=dict(color='#1f77b4', width=2),
+                marker=dict(size=6),
+                hovertemplate='<b>Date:</b> %{x|%Y-%m-%d}<br><b>Price:</b> ₹%{y:,.2f}<extra></extra>'
+            ))
+            
+            # Calculate statistics
+            min_price = df_prices['price'].min()
+            max_price = df_prices['price'].max()
+            avg_price = df_prices['price'].mean()
+            latest_price = df_prices['price'].iloc[-1]
+            first_price = df_prices['price'].iloc[0]
+            price_change = ((latest_price - first_price) / first_price * 100) if first_price > 0 else 0
+            
+            # Update layout
+            fig.update_layout(
+                title=f"{ticker} - Weekly Price Trend (Last 1 Year)",
+                xaxis_title="Date",
+                yaxis_title="Price (₹)",
+                height=500,
+                hovermode='x unified',
+                showlegend=True,
+                xaxis=dict(
+                    rangeslider=dict(visible=True),
+                    type='date'
+                )
+            )
+            
+            # Display chart
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Display statistics
+            st.markdown("### 📈 Price Statistics")
+            col1, col2, col3, col4, col5 = st.columns(5)
+            
+            with col1:
+                st.metric("Current", f"₹{latest_price:,.2f}")
+            with col2:
+                st.metric("Min (52W)", f"₹{min_price:,.2f}")
+            with col3:
+                st.metric("Max (52W)", f"₹{max_price:,.2f}")
+            with col4:
+                st.metric("Average", f"₹{avg_price:,.2f}")
+            with col5:
+                delta_color = "normal" if price_change >= 0 else "inverse"
+                st.metric("1Y Change", f"{price_change:.2f}%", delta=f"{price_change:.2f}%", delta_color=delta_color)
+            
+            # Show data table (expandable)
+            with st.expander(f"📋 View Raw Data ({len(df_prices)} records)"):
+                df_display = df_prices[['date', 'price']].copy()
+                df_display['date'] = df_display['date'].dt.strftime('%Y-%m-%d')
+                df_display['price'] = df_display['price'].apply(lambda x: f"₹{x:,.2f}")
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+            
+        except Exception as e:
+            st.error(f"Error rendering weekly values: {e}")
+            print(f"❌ Error in render_weekly_values for {ticker}: {e}")
+            import traceback
+            traceback.print_exc()
     
     def run(self):
         """Main run method"""
