@@ -1662,3 +1662,415 @@ get_weekly_stock_price_supabase = get_stock_price_supabase
 get_weekly_stock_prices_range_supabase = get_stock_prices_range_supabase
 
 
+# Optimized JOIN functions for better performance
+def get_portfolio_data_with_prices(user_id: int) -> List[Dict]:
+    """
+    Get complete portfolio data with JOINs to fetch all related data in one query.
+    This joins:
+    - investment_transactions (user's transactions)
+    - stock_data (ticker metadata: sector, market cap)
+    - stock_prices (current/latest prices)
+    
+    Returns transactions with enriched data from related tables.
+    """
+    try:
+        # Use Supabase to fetch transactions with related data
+        # Note: Supabase doesn't support complex JOINs in the traditional SQL sense,
+        # but we can use select with foreign key relationships or do multiple queries
+        # and join in Python for better performance than N+1 queries
+        
+        # Step 1: Get all transactions for user
+        transactions = supabase.table('investment_transactions')\
+            .select('*')\
+            .eq('user_id', user_id)\
+            .execute()
+        
+        if not transactions.data:
+            return []
+        
+        # Step 2: Get unique tickers from transactions
+        unique_tickers = list(set(t['ticker'] for t in transactions.data if t.get('ticker')))
+        
+        if not unique_tickers:
+            return transactions.data
+        
+        # Step 3: Bulk fetch stock_data for all tickers (metadata like sector, market_cap)
+        stock_data_map = {}
+        try:
+            stock_data = supabase.table('stock_data')\
+                .select('ticker, sector, market_cap, company_name')\
+                .in_('ticker', unique_tickers)\
+                .execute()
+            
+            if stock_data.data:
+                stock_data_map = {s['ticker']: s for s in stock_data.data}
+                print(f"✅ Fetched metadata for {len(stock_data_map)} tickers via JOIN")
+        except Exception as e:
+            print(f"⚠️ Could not fetch stock_data: {e}")
+        
+        # Step 4: Bulk fetch latest stock prices for all tickers
+        stock_prices_map = {}
+        try:
+            from datetime import datetime
+            today = datetime.now().strftime('%Y-%m-%d')
+            
+            # Get latest prices (you might want to get the most recent available)
+            stock_prices = supabase.table('stock_prices')\
+                .select('ticker, price, price_date')\
+                .in_('ticker', unique_tickers)\
+                .lte('price_date', today)\
+                .order('price_date', desc=True)\
+                .execute()
+            
+            if stock_prices.data:
+                # Keep only the latest price for each ticker
+                for price_data in stock_prices.data:
+                    ticker = price_data['ticker']
+                    if ticker not in stock_prices_map:
+                        stock_prices_map[ticker] = price_data
+                print(f"✅ Fetched prices for {len(stock_prices_map)} tickers via JOIN")
+        except Exception as e:
+            print(f"⚠️ Could not fetch stock_prices: {e}")
+        
+        # Step 5: Enrich transactions with joined data
+        enriched_transactions = []
+        for txn in transactions.data:
+            ticker = txn.get('ticker')
+            
+            # Add stock metadata
+            if ticker in stock_data_map:
+                txn['stock_sector'] = stock_data_map[ticker].get('sector')
+                txn['stock_market_cap'] = stock_data_map[ticker].get('market_cap')
+                txn['stock_company_name'] = stock_data_map[ticker].get('company_name')
+            
+            # Add current price
+            if ticker in stock_prices_map:
+                txn['current_price'] = stock_prices_map[ticker].get('price')
+                txn['current_price_date'] = stock_prices_map[ticker].get('price_date')
+            
+            enriched_transactions.append(txn)
+        
+        print(f"✅ Enriched {len(enriched_transactions)} transactions with JOIN data")
+        return enriched_transactions
+        
+    except Exception as e:
+        print(f"❌ Error in get_portfolio_data_with_prices: {e}")
+        # Fallback to basic transactions
+        try:
+            return supabase.table('investment_transactions')\
+                .select('*')\
+                .eq('user_id', user_id)\
+                .execute().data or []
+        except:
+            return []
+
+
+def get_transactions_with_all_data(user_id: int = None) -> List[Dict]:
+    """
+    Get transactions with all related data using optimized queries.
+    Uses bulk fetching instead of N+1 queries for better performance.
+    
+    If user_id is None, fetches for all users (admin view).
+    """
+    try:
+        # Fetch transactions
+        query = supabase.table('investment_transactions').select('*')
+        if user_id is not None:
+            query = query.eq('user_id', user_id)
+        
+        transactions = query.execute()
+        
+        if not transactions.data:
+            return []
+        
+        # Get unique tickers
+        unique_tickers = list(set(t['ticker'] for t in transactions.data if t.get('ticker')))
+        
+        if not unique_tickers:
+            return transactions.data
+        
+        # Bulk fetch related data
+        stock_data_map = {}
+        stock_prices_map = {}
+        
+        # Fetch stock metadata
+        try:
+            stock_data = supabase.table('stock_data')\
+                .select('*')\
+                .in_('ticker', unique_tickers)\
+                .execute()
+            
+            if stock_data.data:
+                stock_data_map = {s['ticker']: s for s in stock_data.data}
+        except Exception as e:
+            print(f"⚠️ Could not bulk fetch stock_data: {e}")
+        
+        # Fetch latest prices
+        try:
+            from datetime import datetime
+            today = datetime.now().strftime('%Y-%m-%d')
+            
+            stock_prices = supabase.table('stock_prices')\
+                .select('ticker, price, price_date')\
+                .in_('ticker', unique_tickers)\
+                .lte('price_date', today)\
+                .order('price_date', desc=True)\
+                .limit(len(unique_tickers))\
+                .execute()
+            
+            if stock_prices.data:
+                for price_data in stock_prices.data:
+                    ticker = price_data['ticker']
+                    if ticker not in stock_prices_map:
+                        stock_prices_map[ticker] = price_data
+        except Exception as e:
+            print(f"⚠️ Could not bulk fetch stock_prices: {e}")
+        
+        # Enrich transactions
+        for txn in transactions.data:
+            ticker = txn.get('ticker')
+            
+            if ticker in stock_data_map:
+                txn.update({
+                    'sector': stock_data_map[ticker].get('sector') or txn.get('sector'),
+                    'market_cap': stock_data_map[ticker].get('market_cap'),
+                    'company_name': stock_data_map[ticker].get('company_name')
+                })
+            
+            if ticker in stock_prices_map:
+                txn.update({
+                    'latest_price': stock_prices_map[ticker].get('price'),
+                    'latest_price_date': stock_prices_map[ticker].get('price_date')
+                })
+        
+        return transactions.data
+        
+    except Exception as e:
+        print(f"❌ Error in get_transactions_with_all_data: {e}")
+        return []
+
+
+def get_complete_portfolio_with_calculations(user_id: int) -> Dict:
+    """
+    Get complete portfolio data with all JOINs and calculations done in one function.
+    This is the optimized version that:
+    1. Gets user transactions
+    2. JOINs with historical_prices based on ticker AND transaction date
+    3. JOINs with stock_data for metadata
+    4. JOINs with stock_prices for current/live prices
+    5. Performs all P&L calculations
+    
+    Returns a complete portfolio summary with all calculations done.
+    """
+    import pandas as pd
+    from datetime import datetime
+    
+    try:
+        print(f"📊 Fetching complete portfolio for user {user_id}...")
+        
+        # Step 1: Get all transactions for user
+        transactions = supabase.table('investment_transactions')\
+            .select('*')\
+            .eq('user_id', user_id)\
+            .order('date', desc=False)\
+            .execute()
+        
+        if not transactions.data:
+            print("❌ No transactions found")
+            return {'transactions': [], 'summary': {}, 'holdings': []}
+        
+        print(f"✅ Found {len(transactions.data)} transactions")
+        
+        # Convert to DataFrame for easier processing
+        df = pd.DataFrame(transactions.data)
+        df['date'] = pd.to_datetime(df['date'])
+        
+        # Get unique tickers
+        unique_tickers = df['ticker'].unique().tolist()
+        print(f"✅ Found {len(unique_tickers)} unique tickers")
+        
+        # Step 2: Bulk fetch historical prices for all transaction dates and tickers
+        historical_prices_map = {}  # Key: (ticker, date)
+        try:
+            # Get all unique (ticker, date) combinations
+            ticker_dates = df[['ticker', 'date']].drop_duplicates()
+            
+            for _, row in ticker_dates.iterrows():
+                ticker = row['ticker']
+                date_str = row['date'].strftime('%Y-%m-%d')
+                
+                # Try stock_prices first
+                try:
+                    price_result = supabase.table('stock_prices')\
+                        .select('price')\
+                        .eq('ticker', ticker)\
+                        .eq('price_date', date_str)\
+                        .execute()
+                    
+                    if price_result.data and len(price_result.data) > 0:
+                        historical_prices_map[(ticker, date_str)] = price_result.data[0]['price']
+                except:
+                    pass
+                
+                # Fallback to historical_prices if not found
+                if (ticker, date_str) not in historical_prices_map:
+                    try:
+                        hist_result = supabase.table('historical_prices')\
+                            .select('historical_price')\
+                            .eq('ticker', ticker)\
+                            .eq('transaction_date', date_str)\
+                            .execute()
+                        
+                        if hist_result.data and len(hist_result.data) > 0:
+                            historical_prices_map[(ticker, date_str)] = hist_result.data[0]['historical_price']
+                    except:
+                        pass
+            
+            print(f"✅ Fetched historical prices for {len(historical_prices_map)} transaction dates")
+        except Exception as e:
+            print(f"⚠️ Error fetching historical prices: {e}")
+        
+        # Step 3: Bulk fetch current/live prices for all tickers
+        current_prices_map = {}
+        try:
+            today = datetime.now().strftime('%Y-%m-%d')
+            
+            current_prices = supabase.table('stock_prices')\
+                .select('ticker, price, price_date')\
+                .in_('ticker', unique_tickers)\
+                .lte('price_date', today)\
+                .order('price_date', desc=True)\
+                .execute()
+            
+            if current_prices.data:
+                for price_data in current_prices.data:
+                    ticker = price_data['ticker']
+                    if ticker not in current_prices_map:
+                        current_prices_map[ticker] = {
+                            'price': price_data['price'],
+                            'date': price_data['price_date']
+                        }
+            
+            print(f"✅ Fetched current prices for {len(current_prices_map)} tickers")
+        except Exception as e:
+            print(f"⚠️ Error fetching current prices: {e}")
+        
+        # Step 4: Bulk fetch stock metadata
+        stock_metadata_map = {}
+        try:
+            stock_data = supabase.table('stock_data')\
+                .select('ticker, sector, market_cap, company_name')\
+                .in_('ticker', unique_tickers)\
+                .execute()
+            
+            if stock_data.data:
+                stock_metadata_map = {s['ticker']: s for s in stock_data.data}
+            
+            print(f"✅ Fetched metadata for {len(stock_metadata_map)} tickers")
+        except Exception as e:
+            print(f"⚠️ Error fetching stock metadata: {e}")
+        
+        # Step 5: Enrich transactions with JOINed data
+        for idx, row in df.iterrows():
+            ticker = row['ticker']
+            date_str = row['date'].strftime('%Y-%m-%d')
+            
+            # Add historical price from JOIN
+            hist_key = (ticker, date_str)
+            if hist_key in historical_prices_map:
+                df.at[idx, 'historical_price'] = historical_prices_map[hist_key]
+            
+            # Add current price from JOIN
+            if ticker in current_prices_map:
+                df.at[idx, 'current_price'] = current_prices_map[ticker]['price']
+                df.at[idx, 'current_price_date'] = current_prices_map[ticker]['date']
+            
+            # Add metadata from JOIN
+            if ticker in stock_metadata_map:
+                df.at[idx, 'sector'] = stock_metadata_map[ticker].get('sector') or row.get('sector')
+                df.at[idx, 'market_cap'] = stock_metadata_map[ticker].get('market_cap')
+                df.at[idx, 'company_name'] = stock_metadata_map[ticker].get('company_name')
+        
+        # Step 6: Calculate holdings (aggregate by ticker)
+        holdings = []
+        
+        for ticker in unique_tickers:
+            ticker_df = df[df['ticker'] == ticker].copy()
+            
+            # Calculate net quantity (buys - sells)
+            buys = ticker_df[ticker_df['transaction_type'] == 'buy']
+            sells = ticker_df[ticker_df['transaction_type'] == 'sell']
+            
+            total_quantity = buys['quantity'].sum() - sells['quantity'].sum()
+            
+            if total_quantity <= 0:
+                continue  # Skip fully sold positions
+            
+            # Calculate average purchase price (weighted)
+            total_invested = (buys['quantity'] * buys['price']).sum()
+            total_buy_quantity = buys['quantity'].sum()
+            avg_price = total_invested / total_buy_quantity if total_buy_quantity > 0 else 0
+            
+            # Get current price
+            current_price = current_prices_map.get(ticker, {}).get('price', avg_price)
+            
+            # Calculate P&L
+            invested_amount = total_quantity * avg_price
+            current_value = total_quantity * current_price
+            pnl = current_value - invested_amount
+            pnl_percent = (pnl / invested_amount * 100) if invested_amount > 0 else 0
+            
+            # Get metadata
+            metadata = stock_metadata_map.get(ticker, {})
+            
+            holdings.append({
+                'ticker': ticker,
+                'stock_name': metadata.get('company_name', ticker),
+                'quantity': total_quantity,
+                'avg_price': avg_price,
+                'current_price': current_price,
+                'invested_amount': invested_amount,
+                'current_value': current_value,
+                'pnl': pnl,
+                'pnl_percent': pnl_percent,
+                'sector': metadata.get('sector'),
+                'market_cap': metadata.get('market_cap'),
+                'first_buy_date': buys['date'].min(),
+                'last_transaction_date': ticker_df['date'].max()
+            })
+        
+        # Step 7: Calculate portfolio summary
+        total_invested = sum(h['invested_amount'] for h in holdings)
+        total_current_value = sum(h['current_value'] for h in holdings)
+        total_pnl = total_current_value - total_invested
+        total_pnl_percent = (total_pnl / total_invested * 100) if total_invested > 0 else 0
+        
+        summary = {
+            'total_invested': total_invested,
+            'total_current_value': total_current_value,
+            'total_pnl': total_pnl,
+            'total_pnl_percent': total_pnl_percent,
+            'total_holdings': len(holdings),
+            'total_transactions': len(df),
+            'first_transaction_date': df['date'].min(),
+            'last_transaction_date': df['date'].max()
+        }
+        
+        print(f"✅ Portfolio calculations complete!")
+        print(f"   Total Invested: ₹{total_invested:,.2f}")
+        print(f"   Current Value: ₹{total_current_value:,.2f}")
+        print(f"   P&L: ₹{total_pnl:,.2f} ({total_pnl_percent:.2f}%)")
+        
+        return {
+            'transactions': df.to_dict('records'),
+            'holdings': holdings,
+            'summary': summary
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in get_complete_portfolio_with_calculations: {e}")
+        import traceback
+        traceback.print_exc()
+        return {'transactions': [], 'holdings': [], 'summary': {}}
+
+

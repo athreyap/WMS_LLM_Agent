@@ -55,6 +55,27 @@ except ImportError:
     PDF_STORAGE_AVAILABLE = False
     print("⚠️ PDF storage functions not available - using temporary PDF processing only")
 
+# Import price fetching functions
+from unified_price_fetcher import (
+    get_stock_price,
+    get_mutual_fund_price,
+    get_stock_price_and_sector,
+    get_mutual_fund_price_and_category
+)
+
+# Import optimized data loader
+try:
+    from optimized_data_loader import (
+        get_portfolio_fast,
+        get_chatbot_context,
+        clear_portfolio_cache
+    )
+    OPTIMIZED_LOADER_AVAILABLE = True
+    print("✅ Optimized portfolio loader available")
+except ImportError:
+    OPTIMIZED_LOADER_AVAILABLE = False
+    print("⚠️ Optimized portfolio loader not available - using legacy methods")
+
 # Streamlit page configuration
 st.set_page_config(
     page_title="WMS-LLM Portfolio Analytics",
@@ -1082,18 +1103,30 @@ class PortfolioAnalytics:
             progress_bar = st.progress(0)
             status_text = st.empty()
             
+            # Determine if this is the first cache population (initial setup)
+            # Check if ANY ticker has cached data
+            is_first_time = all(ticker_latest_cached[t] is None for t in unique_tickers)
+            
             # Filter tickers that need price fetching (exclude only if already cached)
             valid_tickers = []
-            max_tickers_to_process = 20  # Limit to prevent system hanging
+            
+            # On first login, process ALL tickers; otherwise limit to prevent system overload
+            if is_first_time:
+                max_tickers_to_process = len(unique_tickers)  # Process all on first time
+                st.info(f"🚀 **First-time setup:** Processing all {len(unique_tickers)} holdings to build complete price cache.")
+                st.caption("⏱️ This one-time process ensures optimal performance for all future sessions!")
+            else:
+                max_tickers_to_process = 20  # Limit for regular updates
 
             for ticker in unique_tickers:
                 # Check if this ticker needs price fetching
                 if latest_cached_dates[ticker] < current_date:
                     valid_tickers.append(ticker)
 
-                    # Limit number of tickers to prevent system overload
-                    if len(valid_tickers) >= max_tickers_to_process:
+                    # Limit number of tickers to prevent system overload (except on first time)
+                    if not is_first_time and len(valid_tickers) >= max_tickers_to_process:
                         st.warning(f"⚠️ Too many tickers need updating ({len(unique_tickers)}). Processing first {max_tickers_to_process} only.")
+                        st.caption("💡 Tip: Prices will be updated incrementally over time. You can manually refresh if needed.")
                         break
             
             if not valid_tickers:
@@ -1340,7 +1373,6 @@ class PortfolioAnalytics:
                             historical_price = get_stock_price(
                                 ticker, 
                                 ticker, 
-                                user_id, 
                                 transaction_date.strftime('%Y-%m-%d')
                             )
                         
@@ -1508,7 +1540,6 @@ class PortfolioAnalytics:
                     elif str(ticker).isdigit() or ticker.startswith('MF_'):
                         # Mutual fund - use numerical scheme code and get fund category from mftool
                         try:
-                            from unified_price_fetcher import get_mutual_fund_price_and_category
                             live_price, fund_category = get_mutual_fund_price_and_category(ticker, ticker, user_id, None)
 
                             # Use fund category from mftool if available, otherwise default to "Mutual Fund"
@@ -1538,7 +1569,6 @@ class PortfolioAnalytics:
                         # Unknown ticker type or stock ticker - try yfinance as last resort
                     print(f"🔍 {ticker}: Unknown ticker type, trying yfinance as last resort")
                     try:
-                            from unified_price_fetcher import get_stock_price_and_sector
                             live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
 
                             print(f"🔍 DEBUG: {ticker} -> live_price={live_price}, sector={sector}, market_cap={market_cap}")
@@ -1634,6 +1664,27 @@ class PortfolioAnalytics:
                 successful_fetches += 1
                 consecutive_failures = 0
                 print(f"✅ STORED: {ticker} -> ₹{live_price}")
+                
+                # 💾 SAVE TO DATABASE (Critical fix - persist prices across sessions)
+                try:
+                    from database_config_supabase import save_stock_price_supabase
+                    today = datetime.now().strftime('%Y-%m-%d')
+                    
+                    # Save live price to database
+                    save_stock_price_supabase(ticker, today, live_price, 'live_fetch')
+                    
+                    # Update stock_data with latest metadata
+                    market_cap_value = market_caps.get(ticker) if 'market_caps' in locals() else None
+                    update_stock_data_supabase(
+                        ticker=ticker,
+                        sector=sector or "Unknown",
+                        market_cap=market_cap_value,
+                        last_price=live_price
+                    )
+                    print(f"💾 Saved {ticker} to database (price + metadata)")
+                except Exception as db_error:
+                    print(f"⚠️ Could not save {ticker} to DB: {db_error}")
+                    # Continue anyway - at least we have it in session
             else:
                 consecutive_failures += 1
                 print(f"❌ SKIPPED: {ticker} - invalid price or sector")
@@ -1669,10 +1720,41 @@ class PortfolioAnalytics:
             st.error(f"Error fetching live prices: {e}")
     
     def load_portfolio_data(self, user_id):
-        """Load and process portfolio data"""
+        """Load and process portfolio data - uses optimized loader if available"""
         from datetime import datetime
 
         try:
+            # Check if optimized loader is available
+            if OPTIMIZED_LOADER_AVAILABLE:
+                print(f"🚀 Using optimized portfolio loader for user {user_id}")
+                
+                # Check if portfolio needs refresh
+                portfolio_refresh_key = f'portfolio_needs_refresh_{user_id}'
+                force_refresh = portfolio_refresh_key in st.session_state and st.session_state[portfolio_refresh_key]
+                
+                if force_refresh:
+                    print(f"🔄 Portfolio refresh triggered for user {user_id}")
+                    clear_portfolio_cache(user_id)
+                    del st.session_state[portfolio_refresh_key]
+                
+                # Get portfolio data with all JOINs
+                portfolio_data = get_portfolio_fast(user_id, force_refresh=force_refresh)
+                
+                if 'error' in portfolio_data:
+                    st.error(f"Error loading portfolio: {portfolio_data['error']}")
+                    return
+                
+                # Store in session state for use by other parts of the app
+                self.session_state.portfolio_data = portfolio_data
+                self.session_state.portfolio_summary = portfolio_data['summary']
+                self.session_state.portfolio_holdings = portfolio_data['holdings']
+                
+                print(f"✅ Optimized portfolio loaded: {len(portfolio_data['holdings'])} holdings")
+                return
+            
+            # Fallback to legacy method if optimized loader not available
+            print(f"📊 Using legacy portfolio loader for user {user_id}")
+            
             # Check if portfolio needs refresh due to updated live prices
             portfolio_refresh_key = f'portfolio_needs_refresh_{user_id}'
             if portfolio_refresh_key in st.session_state and st.session_state[portfolio_refresh_key]:
