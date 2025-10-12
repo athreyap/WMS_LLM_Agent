@@ -1367,7 +1367,8 @@ class PortfolioAnalytics:
                     
                     # Initialize portfolio data after registration (CRITICAL FIX - load portfolio before showing dashboard)
                     st.info("🔄 Loading your portfolio data...")
-                    self.initialize_portfolio_data(skip_cache_population=False)
+                    # Skip cache population here - already done at line 1324 during registration
+                    self.initialize_portfolio_data(skip_cache_population=True)
                     
                     st.rerun()
             else:
