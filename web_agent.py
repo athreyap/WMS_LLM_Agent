@@ -1118,7 +1118,8 @@ class PortfolioAnalytics:
                 # STEP 2: Fetch live prices and sectors for new tickers (saves to DB)
                 st.info("🔄 Fetching live prices and sectors for new tickers...")
                 try:
-                    self.fetch_live_prices_and_sectors(user_id)
+                    # Force refresh to ensure NEW tickers from this file are fetched
+                    self.fetch_live_prices_and_sectors(user_id, force_refresh=True)
                     st.success("✅ Live prices and sectors updated successfully!")
                 except Exception as e:
                     st.warning(f"⚠️ Live price update had warnings: {e}")
