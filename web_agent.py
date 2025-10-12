@@ -662,7 +662,13 @@ class PortfolioAnalytics:
             
             # Save transactions to database
             st.info(f"💾 Saving {len(df)} transactions to database...")
-            success = self.save_transactions_to_database(df, user_id, uploaded_file.name)
+            success = self.save_transactions_to_database(
+                df, 
+                user_id, 
+                uploaded_file.name,
+                skip_weekly_cache=skip_weekly_cache,
+                skip_live_prices=skip_live_prices
+            )
             
             if success:
                 st.success(f"✅ Successfully processed {uploaded_file.name}")
@@ -1065,8 +1071,17 @@ class PortfolioAnalytics:
             print(f"Error fetching historical price for {ticker} on {week_date}: {e}")
             return None
     
-    def save_transactions_to_database(self, df, user_id, filename):
-        """Save transactions to database"""
+    def save_transactions_to_database(self, df, user_id, filename, skip_weekly_cache=False, skip_live_prices=False):
+        """
+        Save transactions to database
+        
+        Args:
+            df: DataFrame with transactions
+            user_id: User ID
+            filename: File name
+            skip_weekly_cache: If True, skip weekly cache population
+            skip_live_prices: If True, skip live price fetch
+        """
         try:
             from database_config_supabase import save_transactions_bulk_supabase, save_file_record_supabase
             
