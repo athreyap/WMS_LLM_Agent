@@ -1479,31 +1479,33 @@ class PortfolioAnalytics:
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            # Determine if this is the first cache population (initial setup)
-            # Check if ANY ticker has cached data
-            is_first_time = all(ticker_latest_cached[t] is None for t in unique_tickers)
+            # Separate tickers into: NEVER cached (new) vs. needs update (incremental)
+            new_tickers = []  # Tickers with NO cache at all
+            update_tickers = []  # Tickers with some cache but needs more
             
-            # Filter tickers that need price fetching (exclude only if already cached)
-            valid_tickers = []
-            
-            # On first login, process ALL tickers; otherwise limit to prevent system overload
-            if is_first_time:
-                max_tickers_to_process = len(unique_tickers)  # Process all on first time
-                st.info(f"🚀 **First-time setup:** Processing all {len(unique_tickers)} holdings to build complete price cache.")
-                st.caption("⏱️ This one-time process ensures optimal performance for all future sessions!")
-            else:
-                max_tickers_to_process = 20  # Limit for regular updates
-
             for ticker in unique_tickers:
-                # Check if this ticker needs price fetching
                 if latest_cached_dates[ticker] < current_date:
-                    valid_tickers.append(ticker)
-
-                    # Limit number of tickers to prevent system overload (except on first time)
-                    if not is_first_time and len(valid_tickers) >= max_tickers_to_process:
-                        st.warning(f"⚠️ Too many tickers need updating ({len(unique_tickers)}). Processing first {max_tickers_to_process} only.")
-                        st.caption("💡 Tip: Prices will be updated incrementally over time. You can manually refresh if needed.")
-                        break
+                    if ticker_latest_cached[ticker] is None:
+                        # Never cached before - must process
+                        new_tickers.append(ticker)
+                    else:
+                        # Has some cache, needs update - can limit
+                        update_tickers.append(ticker)
+            
+            # Always process ALL new tickers (no limit)
+            # Only limit incremental updates for existing tickers
+            max_update_tickers = 20  # Limit for incremental updates only
+            
+            if new_tickers:
+                st.info(f"🚀 **First-time setup:** Processing all {len(new_tickers)} holdings to build complete price cache.")
+                st.caption("⏱️ This one-time process ensures optimal performance for all future sessions!")
+            
+            # Process all new tickers + limited update tickers
+            if len(update_tickers) > max_update_tickers:
+                st.caption(f"💡 Also updating {max_update_tickers} existing holdings (incremental). Remaining will be updated next time.")
+                valid_tickers = new_tickers + update_tickers[:max_update_tickers]
+            else:
+                valid_tickers = new_tickers + update_tickers
             
             if not valid_tickers:
                 st.info("✅ All prices are already up to date!")
