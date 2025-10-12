@@ -1118,8 +1118,9 @@ class PortfolioAnalytics:
                 # STEP 2: Fetch live prices and sectors for new tickers (saves to DB)
                 st.info("🔄 Fetching live prices and sectors for new tickers...")
                 try:
-                    # Force refresh to ensure NEW tickers from this file are fetched
-                    self.fetch_live_prices_and_sectors(user_id, force_refresh=True)
+                    # Smart refresh: only fetch tickers without prices (not force refresh)
+                    # This avoids re-fetching prices for tickers from previous files
+                    self.fetch_live_prices_and_sectors(user_id, force_refresh=False)
                     st.success("✅ Live prices and sectors updated successfully!")
                 except Exception as e:
                     st.warning(f"⚠️ Live price update had warnings: {e}")
@@ -1779,31 +1780,9 @@ class PortfolioAnalytics:
         """
         from datetime import datetime, timedelta
         try:
-            # Check if already fetched this session (unless force refresh)
-            if not force_refresh:
-                fetch_key = f'prices_fetched_{user_id}'
-                last_fetch_key = f'prices_last_fetch_{user_id}'
-
-                # If we have a last fetch time, check if it's been more than 5 minutes
-                if fetch_key in st.session_state and st.session_state[fetch_key]:
-                    if last_fetch_key in st.session_state:
-                        last_fetch = st.session_state[last_fetch_key]
-                        if isinstance(last_fetch, str):
-                            from datetime import datetime
-                            try:
-                                last_fetch = datetime.fromisoformat(last_fetch)
-                            except:
-                                last_fetch = None
-
-                        if last_fetch:
-                            time_diff = datetime.now() - last_fetch
-                            if time_diff.total_seconds() < 300:  # Less than 5 minutes
-                                print(f"Prices fetched recently ({time_diff.total_seconds():.0f}s ago) for user {user_id}, skipping...")
-                    return
-
-                    print(f"Prices already fetched this session for user {user_id}, but may be stale, refetching...")
-                else:
-                    st.session_state[fetch_key] = True
+            # Note: We no longer use session-level caching
+            # Instead, we check at ticker level to only fetch missing prices
+            # This allows multiple file uploads in sequence to work correctly
             
             st.info("🔄 Fetching live prices and sectors...")
             
@@ -1817,9 +1796,33 @@ class PortfolioAnalytics:
                 return
             
             df = pd.DataFrame(transactions)
-            unique_tickers = df['ticker'].unique()
+            all_tickers = df['ticker'].unique()
             
-            st.info(f"🔍 Found {len(unique_tickers)} unique tickers to fetch data for...")
+            # Filter out tickers that already have valid live prices (unless force_refresh)
+            from database_config_supabase import get_stock_data_supabase
+            
+            if force_refresh:
+                # Force refresh: fetch all tickers
+                unique_tickers = all_tickers
+                st.info(f"🔍 Found {len(unique_tickers)} unique tickers to fetch data for...")
+            else:
+                # Smart refresh: only fetch tickers without live prices
+                tickers_needing_fetch = []
+                for ticker in all_tickers:
+                    try:
+                        stock_data = get_stock_data_supabase(ticker)
+                        if not stock_data or not stock_data.get('live_price') or stock_data.get('live_price') <= 0:
+                            tickers_needing_fetch.append(ticker)
+                    except:
+                        tickers_needing_fetch.append(ticker)
+                
+                unique_tickers = tickers_needing_fetch
+                
+                if len(tickers_needing_fetch) < len(all_tickers):
+                    already_cached = len(all_tickers) - len(tickers_needing_fetch)
+                    st.info(f"🔍 Found {len(unique_tickers)} new tickers (skipping {already_cached} already cached)")
+                else:
+                    st.info(f"🔍 Found {len(unique_tickers)} unique tickers to fetch data for...")
             
             # Initialize storage
             live_prices = {}
@@ -2088,15 +2091,19 @@ class PortfolioAnalytics:
                     consecutive_failures = 0
                     print(f"✅ STORED: {ticker} -> ₹{live_price}")
                     
-                    # 💾 SAVE TO DATABASE (Critical fix - persist prices across sessions)
+                    # 💾 SAVE TO DATABASE
+                    # Note: unique_tickers was already filtered to only include tickers without prices
+                    # So we can save directly without double-checking
                     try:
                         from database_config_supabase import save_stock_price_supabase
                         today = datetime.now().strftime('%Y-%m-%d')
                         
-                        # Save live price to database
+                        # Save live price to historical_prices table
+                        print(f"💾 Saving live price for {ticker} (₹{live_price}) with today's date: {today}")
                         save_stock_price_supabase(ticker, today, live_price, 'live_fetch')
+                        print(f"✅ Live price saved to historical_prices with date {today}")
                         
-                        # Update stock_data with latest metadata (using actual columns)
+                        # Update stock_data table with latest metadata
                         update_stock_data_supabase(
                             ticker=ticker,
                             sector=sector or "Unknown",
