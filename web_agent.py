@@ -1129,7 +1129,7 @@ class PortfolioAnalytics:
                 st.info("🔄 Caching weekly and monthly price data for charts...")
                 try:
                     # Actually populate the cache now (not just set a flag)
-                    with st.spinner("⏳ Building weekly price cache... This may take 30-60 seconds..."):
+                    with st.spinner("⏳ Building weekly price cache... This may take a few minutes..."):
                         self.populate_weekly_and_monthly_cache(user_id)
                     st.success("✅ Weekly and monthly price data cached successfully!")
                 except Exception as e:
@@ -1576,43 +1576,14 @@ class PortfolioAnalytics:
                             # Already cached
                             all_weekly_prices[ticker][week_date] = cached_prices[ticker]
                         else:
-                            # Need to fetch - with timeout protection (Windows-compatible)
+                            # Need to fetch
                             try:
-                                import threading
-                                import time
-
-                                price = None
-                                exception = None
-
-                                def fetch_with_timeout():
-                                    nonlocal price, exception
-                                    try:
-                                        price = self.fetch_historical_price_comprehensive(ticker, week_date)
-                                    except Exception as e:
-                                        exception = e
-
-                                # Create a thread for the fetch operation
-                                fetch_thread = threading.Thread(target=fetch_with_timeout)
-                                fetch_thread.daemon = True
-                                fetch_thread.start()
-
-                                # Wait for completion with timeout
-                                fetch_thread.join(timeout=60)  # 60 second timeout for better reliability
-
-                                if fetch_thread.is_alive():
-                                    print(f"⚠️ Timeout fetching price for {ticker} on {week_date_str}")
-                                    # Continue with next ticker
-                                    pass
-                                elif exception:
-                                    print(f"⚠️ Error fetching price for {ticker} on {week_date_str}: {exception}")
-                                    # Continue with next ticker
-                                    pass
-                                elif price and price > 0:
+                                price = self.fetch_historical_price_comprehensive(ticker, week_date)
+                                if price and price > 0:
                                     all_weekly_prices[ticker][week_date] = price
                                     weekly_cached_count += 1
-
                             except Exception as e:
-                                print(f"⚠️ Error in timeout handling for {ticker} on {week_date_str}: {e}")
+                                print(f"⚠️ Error fetching price for {ticker} on {week_date_str}: {e}")
                                 # Continue with next ticker
                                 pass
                 else:
@@ -1624,43 +1595,14 @@ class PortfolioAnalytics:
                         if cached_price and cached_price > 0:
                             all_weekly_prices[ticker][week_date] = cached_price
                         else:
-                            # Need to fetch - with timeout protection (Windows-compatible)
+                            # Need to fetch
                             try:
-                                import threading
-                                import time
-
-                                price = None
-                                exception = None
-
-                                def fetch_with_timeout():
-                                    nonlocal price, exception
-                                    try:
-                                        price = self.fetch_historical_price_comprehensive(ticker, week_date)
-                                    except Exception as e:
-                                        exception = e
-
-                                # Create a thread for the fetch operation
-                                fetch_thread = threading.Thread(target=fetch_with_timeout)
-                                fetch_thread.daemon = True
-                                fetch_thread.start()
-
-                                # Wait for completion with timeout
-                                fetch_thread.join(timeout=60)  # 60 second timeout for better reliability
-
-                                if fetch_thread.is_alive():
-                                    print(f"⚠️ Timeout fetching price for {ticker} on {week_date_str}")
-                                    # Continue with next ticker
-                                    pass
-                                elif exception:
-                                    print(f"⚠️ Error fetching price for {ticker} on {week_date_str}: {exception}")
-                                    # Continue with next ticker
-                                    pass
-                                elif price and price > 0:
+                                price = self.fetch_historical_price_comprehensive(ticker, week_date)
+                                if price and price > 0:
                                     all_weekly_prices[ticker][week_date] = price
                                     weekly_cached_count += 1
-
                             except Exception as e:
-                                print(f"⚠️ Error in timeout handling for {ticker} on {week_date_str}: {e}")
+                                print(f"⚠️ Error fetching price for {ticker} on {week_date_str}: {e}")
                                 # Continue with next ticker
                                 pass
             
