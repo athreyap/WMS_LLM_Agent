@@ -14,6 +14,65 @@ import re
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def get_pms_aif_from_csv(ticker: str, csv_path: str = 'pms_aif_performance.csv') -> Optional[Dict[str, Any]]:
+    """
+    Load PMS/AIF performance data from a local CSV file
+    
+    This is a fallback method when SEBI data is unavailable.
+    Update the CSV file quarterly with data from fund manager reports.
+    
+    Args:
+        ticker: PMS/AIF registration code
+        csv_path: Path to CSV file with performance data
+    
+    Returns:
+        Dict with performance data or None
+    """
+    try:
+        import os
+        
+        if not os.path.exists(csv_path):
+            logger.debug(f"CSV file not found: {csv_path}")
+            return None
+        
+        df = pd.read_csv(csv_path)
+        
+        # Find matching ticker
+        match = df[df['ticker'] == ticker]
+        
+        if match.empty:
+            logger.debug(f"Ticker {ticker} not found in CSV")
+            return None
+        
+        row = match.iloc[0]
+        
+        # Check if performance data is available
+        has_data = False
+        result = {
+            'ticker': ticker,
+            'name': row.get('name', ticker),
+            'source': 'local_csv',
+            'last_updated': row.get('last_updated', 'N/A')
+        }
+        
+        # Add performance metrics if available
+        for key in ['1y_return', '3y_cagr', '5y_cagr', '1m_return', '3m_return', '6m_return']:
+            value = row.get(key)
+            if pd.notna(value) and str(value).strip() != '':
+                result[key] = str(value).strip()
+                has_data = True
+        
+        if not has_data:
+            logger.warning(f"CSV entry for {ticker} exists but has no performance data")
+            return None
+        
+        logger.info(f"✅ Loaded {ticker} performance data from CSV (updated: {result['last_updated']})")
+        return result
+    
+    except Exception as e:
+        logger.error(f"Error reading CSV for {ticker}: {e}")
+        return None
+
 def is_pms_code(ticker: str) -> bool:
     """Check if ticker is a PMS registration code"""
     ticker_str = str(ticker).strip().upper()
@@ -46,12 +105,16 @@ def get_pms_nav_from_sebi(pms_name: str = None, registration_code: str = None) -
         url = "https://www.sebi.gov.in/sebiweb/other/OtherAction.do?doPmr=yes"
         
         # Read all tables from the page with headers to avoid being blocked
+        import requests
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
         try:
-            tables = pd.read_html(url, storage_options={'headers': headers})
+            # Fetch HTML with custom headers first
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            tables = pd.read_html(response.text)
         except ValueError as ve:
             # "No tables found" error
             logger.warning(f"⚠️ SEBI website returned no tables (website may be down or structure changed): {ve}")
@@ -76,13 +139,18 @@ def get_pms_nav_from_sebi(pms_name: str = None, registration_code: str = None) -
             search_term = pms_name.replace("_", " ").replace("-", " ")
             match = df[df['Portfolio Manager'].str.contains(search_term, case=False, na=False)]
         elif registration_code:
-            # Try to find by registration code (if available in the data)
+            # Try to find by registration code
+            # First check if there's a Registration column
             if 'Registration No.' in df.columns or 'Registration Number' in df.columns:
                 reg_col = 'Registration No.' if 'Registration No.' in df.columns else 'Registration Number'
                 match = df[df[reg_col].str.contains(registration_code, case=False, na=False)]
             else:
-                logger.warning("Registration number column not found in SEBI data")
-                return None
+                # Fallback: Registration codes sometimes appear in the Portfolio Manager name
+                # Search for the code in Portfolio Manager column
+                logger.info(f"Registration column not found, searching for code in Portfolio Manager name")
+                match = df[df['Portfolio Manager'].str.contains(registration_code, case=False, na=False)]
+                
+            # If still not found by code, caller will retry with name
         else:
             logger.warning("Either pms_name or registration_code must be provided")
             return None
@@ -228,12 +296,30 @@ def get_pms_nav(ticker: str, pms_name: str = None, investment_date: str = None, 
         dict with PMS data and calculated current value or None
     """
     try:
-        # Extract PMS name from ticker if not provided
+        # PRIORITY 1: Check local CSV file first (most reliable)
+        csv_data = get_pms_aif_from_csv(ticker)
+        if csv_data:
+            logger.info(f"📁 Using CSV data for {ticker}")
+            
+            # If investment details provided, calculate current value
+            if investment_date and investment_amount:
+                returns_data = {}
+                for key in ['1m_return', '3m_return', '6m_return', '1y_return', '3y_cagr', '5y_cagr']:
+                    if key in csv_data:
+                        returns_data[key] = csv_data[key]
+                
+                calculation = calculate_current_value(investment_amount, investment_date, returns_data)
+                csv_data['calculated_value'] = calculation
+                csv_data['price'] = calculation['current_value']
+            
+            return csv_data
+        
+        # PRIORITY 2: Extract PMS name from ticker if not provided
         if not pms_name and not is_pms_code(ticker):
             # Try to extract name from ticker
             pms_name = ticker
         
-        # Try to fetch from SEBI
+        # PRIORITY 3: Try to fetch from SEBI
         if is_pms_code(ticker):
             # Try with registration code first
             sebi_data = get_pms_nav_from_sebi(registration_code=ticker)
@@ -287,7 +373,12 @@ def get_pms_nav(ticker: str, pms_name: str = None, investment_date: str = None, 
             logger.info(f"✅ Successfully fetched PMS data for {ticker}")
             return result
         
-        logger.warning(f"⚠️ No PMS data found for {ticker}")
+        # FALLBACK: If SEBI data not available, return None (no fake estimates)
+        logger.warning(f"⚠️ No PMS data found for {ticker} from SEBI")
+        logger.info(f"💡 Real-time SEBI data unavailable - will show 0% return (honest)")
+        
+        # DO NOT generate fake estimated values
+        # Better to show 0% return than misleading estimates
         return None
         
     except Exception as e:
@@ -313,12 +404,16 @@ def get_aif_nav_from_sebi(aif_name: str = None, registration_code: str = None) -
         url = "https://www.sebi.gov.in/sebiweb/other/OtherAction.do?doRecognisedFpi=yes&type=aif"
         
         # Add headers to avoid being blocked
+        import requests
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
         try:
-            tables = pd.read_html(url, storage_options={'headers': headers})
+            # Fetch HTML with custom headers first
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            tables = pd.read_html(response.text)
         except ValueError as ve:
             logger.warning(f"⚠️ SEBI AIF website returned no tables (website may be down or structure changed): {ve}")
             return None
@@ -349,19 +444,39 @@ def get_aif_nav_from_sebi(aif_name: str = None, registration_code: str = None) -
         logger.error(f"Error fetching AIF data from SEBI: {e}")
         return None
 
-def get_aif_nav(ticker: str, aif_name: str = None) -> Optional[Dict[str, Any]]:
+def get_aif_nav(ticker: str, aif_name: str = None, investment_date: str = None, investment_amount: float = None) -> Optional[Dict[str, Any]]:
     """
     Get AIF NAV/performance data
     
     Args:
         ticker (str): AIF registration code or name
         aif_name (str): Optional AIF name for better matching
+        investment_date (str): Investment date in YYYY-MM-DD format (for value calculation)
+        investment_amount (float): Initial investment amount (for value calculation)
     
     Returns:
         dict with AIF data or None
     """
     try:
-        # Try to fetch from SEBI
+        # PRIORITY 1: Check local CSV file first (most reliable)
+        csv_data = get_pms_aif_from_csv(ticker)
+        if csv_data:
+            logger.info(f"📁 Using CSV data for {ticker}")
+            
+            # If investment details provided, calculate current value
+            if investment_date and investment_amount:
+                returns_data = {}
+                for key in ['1m_return', '3m_return', '6m_return', '1y_return', '3y_cagr', '5y_cagr']:
+                    if key in csv_data:
+                        returns_data[key] = csv_data[key]
+                
+                calculation = calculate_current_value(investment_amount, investment_date, returns_data)
+                csv_data['calculated_value'] = calculation
+                csv_data['price'] = calculation['current_value']
+            
+            return csv_data
+        
+        # PRIORITY 2: Try to fetch from SEBI
         sebi_data = None
         
         if is_aif_code(ticker):
@@ -382,10 +497,33 @@ def get_aif_nav(ticker: str, aif_name: str = None) -> Optional[Dict[str, Any]]:
                 'data': first_record.to_dict()
             }
             
+            # Calculate current value if investment details provided
+            if investment_date and investment_amount:
+                # Extract returns data (AIF might have different column names)
+                returns_data = {}
+                performance_cols = {
+                    '1Y Return': '1y_return',
+                    '3Y CAGR': '3y_cagr',
+                    '5Y CAGR': '5y_cagr'
+                }
+                
+                for col, key in performance_cols.items():
+                    if col in first_record:
+                        returns_data[key] = first_record[col]
+                
+                calculation = calculate_current_value(investment_amount, investment_date, returns_data)
+                result['calculated_value'] = calculation
+                result['price'] = calculation['current_value']
+            
             logger.info(f"✅ Successfully fetched AIF data for {ticker}")
             return result
         
-        logger.warning(f"⚠️ No AIF data found for {ticker}")
+        # FALLBACK: If SEBI data not available, return None (no fake estimates)
+        logger.warning(f"⚠️ No AIF data found for {ticker} from SEBI")
+        logger.info(f"💡 Real-time SEBI data unavailable - will show 0% return (honest)")
+        
+        # DO NOT generate fake estimated values
+        # Better to show 0% return than misleading estimates
         return None
         
     except Exception as e:
