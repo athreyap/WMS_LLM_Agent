@@ -1406,7 +1406,8 @@ class PortfolioAnalytics:
             for ticker in unique_tickers:
                 ticker_purchases = buy_transactions[buy_transactions['ticker'] == ticker]
                 purchase_date = ticker_purchases['date'].min()
-                start_date = max(purchase_date, one_year_ago)
+                # Always fetch full 1 year of data (not just from purchase date)
+                start_date = one_year_ago
                 ticker_purchase_dates[ticker] = start_date
             
             # Check last 10 weeks for all tickers
