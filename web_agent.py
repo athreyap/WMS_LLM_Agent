@@ -1956,41 +1956,61 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             sectors = {}
             market_caps = {}
             
-            # Check if BULK fetching is available (20x faster!)
-            if BULK_FETCH_AVAILABLE and len(unique_tickers) > 0:
-                # NEW: Use BULK price fetching (20x faster!)
-                st.info(f"💰 Fetching live prices for {len(unique_tickers)} tickers (BULK mode - 20x faster)...")
-                try:
-                    # Create DataFrame for bulk fetch
-                    trans_map = {t: df[df['ticker']==t].iloc[0].to_dict() for t in unique_tickers if t in df['ticker'].values}
-                    df_tickers = pd.DataFrame({
-                        'ticker': list(unique_tickers),
-                        'stock_name': [trans_map.get(t, {}).get('stock_name', t) for t in unique_tickers]
-                    })
-                    
-                    # Bulk fetch
-                    bulk_prices = fetch_live_prices_bulk(
-                        df=df_tickers,
-                        user_id=user_id,
-                        progress_callback=lambda msg: st.caption(msg)
-                    )
-                    
-                    # Convert to session format
-                    for ticker, (price, sector) in bulk_prices.items():
-                        live_prices[ticker] = price
-                        sectors[ticker] = sector
-                    
-                    # Store in session state
-                    self.session_state.live_prices = live_prices
-                    self.session_state.sectors = sectors
-                    
-                    st.success(f"✅ Live prices fetched successfully (bulk mode): {len(live_prices)} tickers")
-                    return  # Done! Exit early
-                    
-                except Exception as e:
-                    st.warning(f"⚠️ Bulk fetch failed ({e}), falling back to individual fetching...")
-                    print(f"❌ Bulk fetch error: {e}")
-                    # Fall through to individual fetching
+        # Check if BULK fetching is available (20x faster!)
+        if BULK_FETCH_AVAILABLE and len(unique_tickers) > 0:
+            # NEW: Use BULK price fetching (20x faster!)
+            st.info(f"💰 Fetching live prices for {len(unique_tickers)} tickers (BULK mode - 20x faster)...")
+            print("=" * 80)
+            print("🚀 BULK LIVE PRICE FETCH - STARTING")
+            print("=" * 80)
+            print(f"📊 Total tickers: {len(unique_tickers)}")
+            print(f"📋 Tickers: {list(unique_tickers)[:10]}{'...' if len(unique_tickers) > 10 else ''}")
+            
+            try:
+                # Create DataFrame for bulk fetch
+                trans_map = {t: df[df['ticker']==t].iloc[0].to_dict() for t in unique_tickers if t in df['ticker'].values}
+                df_tickers = pd.DataFrame({
+                    'ticker': list(unique_tickers),
+                    'stock_name': [trans_map.get(t, {}).get('stock_name', t) for t in unique_tickers]
+                })
+                
+                print(f"📊 DataFrame created with {len(df_tickers)} rows")
+                print(f"📋 Columns: {list(df_tickers.columns)}")
+                
+                # Bulk fetch
+                print("🔄 Calling fetch_live_prices_bulk()...")
+                bulk_prices = fetch_live_prices_bulk(
+                    df=df_tickers,
+                    user_id=user_id,
+                    progress_callback=lambda msg: st.caption(msg)
+                )
+                
+                print(f"✅ Bulk fetch returned {len(bulk_prices)} prices")
+                
+                # Convert to session format
+                for ticker, (price, sector) in bulk_prices.items():
+                    live_prices[ticker] = price
+                    sectors[ticker] = sector
+                
+                # Store in session state
+                self.session_state.live_prices = live_prices
+                self.session_state.sectors = sectors
+                
+                print(f"✅ Stored in session: {len(live_prices)} live prices, {len(sectors)} sectors")
+                print("=" * 80)
+                
+                st.success(f"✅ Live prices fetched successfully (bulk mode): {len(live_prices)} tickers")
+                return  # Done! Exit early
+                
+            except Exception as e:
+                st.warning(f"⚠️ Bulk fetch failed ({e}), falling back to individual fetching...")
+                print("=" * 80)
+                print(f"❌ BULK FETCH ERROR: {e}")
+                print("=" * 80)
+                import traceback
+                print(traceback.format_exc())
+                print("=" * 80)
+                # Fall through to individual fetching
             
             # FALLBACK: Individual fetching (when bulk not available or failed)
             # Fetch live prices and sectors for each ticker
@@ -10589,6 +10609,56 @@ You can also suggest creating charts/graphs based on this data."""
 
 # Main execution
 if __name__ == "__main__":
+    # ============================================================================
+    # AI & BULK INTEGRATION DIAGNOSTICS
+    # ============================================================================
+    st.write("---")
+    st.subheader("🔍 System Diagnostics (Startup)")
+    
+    diag_col1, diag_col2 = st.columns(2)
+    
+    with diag_col1:
+        st.caption("**1. API Keys Status**")
+        try:
+            gemini_key = st.secrets.get("gemini_api_key") or st.secrets.get("google_api_key")
+            openai_key = st.secrets.get("open_ai")
+            
+            if gemini_key:
+                st.success(f"✅ Gemini: {gemini_key[:15]}...")
+            else:
+                st.error("❌ Gemini: Not found")
+            
+            if openai_key:
+                st.success(f"✅ OpenAI: {openai_key[:15]}...")
+            else:
+                st.error("❌ OpenAI: Not found")
+        except Exception as e:
+            st.error(f"❌ Secrets error: {e}")
+    
+    with diag_col2:
+        st.caption("**2. AI & Bulk Status**")
+        try:
+            from ai_price_fetcher import AIPriceFetcher
+            ai = AIPriceFetcher()
+            
+            if ai.is_available():
+                if ai.gemini_client:
+                    st.success("✅ AI: Gemini Active")
+                elif ai.openai_client:
+                    st.success("✅ AI: OpenAI Active")
+            else:
+                st.error("❌ AI: Not Available")
+        except Exception as e:
+            st.error(f"❌ AI Error: {e}")
+        
+        if BULK_FETCH_AVAILABLE:
+            st.success("✅ Bulk: Enabled")
+        else:
+            st.error("❌ Bulk: Disabled")
+    
+    st.write("---")
+    
+    # ============================================================================
     # Initialize the portfolio analytics system
     app = PortfolioAnalytics()
     

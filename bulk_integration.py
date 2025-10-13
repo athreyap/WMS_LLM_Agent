@@ -329,22 +329,51 @@ def fetch_live_prices_bulk(
         Dict of {ticker: (price, sector)}
     """
     logger.info("🚀 Starting bulk live price fetch...")
+    print("\n" + "=" * 80)
+    print("🚀 BULK INTEGRATION - fetch_live_prices_bulk()")
+    print("=" * 80)
     
     # Categorize tickers
     mf_isins, stock_tickers, pms_tickers, ticker_names = categorize_tickers(df)
     
+    print(f"📊 Categorization Results:")
+    print(f"   MF/ISIN codes: {len(mf_isins)} → {mf_isins[:5]}{'...' if len(mf_isins) > 5 else ''}")
+    print(f"   Stock tickers: {len(stock_tickers)} → {stock_tickers[:5]}{'...' if len(stock_tickers) > 5 else ''}")
+    print(f"   PMS/AIF codes: {len(pms_tickers)} → {pms_tickers[:5]}{'...' if len(pms_tickers) > 5 else ''}")
+    
     fetcher = BulkPriceFetcher()
+    
+    # Check AI availability
+    print(f"\n🤖 AI Availability Check:")
+    try:
+        from ai_price_fetcher import AIPriceFetcher
+        ai = AIPriceFetcher()
+        if ai.is_available():
+            if ai.gemini_client:
+                print("   ✅ Gemini AI is active")
+            elif ai.openai_client:
+                print("   ✅ OpenAI is active")
+        else:
+            print("   ❌ AI is NOT available!")
+    except Exception as e:
+        print(f"   ❌ AI check failed: {e}")
     
     # Fetch all prices using optimized bulk methods
     if progress_callback:
         progress_callback(f"💰 Fetching live prices for {len(mf_isins) + len(stock_tickers) + len(pms_tickers)} tickers...")
     
+    print(f"\n🔄 Calling BulkPriceFetcher.get_all_prices_optimized()...")
     mf_prices, stock_prices, pms_data = fetcher.get_all_prices_optimized(
         mf_isins,
         stock_tickers,
         pms_tickers,
         ticker_names
     )
+    
+    print(f"\n✅ Fetching complete:")
+    print(f"   MF prices: {len(mf_prices)}/{len(mf_isins)}")
+    print(f"   Stock prices: {len(stock_prices)}/{len(stock_tickers)}")
+    print(f"   PMS/AIF data: {len(pms_data)}/{len(pms_tickers)}")
     
     # Combine results with sectors
     all_prices = {}
@@ -358,32 +387,44 @@ def fetch_live_prices_bulk(
         all_prices[ticker] = (price, "Mutual Fund")
     
     # PMS/AIF - calculate current value from CAGR
+    # Check if we have transaction data (date, price, quantity columns)
+    has_trans_data = all(col in df.columns for col in ['date', 'price', 'quantity'])
+    
     for ticker, cagr_data in pms_data.items():
-        # Get investment details
-        ticker_trans = df[df['ticker'] == ticker]
-        if ticker_trans.empty:
-            continue
-        
-        first_trans = ticker_trans.iloc[0]
-        investment_date = pd.to_datetime(first_trans['date'])
-        investment_amount = float(ticker_trans['quantity'].sum() * first_trans['price'])
-        
-        # Calculate current value
-        years_elapsed = (datetime.now() - investment_date).days / 365.25
-        
-        current_value = investment_amount
-        if years_elapsed >= 5 and '5Y' in cagr_data:
-            cagr = cagr_data['5Y'] / 100
-            current_value = investment_amount * ((1 + cagr) ** years_elapsed)
-        elif years_elapsed >= 3 and '3Y' in cagr_data:
-            cagr = cagr_data['3Y'] / 100
-            current_value = investment_amount * ((1 + cagr) ** years_elapsed)
-        elif '1Y' in cagr_data:
-            annual_return = cagr_data['1Y'] / 100
-            current_value = investment_amount * ((1 + annual_return) ** years_elapsed)
-        
-        sector = "Alternative Investments" if is_aif_code(ticker) else "PMS Equity"
-        all_prices[ticker] = (current_value, sector)
+        if has_trans_data:
+            # Get investment details from transaction data
+            ticker_trans = df[df['ticker'] == ticker]
+            if ticker_trans.empty:
+                continue
+            
+            first_trans = ticker_trans.iloc[0]
+            investment_date = pd.to_datetime(first_trans['date'])
+            investment_amount = float(ticker_trans['quantity'].sum() * first_trans['price'])
+            
+            # Calculate current value
+            years_elapsed = (datetime.now() - investment_date).days / 365.25
+            
+            current_value = investment_amount
+            if years_elapsed >= 5 and '5Y' in cagr_data:
+                cagr = cagr_data['5Y'] / 100
+                current_value = investment_amount * ((1 + cagr) ** years_elapsed)
+            elif years_elapsed >= 3 and '3Y' in cagr_data:
+                cagr = cagr_data['3Y'] / 100
+                current_value = investment_amount * ((1 + cagr) ** years_elapsed)
+            elif '1Y' in cagr_data:
+                annual_return = cagr_data['1Y'] / 100
+                current_value = investment_amount * ((1 + annual_return) ** years_elapsed)
+            
+            sector = "Alternative Investments" if is_aif_code(ticker) else "PMS Equity"
+            all_prices[ticker] = (current_value, sector)
+        else:
+            # No transaction data available - use CAGR info as a placeholder
+            # This happens during login when only tickers are passed
+            # The actual value will be calculated when displaying portfolio
+            sector = "Alternative Investments" if is_aif_code(ticker) else "PMS Equity"
+            # Store CAGR data as the "price" temporarily (will be handled by portfolio display)
+            cagr_value = cagr_data.get('3Y', cagr_data.get('1Y', 0))
+            all_prices[ticker] = (cagr_value, sector)
     
     # Bulk update database
     if progress_callback:
