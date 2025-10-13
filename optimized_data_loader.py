@@ -124,8 +124,9 @@ def get_portfolio_fast(user_id: int, force_refresh: bool = False) -> Dict:
         result = {
             'transactions': transactions_with_joins,
             'stock_data': stock_data_dict,
-            'historical_prices': historical_prices_dict,
-            'error': None
+            'historical_prices': historical_prices_dict
+            # Note: Don't include 'error' key when there's no error
+            # web_agent.py checks 'if "error" in portfolio_data', so only add it on actual errors
         }
         
         # Cache the result
@@ -150,7 +151,8 @@ def get_chatbot_context(user_id: int) -> str:
     try:
         portfolio_data = get_portfolio_fast(user_id, force_refresh=False)
         
-        if 'error' in portfolio_data and portfolio_data['error']:
+        # Check for error using same pattern as web_agent.py
+        if portfolio_data.get('error') is not None:
             return f"Error loading portfolio: {portfolio_data['error']}"
         
         transactions = portfolio_data.get('transactions', [])

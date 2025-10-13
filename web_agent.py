@@ -1220,7 +1220,11 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                     self.load_portfolio_data(user_id, force_refresh=True)
                     st.success("✅ Portfolio data refreshed successfully!")
                 except Exception as e:
-                    st.warning(f"⚠️ Portfolio refresh had warnings: {e}")
+                    # Portfolio refresh failed - error already shown by load_portfolio_data
+                    # Just provide additional context about the file upload status
+                    st.info("💡 File was uploaded successfully, but portfolio display needs attention")
+                    print(f"⚠️ Portfolio refresh failed after file upload: {e}")
+                    return False  # Return False to indicate partial failure
                 
                 return True
             else:
@@ -2314,15 +2318,18 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                             print(f"❌ Non-connection error in portfolio load: {error_msg_str}")
                             break
                 
-                if not portfolio_data or 'error' in portfolio_data:
-                    if portfolio_data:
-                        error_detail = portfolio_data.get('error') or 'Unknown error occurred'
-                    else:
+                # Check for errors: portfolio_data is None, empty, or has 'error' key with a value
+                if not portfolio_data or (portfolio_data.get('error') is not None):
+                    if portfolio_data and portfolio_data.get('error'):
+                        error_detail = portfolio_data.get('error')
+                    elif not portfolio_data:
                         error_detail = 'Failed to load portfolio data'
+                    else:
+                        error_detail = 'Unknown error occurred'
                     
-                    st.error(f"Error loading portfolio: {error_detail}")
-                    st.info("💡 Tip: Try logging out and back in, or refresh the page")
-                    raise Exception(error_detail)  # Raise exception instead of just returning
+                    # Don't show error here - let the outer exception handler do it
+                    # This prevents duplicate error messages
+                    raise Exception(error_detail)
                 
                 # Convert transactions to DataFrame for use by rendering code
                 df = pd.DataFrame(portfolio_data['transactions'])
@@ -2641,7 +2648,12 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             self.session_state.last_refresh_time = datetime.now()
             
         except Exception as e:
-            st.error(f"Error loading portfolio data: {e}")
+            # Show error with helpful context
+            error_msg = str(e) if str(e) else "Unknown error occurred"
+            st.error(f"❌ Error loading portfolio: {error_msg}")
+            st.info("💡 Tip: Try logging out and back in, or refresh the page")
+            print(f"❌ Portfolio load failed: {error_msg}")
+            raise  # Re-raise exception to notify calling function
     
     def show_loading_animation(self):
         """Show an engaging stock growth loading animation"""
