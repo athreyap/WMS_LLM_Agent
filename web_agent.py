@@ -1215,7 +1215,6 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 st.info("🔄 Refreshing portfolio data...")
                 try:
                     # Clear cache before loading to ensure fresh data after upload
-                    from database_config_supabase import clear_portfolio_cache
                     clear_portfolio_cache(user_id)
                     
                     self.load_portfolio_data(user_id, force_refresh=True)
