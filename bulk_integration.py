@@ -203,8 +203,15 @@ def fetch_weekly_prices_bulk(
         if progress_callback:
             progress_callback(f"🤖 Fetching NAV for {len(mf_isins)} MF using AI...")
         
-        # Get current NAV using AI bulk
+        # Get current NAV using AI bulk (with name-based fallback)
         current_navs = fetcher.get_bulk_mf_nav_isin(mf_isins, ticker_names)
+        
+        # If some failed, try fetching by name
+        failed_codes = [code for code in mf_isins if code not in current_navs]
+        if failed_codes:
+            logger.info(f"⚠️ Retrying {len(failed_codes)} failed codes using fund names...")
+            name_based_navs = fetcher.get_bulk_mf_nav_by_name(failed_codes, ticker_names)
+            current_navs.update(name_based_navs)
         
         # For each MF, create weekly data
         for isin in mf_isins:

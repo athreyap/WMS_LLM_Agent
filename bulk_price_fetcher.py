@@ -252,6 +252,82 @@ Rules:
             logger.error(f"❌ Bulk MF fetch failed: {e}")
             return {}
     
+    def get_bulk_mf_nav_by_name(self, codes: List[str], names: Dict[str, str]) -> Dict[str, float]:
+        """
+        Get MF NAV by fund name (fallback when codes don't work)
+        Uses AI to search by fund name instead of code
+        """
+        try:
+            from ai_price_fetcher import AIPriceFetcher
+            
+            ai = AIPriceFetcher()
+            if not ai.is_available():
+                logger.warning("AI not available for name-based MF lookup")
+                return {}
+            
+            results = {}
+            
+            # Process in batches of 15 (names are longer, so smaller batches)
+            for i in range(0, len(codes), 15):
+                batch = codes[i:i+15]
+                logger.info(f"🤖 AI name-based fetch: Processing batch {i//15 + 1} ({len(batch)} funds)...")
+                
+                # Build prompt using fund names
+                fund_list = []
+                for idx, code in enumerate(batch):
+                    name = names.get(code, code)
+                    fund_list.append(f"{idx+1}. Fund Name: {name}")
+                
+                prompt = f"""Get the LATEST NAV for these Indian mutual funds BY NAME:
+
+{chr(10).join(fund_list)}
+
+Return ONLY in this exact format (one per line):
+FUND_NAME_PARTIAL|NAV
+
+Example:
+HDFC Hybrid Equity|296.80
+Axis Mid Cap Fund|80.37
+DSP Dynamic Asset|49.52
+
+Rules:
+- One fund per line
+- Use partial fund name (first 3-4 words)
+- Format: FUND_NAME|NAV (numeric only, no currency symbols)
+- Skip if not found"""
+                
+                # Make AI call
+                response = ai.gemini_client.generate_content(prompt)
+                
+                # Parse response - match by fund name similarity
+                for line in response.text.strip().split('\n'):
+                    if '|' not in line:
+                        continue
+                    
+                    parts = line.split('|')
+                    if len(parts) >= 2:
+                        response_name = parts[0].strip().lower()
+                        try:
+                            nav = float(parts[1].strip())
+                            
+                            # Try to match with original codes by name similarity
+                            for code in batch:
+                                fund_name = names.get(code, '').lower()
+                                # Check if response name is in the full fund name
+                                if response_name in fund_name or fund_name[:30] in response_name:
+                                    results[code] = nav
+                                    logger.info(f"✅ AI (by name): {code} ({names[code][:40]}) = ₹{nav}")
+                                    break
+                        except ValueError:
+                            continue
+            
+            logger.info(f"✅ AI name-based fetch complete: {len(results)}/{len(codes)} funds")
+            return results
+            
+        except Exception as e:
+            logger.error(f"❌ Bulk name-based fetch failed: {e}")
+            return {}
+    
     def get_bulk_prices_with_ai(
         self, 
         tickers: List[str], 
@@ -491,6 +567,13 @@ Rules:
         if mf_tickers:
             logger.info(f"📊 Fetching NAV for {len(mf_tickers)} MF using AI bulk...")
             mf_prices = self.get_bulk_mf_nav_isin(mf_tickers, ticker_names)
+            
+            # If some failed, try fetching by name (fallback)
+            failed_codes = [code for code in mf_tickers if code not in mf_prices]
+            if failed_codes:
+                logger.info(f"⚠️ Retrying {len(failed_codes)} failed codes using fund names...")
+                name_based_prices = self.get_bulk_mf_nav_by_name(failed_codes, ticker_names)
+                mf_prices.update(name_based_prices)
         
         # 2. Stocks: Use yfinance bulk (FREE, fast)
         stock_prices = {}
