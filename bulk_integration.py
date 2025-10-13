@@ -37,6 +37,10 @@ def categorize_tickers(df: pd.DataFrame) -> Tuple[List[str], List[str], List[str
     pms_tickers = []
     ticker_names = {}
     
+    logger.info(f"📋 Categorizing {len(df)} tickers from DataFrame...")
+    logger.info(f"📋 DataFrame columns: {list(df.columns)}")
+    logger.info(f"📋 Sample tickers: {df['ticker'].head(10).tolist() if 'ticker' in df.columns else 'No ticker column!'}")
+    
     for _, row in df.iterrows():
         ticker = str(row['ticker']).strip()
         name = row.get('stock_name', ticker)
