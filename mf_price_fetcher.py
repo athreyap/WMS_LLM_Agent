@@ -92,11 +92,13 @@ class MFToolClient:
                             # Find exact match or closest date
                             exact_match = hist_df[hist_df['date'] == target_date]
                             if not exact_match.empty:
+                                date_value = exact_match.iloc[0]['date']
+                                date_str = date_value.strftime('%Y-%m-%d') if hasattr(date_value, 'strftime') else str(date_value)
                                 nav_data = {
                                     'scheme_code': scheme_code,
                                     'scheme_name': 'Unknown',  # Historical data doesn't include scheme name
                                     'nav': float(exact_match.iloc[0]['nav']),
-                                    'date': exact_match.iloc[0]['date'].strftime('%Y-%m-%d'),
+                                    'date': date_str,
                                     'source': 'mftool_historical'
                                 }
                                 logger.info(f"✅ Historical NAV found for {scheme_code}: ₹{nav_data['nav']} on {nav_data['date']}")
@@ -106,11 +108,13 @@ class MFToolClient:
                                 date_diff = abs(hist_df['date'] - target_date)
                                 closest_idx = date_diff.idxmin()
                                 if date_diff[closest_idx] <= pd.Timedelta(days=30):
+                                    date_value = hist_df.iloc[closest_idx]['date']
+                                    date_str = date_value.strftime('%Y-%m-%d') if hasattr(date_value, 'strftime') else str(date_value)
                                     nav_data = {
                                         'scheme_code': scheme_code,
                                         'scheme_name': 'Unknown',  # Historical data doesn't include scheme name
                                         'nav': float(hist_df.iloc[closest_idx]['nav']),
-                                        'date': hist_df.iloc[closest_idx]['date'].strftime('%Y-%m-%d'),
+                                        'date': date_str,
                                         'source': 'mftool_historical'
                                     }
                                     logger.info(f"✅ Closest historical NAV found for {scheme_code}: ₹{nav_data['nav']} on {nav_data['date']}")
@@ -296,7 +300,13 @@ def fetch_mutual_fund_price(ticker: str, transaction_date: Optional[datetime] = 
         # Convert date to string if provided
         date_str = None
         if transaction_date:
-            date_str = transaction_date.strftime('%Y-%m-%d')
+            # Handle both datetime objects and strings
+            if isinstance(transaction_date, str):
+                date_str = transaction_date
+            elif hasattr(transaction_date, 'strftime'):
+                date_str = transaction_date.strftime('%Y-%m-%d')
+            else:
+                date_str = str(transaction_date)
         
         # Get NAV data
         nav_data = get_mutual_fund_price_with_fallback(ticker, date_str, client)
@@ -331,7 +341,17 @@ def fetch_mutual_funds_bulk(mutual_funds: List[tuple]) -> Dict[str, Optional[flo
         # Group by date for efficient fetching
         date_groups = {}
         for ticker, date in mutual_funds:
-            date_key = date.strftime('%Y-%m-%d') if date else 'current'
+            # Handle both datetime objects and strings
+            if date:
+                if isinstance(date, str):
+                    date_key = date
+                elif hasattr(date, 'strftime'):
+                    date_key = date.strftime('%Y-%m-%d')
+                else:
+                    date_key = str(date)
+            else:
+                date_key = 'current'
+            
             if date_key not in date_groups:
                 date_groups[date_key] = []
             date_groups[date_key].append(ticker)
