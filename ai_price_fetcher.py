@@ -7,11 +7,19 @@ Uses Google Gemini (free tier) and OpenAI GPT as fallback
 import os
 import re
 import logging
+import time
 from typing import Dict, Optional, Tuple, List
 from datetime import datetime
+from threading import Lock
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Rate limiting for API calls
+_api_call_times = []
+_api_lock = Lock()
+_RATE_LIMIT_CALLS = 8  # Conservative: 8 calls per minute (Gemini free = 10/min)
+_RATE_LIMIT_WINDOW = 60  # seconds
 
 # Try to import AI libraries
 try:
@@ -43,8 +51,28 @@ class AIPriceFetcher:
         self.gemini_client = None
         self.openai_client = None
         
-        # Try Gemini first (free tier)
-        if GEMINI_AVAILABLE:
+        # 🆕 Try OpenAI FIRST (paid version, no rate limits)
+        if OPENAI_AVAILABLE:
+            try:
+                # Priority: 1) Provided key, 2) Streamlit secrets, 3) Environment variables
+                api_key = openai_key
+                if not api_key:
+                    try:
+                        import streamlit as st
+                        api_key = st.secrets.get("open_ai") or st.session_state.get('openai_api_key')
+                    except:
+                        pass
+                if not api_key:
+                    api_key = os.getenv('OPENAI_API_KEY')
+                
+                if api_key:
+                    self.openai_client = OpenAI(api_key=api_key)
+                    logger.info("✅ OpenAI initialized (PRIORITY)")
+            except Exception as e:
+                logger.warning(f"OpenAI initialization failed: {e}")
+        
+        # Try Gemini as FALLBACK (free tier, rate limited)
+        if GEMINI_AVAILABLE and not self.openai_client:
             try:
                 # Priority: 1) Provided key, 2) Streamlit secrets, 3) Environment variables
                 api_key = gemini_key
@@ -61,29 +89,9 @@ class AIPriceFetcher:
                     genai.configure(api_key=api_key)
                     # Use gemini-2.5-flash (latest stable fast model)
                     self.gemini_client = genai.GenerativeModel('models/gemini-2.5-flash')
-                    logger.info("✅ Gemini AI initialized")
+                    logger.info("✅ Gemini AI initialized (FALLBACK)")
             except Exception as e:
                 logger.warning(f"Gemini initialization failed: {e}")
-        
-        # Try OpenAI as fallback
-        if OPENAI_AVAILABLE and not self.gemini_client:
-            try:
-                # Priority: 1) Provided key, 2) Streamlit secrets, 3) Environment variables
-                api_key = openai_key
-                if not api_key:
-                    try:
-                        import streamlit as st
-                        api_key = st.secrets.get("open_ai") or st.session_state.get('openai_api_key')
-                    except:
-                        pass
-                if not api_key:
-                    api_key = os.getenv('OPENAI_API_KEY')
-                
-                if api_key:
-                    self.openai_client = OpenAI(api_key=api_key)
-                    logger.info("✅ OpenAI initialized")
-            except Exception as e:
-                logger.warning(f"OpenAI initialization failed: {e}")
     
     def is_available(self) -> bool:
         """Check if any AI service is available"""
@@ -448,7 +456,7 @@ Rules:
     
     def _call_ai(self, prompt: str) -> Optional[str]:
         """
-        Call AI service (Gemini first, then OpenAI)
+        Call AI service (OpenAI FIRST for paid tier, Gemini fallback)
         
         Args:
             prompt: The prompt to send
@@ -456,7 +464,24 @@ Rules:
         Returns:
             AI response text or None
         """
-        # Try Gemini first
+        # 🆕 Try OpenAI FIRST (paid, no rate limits)
+        if self.openai_client:
+            try:
+                response = self.openai_client.chat.completions.create(
+                    model="gpt-3.5-turbo",  # Fast and cost-effective
+                    messages=[
+                        {"role": "system", "content": "You are a financial data expert. Provide only the requested data in the exact format specified."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0,  # For consistent results
+                    max_tokens=300  # Increased for batch responses
+                )
+                if response.choices and response.choices[0].message:
+                    return response.choices[0].message.content.strip()
+            except Exception as e:
+                logger.warning(f"OpenAI call failed: {e}")
+        
+        # Try Gemini as fallback (free tier, rate limited)
         if self.gemini_client:
             try:
                 response = self.gemini_client.generate_content(prompt)
@@ -464,23 +489,9 @@ Rules:
                     return response.text.strip()
             except Exception as e:
                 logger.warning(f"Gemini call failed: {e}")
-        
-        # Try OpenAI as fallback
-        if self.openai_client:
-            try:
-                response = self.openai_client.chat.completions.create(
-                    model="gpt-3.5-turbo",  # Cheaper than GPT-4
-                    messages=[
-                        {"role": "system", "content": "You are a financial data expert. Provide only the requested data in the exact format specified."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0,  # For consistent results
-                    max_tokens=200
-                )
-                if response.choices and response.choices[0].message:
-                    return response.choices[0].message.content.strip()
-            except Exception as e:
-                logger.warning(f"OpenAI call failed: {e}")
+                # If it's a rate limit error, log it more clearly
+                if "429" in str(e) or "quota" in str(e).lower():
+                    logger.error("❌ Gemini rate limit exceeded! Configure OpenAI API key for unlimited usage.")
         
         return None
     
