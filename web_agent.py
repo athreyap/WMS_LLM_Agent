@@ -1214,7 +1214,11 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 # STEP 4: Refresh portfolio data to include new transactions
                 st.info("🔄 Refreshing portfolio data...")
                 try:
-                    self.load_portfolio_data(user_id)
+                    # Clear cache before loading to ensure fresh data after upload
+                    from database_config_supabase import clear_portfolio_cache
+                    clear_portfolio_cache(user_id)
+                    
+                    self.load_portfolio_data(user_id, force_refresh=True)
                     st.success("✅ Portfolio data refreshed successfully!")
                 except Exception as e:
                     st.warning(f"⚠️ Portfolio refresh had warnings: {e}")
@@ -2247,7 +2251,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
         except Exception as e:
             st.error(f"Error fetching live prices: {e}")
     
-    def load_portfolio_data(self, user_id):
+    def load_portfolio_data(self, user_id, force_refresh=False):
         """Load and process portfolio data - uses optimized loader if available"""
         from datetime import datetime
 
@@ -2256,11 +2260,12 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             if OPTIMIZED_LOADER_AVAILABLE:
                 print(f"🚀 Using optimized portfolio loader for user {user_id}")
                 
-                # Check if portfolio needs refresh
+                # Check if portfolio needs refresh (from session state OR parameter)
                 portfolio_refresh_key = f'portfolio_needs_refresh_{user_id}'
-                force_refresh = portfolio_refresh_key in st.session_state and st.session_state[portfolio_refresh_key]
+                force_refresh_session = portfolio_refresh_key in st.session_state and st.session_state[portfolio_refresh_key]
+                force_refresh = force_refresh or force_refresh_session  # Combine both
                 
-                if force_refresh:
+                if force_refresh_session:
                     print(f"🔄 Portfolio refresh triggered for user {user_id}")
                     clear_portfolio_cache(user_id)
                     del st.session_state[portfolio_refresh_key]
@@ -2318,7 +2323,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                     
                     st.error(f"Error loading portfolio: {error_detail}")
                     st.info("💡 Tip: Try logging out and back in, or refresh the page")
-                    return
+                    raise Exception(error_detail)  # Raise exception instead of just returning
                 
                 # Convert transactions to DataFrame for use by rendering code
                 df = pd.DataFrame(portfolio_data['transactions'])

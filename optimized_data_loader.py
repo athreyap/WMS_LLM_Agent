@@ -58,11 +58,12 @@ def get_portfolio_fast(user_id: int, force_refresh: bool = False) -> Dict:
         transactions = get_transactions_supabase(user_id=user_id)
         
         if not transactions:
+            print(f"⚠️ No transactions found for user {user_id}")
             return {
                 'transactions': [],
                 'stock_data': {},
                 'historical_prices': {},
-                'error': None
+                'error': 'No transactions found. Please upload a CSV file first.'
             }
         
         df_transactions = pd.DataFrame(transactions)
