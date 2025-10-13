@@ -2184,3 +2184,126 @@ def get_complete_portfolio_with_calculations(user_id: int) -> Dict:
         return {'transactions': [], 'holdings': [], 'summary': {}}
 
 
+# ===== BATCH OPERATIONS FOR PERFORMANCE =====
+
+@retry_on_disconnect(max_retries=3, delay=1)
+def bulk_update_stock_data(stock_data_list: list) -> bool:
+    """
+    Bulk update stock data - much faster than individual updates
+    
+    Args:
+        stock_data_list: List of dicts with {ticker, stock_name, sector, live_price, etc}
+    
+    Returns:
+        True if successful
+    """
+    try:
+        if not stock_data_list:
+            return True
+        
+        # Prepare batch upsert data
+        batch_data = []
+        for item in stock_data_list:
+            data = {
+                "ticker": item.get('ticker'),
+                "last_updated": datetime.utcnow().isoformat()
+            }
+            if item.get('stock_name'):
+                data["stock_name"] = item['stock_name']
+            if item.get('sector'):
+                data["sector"] = item['sector']
+            if item.get('live_price') is not None:
+                data["live_price"] = float(item['live_price'])
+            if item.get('market_cap'):
+                data["market_cap"] = float(item['market_cap'])
+            
+            batch_data.append(data)
+        
+        # Bulk upsert (update if exists, insert if not)
+        result = supabase.table("stock_data").upsert(
+            batch_data,
+            on_conflict="ticker"
+        ).execute()
+        
+        print(f"✅ Bulk updated {len(batch_data)} stock records")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error in bulk stock data update: {e}")
+        return False
+
+
+@retry_on_disconnect(max_retries=3, delay=1)
+def bulk_save_historical_prices(price_data_list: list) -> bool:
+    """
+    Bulk save historical prices - much faster than individual saves
+    
+    Args:
+        price_data_list: List of dicts with {ticker, date, price, source}
+    
+    Returns:
+        True if successful
+    """
+    try:
+        if not price_data_list:
+            return True
+        
+        # Prepare batch data
+        batch_data = []
+        for item in price_data_list:
+            batch_data.append({
+                "ticker": item.get('ticker'),
+                "transaction_date": item.get('date'),
+                "historical_price": float(item.get('price')),
+                "price_source": item.get('source', 'batch_update')
+            })
+        
+        # Bulk upsert
+        result = supabase.table("historical_prices").upsert(
+            batch_data,
+            on_conflict="ticker,transaction_date"
+        ).execute()
+        
+        print(f"✅ Bulk saved {len(batch_data)} historical price records")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error in bulk historical prices save: {e}")
+        return False
+
+
+@retry_on_disconnect(max_retries=3, delay=1)
+def bulk_get_stock_data(tickers: list) -> dict:
+    """
+    Bulk get stock data for multiple tickers - 1 query instead of N
+    
+    Args:
+        tickers: List of ticker symbols
+    
+    Returns:
+        Dict mapping ticker -> stock data
+    """
+    try:
+        if not tickers:
+            return {}
+        
+        # Single batch query
+        result = supabase.table("stock_data")\
+            .select("*")\
+            .in_("ticker", tickers)\
+            .execute()
+        
+        # Convert to dict for easy lookup
+        stock_data_dict = {}
+        if result.data:
+            for item in result.data:
+                stock_data_dict[item['ticker']] = item
+        
+        print(f"✅ Bulk fetched stock data for {len(stock_data_dict)}/{len(tickers)} tickers")
+        return stock_data_dict
+        
+    except Exception as e:
+        print(f"❌ Error in bulk stock data fetch: {e}")
+        return {}
+
+

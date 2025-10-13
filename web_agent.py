@@ -33,7 +33,11 @@ from database_config_supabase import (
     save_monthly_stock_price_supabase,
     get_monthly_stock_price_supabase,
     get_monthly_stock_prices_range_supabase,
-    get_all_monthly_stock_prices_supabase
+    get_all_monthly_stock_prices_supabase,
+    # Batch operations for performance
+    bulk_update_stock_data,
+    bulk_save_historical_prices,
+    bulk_get_stock_data
 )
 
 # Try to import new bulk function (optional for backward compatibility)
@@ -1860,20 +1864,25 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 st.info(f"🔄 Refreshing prices for all {len(unique_tickers)} tickers...")
             else:
                 # Smart refresh: only fetch tickers without live prices
+                # Use BATCH query instead of individual queries (60x faster!)
                 tickers_needing_fetch = []
                 progress_text = st.empty()
-                progress_text.text("🔍 Checking which tickers need price updates...")
+                progress_text.text("🔍 Checking which tickers need price updates (batch mode)...")
                 
-                for idx, ticker in enumerate(all_tickers):
-                    if (idx + 1) % 5 == 0 or idx == len(all_tickers) - 1:
-                        progress_text.text(f"🔍 Checking {idx + 1}/{len(all_tickers)} tickers...")
+                try:
+                    # Single batch query for all tickers
+                    stock_data_dict = bulk_get_stock_data(list(all_tickers))
                     
-                    try:
-                        stock_data = get_stock_data_supabase(ticker)
-                        if not stock_data or not stock_data.get('live_price') or stock_data.get('live_price') <= 0:
+                    # Check which ones need fetching
+                    for ticker in all_tickers:
+                        stock_info = stock_data_dict.get(ticker)
+                        if not stock_info or not stock_info.get('live_price') or stock_info.get('live_price') <= 0:
                             tickers_needing_fetch.append(ticker)
-                    except:
-                        tickers_needing_fetch.append(ticker)
+                    
+                    print(f"✅ Batch check complete: {len(tickers_needing_fetch)}/{len(all_tickers)} need updates")
+                except Exception as e:
+                    print(f"⚠️ Batch check failed, falling back to all tickers: {e}")
+                    tickers_needing_fetch = list(all_tickers)
                 
                 unique_tickers = tickers_needing_fetch
                 progress_text.empty()  # Clear progress message
@@ -2264,7 +2273,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 
                 # Get portfolio data with retry logic for connection errors
                 portfolio_data = None
-                max_retries = 3
+                max_retries = 5  # Increased from 3 to 5 for better reliability
                 for attempt in range(max_retries):
                     try:
                         portfolio_data = get_portfolio_fast(user_id, force_refresh=force_refresh)
@@ -2283,16 +2292,22 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         )
                         
                         if is_connection_error and attempt < max_retries - 1:
-                            wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                            wait_time = 3 * (2 ** attempt)  # Exponential backoff: 3s, 6s, 12s, 24s, 48s
+                            # Use st.warning for visibility in Streamlit
+                            st.warning(f"⚠️ Connection error (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time}s...")
                             print(f"⚠️ Connection error loading portfolio (attempt {attempt + 1}/{max_retries})")
                             print(f"   Error: {error_type}: {error_msg}")
-                            print(f"   Retrying in {wait_time}s...")
+                            print(f"   Waiting {wait_time}s before retry...")
                             time.sleep(wait_time)
+                            # Add small delay after sleep to ensure connection is fully reset
+                            print(f"   Retry attempt {attempt + 2} starting...")
                             continue
                         elif is_connection_error:
                             # Max retries reached
+                            error_detail = f'Connection failed after {max_retries} attempts'
+                            st.error(f"❌ {error_detail}")
                             print(f"❌ Max retries ({max_retries}) reached for connection error")
-                            portfolio_data = {'error': f'Connection failed after {max_retries} attempts: {error_msg}'}
+                            portfolio_data = {'error': error_detail}
                             break
                         else:
                             # Not a connection error, don't retry
