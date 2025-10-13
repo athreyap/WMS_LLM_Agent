@@ -860,7 +860,8 @@ class PortfolioAnalytics:
             
             results = {}
             
-            # Process each ticker with smart date range calculation
+            # ✅ PHASE 1: FETCH ALL PRICES (historical + weekly together)
+            print(f"🤖 Phase 1: Fetching ALL prices from AI...")
             all_tickers = list(dates_needed.keys())
             
             for idx, ticker in enumerate(all_tickers):
@@ -868,23 +869,29 @@ class PortfolioAnalytics:
                 
                 if show_ui:
                     progress = (idx + 1) / len(all_tickers)
-                    st.progress(progress, text=f"Fetching {idx + 1}/{len(all_tickers)}: {name}")
+                    st.progress(progress, text=f"🤖 Fetching {idx + 1}/{len(all_tickers)}: {name}")
                 
-                # Calculate date range: oldest transaction to now OR 1 year to now (whichever is shorter)
+                # Calculate date range: if historical is older than 1 year, use historical date; else use 1 year ago
                 ticker_transactions = df[df['ticker'] == ticker]['date']
                 if not ticker_transactions.empty:
                     oldest_date = ticker_transactions.min()
                     one_year_ago = datetime.now() - timedelta(days=365)
                     
-                    # Use the more recent date (don't go back more than 1 year to save costs)
-                    start_date = max(oldest_date, one_year_ago).strftime('%Y-%m-%d')
+                    # If historical is older than 1 year, use historical date; else use 1 year ago
+                    if oldest_date < one_year_ago:
+                        start_date = oldest_date.strftime('%Y-%m-%d')
+                        print(f"   📅 Using historical date: {start_date} (older than 1 year)")
+                    else:
+                        start_date = one_year_ago.strftime('%Y-%m-%d')
+                        print(f"   📅 Using 1-year lookback: {start_date}")
                 else:
                     # Default to 1 year if no transactions
                     start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+                    print(f"   📅 No transactions, using 1-year lookback: {start_date}")
                 
                 end_date = 'TODAY'
                 
-                print(f"🤖 AI weekly range {idx + 1}/{len(all_tickers)}: {ticker} ({name}) from {start_date} to {end_date}")
+                print(f"🤖 AI [{idx + 1}/{len(all_tickers)}] {ticker} ({name}): {start_date} to {end_date}")
                 
                 try:
                     # Get weekly prices in range (1 AI call per ticker)
@@ -898,30 +905,41 @@ class PortfolioAnalytics:
                     
                     if weekly_prices:
                         results[ticker] = weekly_prices
-                        print(f"✅ Got {len(weekly_prices)} weekly prices for {ticker}")
+                        print(f"✅ [{idx + 1}/{len(all_tickers)}] {ticker}: {len(weekly_prices)} prices fetched")
                     else:
-                        print(f"⚠️ No weekly prices for {ticker}")
+                        print(f"⚠️ [{idx + 1}/{len(all_tickers)}] {ticker}: No data returned")
                     
                     # No delay needed - AI fetcher handles rate limiting internally
                     # with smart Gemini (9 calls) → OpenAI alternation
                     
                 except Exception as e:
-                    print(f"⚠️ Failed to fetch {ticker}: {e}")
+                    print(f"⚠️ [{idx + 1}/{len(all_tickers)}] {ticker}: Fetch failed - {e}")
                     # Continue with next ticker even if one fails
             
+            # ✅ PHASE 1 COMPLETE - Check results
             if not results:
                 if show_ui:
-                    st.warning("⚠️ AI returned no results")
-                print("⚠️ AI batch fetch returned no results")
+                    st.warning("⚠️ Phase 1: AI returned no results")
+                print("⚠️ Phase 1 failed: AI returned no results")
                 return
             
-            # Save all results to database cache
+            total_fetched = sum(len(date_prices) for date_prices in results.values())
+            print(f"✅ Phase 1 complete: Fetched {total_fetched} prices for {len(results)} tickers")
+            
+            if show_ui:
+                st.success(f"✅ Phase 1 complete: Fetched {total_fetched} prices from AI")
+            
+            # ✅ PHASE 2: STORE ALL PRICES TO DATABASE
+            print(f"💾 Phase 2: Storing ALL {total_fetched} prices to database...")
+            
+            if show_ui:
+                st.info(f"💾 Phase 2: Storing {total_fetched} prices to database...")
+            
             saved_count = 0
             skipped_count = 0
             
             if show_ui:
                 progress_bar = st.progress(0)
-            total_items = sum(len(date_prices) for date_prices in results.values())
             current_item = 0
             
             for ticker, date_prices in results.items():
@@ -944,21 +962,23 @@ class PortfolioAnalytics:
                     # Update progress
                     current_item += 1
                     if show_ui:
-                        progress_bar.progress(current_item / total_items)
+                        progress_bar.progress(current_item / total_fetched, 
+                                            text=f"💾 Storing {current_item}/{total_fetched} prices...")
+            
+            print(f"✅ Phase 2 complete: Stored {saved_count} prices, skipped {skipped_count}")
             
             if show_ui:
                 progress_bar.empty()
                 
                 # Success message
-                st.success(f"✅ Batch fetch complete!")
-                st.info(f"📊 Cached {saved_count} price points to database")
-                st.caption(f"   • Tickers: {len(results)}")
-                st.caption(f"   • Avg dates per ticker: {saved_count / len(results):.1f}")
-                if skipped_count > 0:
-                    st.warning(f"   • Skipped: {skipped_count} (already cached or errors)")
+                st.success(f"✅✅ Both phases complete!")
+                st.info(f"📊 Summary:")
+                st.caption(f"   • Phase 1 (AI Fetch): {total_fetched} prices from {len(results)} tickers")
+                st.caption(f"   • Phase 2 (DB Store): {saved_count} saved, {skipped_count} skipped")
+                st.caption(f"   • Avg prices per ticker: {saved_count / len(results):.1f}")
                 st.success("💾 All prices cached! Future fetches will be instant from database.")
             else:
-                print(f"✅ Silent batch fetch: {saved_count} prices cached, {skipped_count} skipped")
+                print(f"✅ Bulk fetch complete: {saved_count} saved, {skipped_count} skipped")
             
         except Exception as e:
             if show_ui:

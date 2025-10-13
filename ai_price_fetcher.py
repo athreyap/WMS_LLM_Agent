@@ -136,9 +136,11 @@ class AIPriceFetcher:
         if not self.is_available():
             return None
         
-        # Ultra-minimal prompt
-        date_part = f" on {date}" if date else ""
-        prompt = f"{fund_name} (Code: {ticker}){date_part} NAV = ?"
+        # Clear prompt to avoid AI confusion (specify "NAV on date")
+        if date:
+            prompt = f"What was the NAV (Net Asset Value) of mutual fund {fund_name} (scheme code: {ticker}) on {date}? Reply with just the NAV number in INR."
+        else:
+            prompt = f"What is today's NAV or the most recent NAV of mutual fund {fund_name} (scheme code: {ticker})? Reply with just the NAV number in INR."
         
         try:
             response = self._call_ai(prompt)
@@ -179,9 +181,11 @@ class AIPriceFetcher:
         if not self.is_available():
             return None
         
-        # Ultra-minimal prompt with NSE preference
-        date_part = f" on {date}" if date else ""
-        prompt = f"{stock_name} NSE ({ticker}){date_part} = ?"
+        # Clear prompt to avoid AI confusion (specify "close price" explicitly)
+        if date:
+            prompt = f"What was the closing price of {stock_name} (NSE ticker: {ticker}) on {date}? Reply with just the closing price number in INR."
+        else:
+            prompt = f"What is today's closing price or the most recent closing price of {stock_name} (NSE ticker: {ticker})? Reply with just the price number in INR."
         
         try:
             response = self._call_ai(prompt)
@@ -223,8 +227,8 @@ class AIPriceFetcher:
         if not self.is_available():
             return {}
         
-        # Ultra-compact prompt for weekly price range
-        prompt = f"{name} ({ticker}) weekly {start_date} to {end_date}: DATE|PRICE"
+        # Clear prompt for weekly closing prices in date range
+        prompt = f"Provide weekly closing prices for {name} (NSE ticker: {ticker}) from {start_date} to {end_date}. Give one price per week (Monday or first trading day of each week). Format each line as: YYYY-MM-DD|closing_price_in_INR (example: 2024-01-15|2500.50)"
         
         try:
             response = self._call_ai(prompt)
@@ -311,11 +315,11 @@ class AIPriceFetcher:
         if not dates:
             dates = ['LATEST']
         
-        # Ultra-minimal bulk prompt
-        ticker_list = [f"{name} ({ticker})" for ticker, name in tickers_with_names.items()]
-        date_str = ','.join(dates[:5]) + ('...' if len(dates) > 5 else '')
+        # Clear bulk prompt to avoid confusion (specify closing prices)
+        ticker_list = [f"{name} (ticker: {ticker})" for ticker, name in tickers_with_names.items()]
+        date_list = ', '.join(dates[:5]) + ('...' if len(dates) > 5 else '')
         
-        prompt = f"{'; '.join(ticker_list[:5])}{'...' if len(ticker_list) > 5 else ''} @ {date_str}: TICKER|DATE|PRICE"
+        prompt = f"Provide closing prices for: {'; '.join(ticker_list[:5])}{'...' if len(ticker_list) > 5 else ''} on dates: {date_list}. For 'LATEST', give today's or most recent closing price. Format each line as: TICKER|YYYY-MM-DD|closing_price_in_INR (example: RELIANCE|2024-01-15|2500.50)"
         
         try:
             response = self._call_ai(prompt)
@@ -371,8 +375,11 @@ class AIPriceFetcher:
         if not self.is_available():
             return None
         
-        date_part = f" on {date}" if date else ""
-        prompt = f"{fund_name} ({ticker}){date_part} NAV = ?"
+        # Clear prompt to avoid AI confusion (specify NAV on date)
+        if date:
+            prompt = f"What was the NAV (Net Asset Value) or unit value of PMS/AIF fund {fund_name} (SEBI code: {ticker}) on {date}? Reply with just the NAV number in INR."
+        else:
+            prompt = f"What is today's NAV or the most recent NAV/unit value of PMS/AIF fund {fund_name} (SEBI code: {ticker})? Reply with just the NAV number in INR."
         
         try:
             response = self._call_ai(prompt)
