@@ -2262,11 +2262,29 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                     clear_portfolio_cache(user_id)
                     del st.session_state[portfolio_refresh_key]
                 
-                # Get portfolio data with all JOINs
-                portfolio_data = get_portfolio_fast(user_id, force_refresh=force_refresh)
+                # Get portfolio data with retry logic for connection errors
+                portfolio_data = None
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        portfolio_data = get_portfolio_fast(user_id, force_refresh=force_refresh)
+                        break  # Success, exit retry loop
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        if any(err in error_msg for err in ['disconnect', 'timeout', 'connection', 'reset']):
+                            if attempt < max_retries - 1:
+                                wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                                print(f"⚠️ Connection error loading portfolio (attempt {attempt + 1}/{max_retries}): {e}")
+                                print(f"   Retrying in {wait_time}s...")
+                                time.sleep(wait_time)
+                                continue
+                        # Re-raise if not a connection error or max retries reached
+                        portfolio_data = {'error': str(e)}
+                        break
                 
-                if 'error' in portfolio_data:
-                    st.error(f"Error loading portfolio: {portfolio_data['error']}")
+                if not portfolio_data or 'error' in portfolio_data:
+                    error_detail = portfolio_data.get('error', 'Unknown error') if portfolio_data else 'Failed to load'
+                    st.error(f"Error loading portfolio: {error_detail}")
                     return
                 
                 # Convert transactions to DataFrame for use by rendering code
