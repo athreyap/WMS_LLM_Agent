@@ -293,18 +293,15 @@ class PortfolioAnalytics:
     
     def update_pms_aif_values_background(self, user_id):
         """
-        Update PMS/AIF values from factsheets during login
+        Update PMS/AIF values using AI (Gemini/ChatGPT) during login
         Runs in background to not block login process
         """
         try:
             import threading
-            import requests
-            import PyPDF2
-            import io
-            import re
             from database_config_supabase import get_transactions_supabase, update_stock_data_supabase, save_stock_price_supabase
             from pms_aif_fetcher import is_pms_code, is_aif_code
-            from datetime import datetime, timedelta
+            from ai_price_fetcher import get_pms_aif_performance_with_ai
+            from datetime import datetime
             
             def fetch_and_update():
                 """Background thread to fetch PMS/AIF values"""
@@ -326,62 +323,30 @@ class PortfolioAnalytics:
                     if not pms_aif_tickers:
                         return  # No PMS/AIF holdings
                     
-                    print(f"🔄 Background: Updating {len(pms_aif_tickers)} PMS/AIF value(s)...")
-                    
-                    # Factsheet URLs
-                    factsheet_urls = {
-                        'INP000005000': 'https://www.buoyantcap.com/wp-content/uploads/2025/09/PMS-flyer-Sep-25.pdf',
-                        'INP000006387': 'https://www.carneliancapital.co.in/_files/ugd/3ea37e_226f032b021f40c992d0511e2782f5ae.pdf',
-                        'INP000000613': 'https://www.unificap.com/sites/default/files/track_record/pdf/Unifi-Capital-Presentation-September-2025.pdf',
-                        'INP000005125': 'https://www.valentisadvisors.com/wp-content/uploads/2025/06/Valentis-PMS-Presentation-May-2025.pdf',
-                    }
-                    
-                    session = requests.Session()
-                    session.headers.update({
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                    })
+                    print(f"🔄 Background: Updating {len(pms_aif_tickers)} PMS/AIF value(s) using AI...")
+                    print(f"💡 Using Gemini/ChatGPT to fetch latest performance data...")
                     
                     for ticker in pms_aif_tickers:
                         try:
-                            if ticker not in factsheet_urls:
-                                continue
-                            
-                            url = factsheet_urls[ticker]
-                            
-                            # Download PDF
-                            response = session.get(url, timeout=30)
-                            if response.status_code != 200:
-                                continue
-                            
-                            # Extract text
-                            pdf_file = io.BytesIO(response.content)
-                            pdf_reader = PyPDF2.PdfReader(pdf_file)
-                            text = ""
-                            for page in pdf_reader.pages:
-                                text += page.extract_text() + "\n"
-                            
-                            # Extract CAGR
-                            returns_data = {}
-                            patterns = {
-                                '1y_return': r'1\s*[Yy](?:ear)?\s*(?:Return|CAGR)?\s*:?\s*([+-]?\d+\.?\d*)\s*%',
-                                '3y_cagr': r'3\s*[Yy](?:ear)?\s*(?:CAGR|Return)?\s*:?\s*([+-]?\d+\.?\d*)\s*%',
-                                '5y_cagr': r'5\s*[Yy](?:ear)?\s*(?:CAGR|Return)?\s*:?\s*([+-]?\d+\.?\d*)\s*%',
-                            }
-                            
-                            for key, pattern in patterns.items():
-                                matches = re.findall(pattern, text, re.IGNORECASE)
-                                if matches:
-                                    returns_data[key] = float(matches[0])
-                            
-                            if not returns_data:
-                                continue
-                            
-                            # Get investment details
+                            # Get investment details first
                             ticker_trans = df[df['ticker'] == ticker]
                             if ticker_trans.empty:
                                 continue
                             
                             first_trans = ticker_trans.iloc[0]
+                            fund_name = first_trans.get('stock_name', ticker)
+                            
+                            # Use AI to fetch performance data
+                            print(f"🤖 {ticker}: Fetching performance data using AI...")
+                            returns_data = get_pms_aif_performance_with_ai(ticker, fund_name)
+                            
+                            if not returns_data:
+                                print(f"❌ {ticker}: AI could not find performance data - will show 0% return")
+                                continue
+                            
+                            print(f"✅ {ticker}: AI found returns data: {returns_data}")
+                            
+                            # Calculate investment details
                             investment_date = pd.to_datetime(first_trans['date'])
                             investment_amount = float(ticker_trans['quantity'].sum() * first_trans['price'])
                             
@@ -389,15 +354,22 @@ class PortfolioAnalytics:
                             years_elapsed = (datetime.now() - investment_date).days / 365.25
                             current_value = investment_amount
                             
+                            print(f"📊 {ticker}: Investment ₹{investment_amount:,.0f}, Years: {years_elapsed:.2f}")
+                            
                             if years_elapsed >= 5 and '5y_cagr' in returns_data:
                                 cagr = returns_data['5y_cagr'] / 100
                                 current_value = investment_amount * ((1 + cagr) ** years_elapsed)
+                                print(f"   Using 5Y CAGR: {returns_data['5y_cagr']}% → Current: ₹{current_value:,.0f}")
                             elif years_elapsed >= 3 and '3y_cagr' in returns_data:
                                 cagr = returns_data['3y_cagr'] / 100
                                 current_value = investment_amount * ((1 + cagr) ** years_elapsed)
+                                print(f"   Using 3Y CAGR: {returns_data['3y_cagr']}% → Current: ₹{current_value:,.0f}")
                             elif years_elapsed >= 1 and '1y_return' in returns_data:
                                 annual_return = returns_data['1y_return'] / 100
                                 current_value = investment_amount * ((1 + annual_return) ** years_elapsed)
+                                print(f"   Using 1Y Return: {returns_data['1y_return']}% → Current: ₹{current_value:,.0f}")
+                            else:
+                                print(f"⚠️ {ticker}: No applicable CAGR for {years_elapsed:.2f} years")
                             
                             # Determine sector
                             if is_aif_code(ticker):
@@ -931,6 +903,31 @@ class PortfolioAnalytics:
                     print(f"⚠️ MF {ticker}: mftool error: {e}")
                     # Don't pass - let other strategies try
             
+            # === STRATEGY 5.5: Try AI for mutual funds (fallback when mftool fails) ===
+            if not price and is_mutual_fund and not target_date:  # Only for current/live NAV
+                try:
+                    from ai_price_fetcher import get_mf_nav_with_ai
+                    from database_config_supabase import get_transactions_supabase
+                    
+                    # Get fund name from transactions
+                    fund_name = None
+                    transactions = get_transactions_supabase(user_id=None)
+                    if transactions:
+                        df_trans = pd.DataFrame(transactions)
+                        ticker_trans = df_trans[df_trans['ticker'] == ticker]
+                        if not ticker_trans.empty:
+                            fund_name = ticker_trans.iloc[0].get('stock_name', ticker)
+                    
+                    if fund_name:
+                        print(f"🤖 MF {ticker}: Trying AI as fallback...")
+                        ai_nav = get_mf_nav_with_ai(ticker, fund_name)
+                        if ai_nav and ai_nav > 0:
+                            price = float(ai_nav)
+                            price_source = 'ai_gemini'
+                            print(f"✅ {ticker}: AI found NAV - ₹{price}")
+                except Exception as e:
+                    print(f"⚠️ MF {ticker}: AI fallback failed: {e}")
+            
             # === STRATEGY 6: Try PMS/AIF (if ticker suggests it) ===
             if not price:
                 ticker_upper = ticker.upper()
@@ -966,6 +963,47 @@ class PortfolioAnalytics:
                 except Exception as e:
                     pass
             
+            # === FINAL FALLBACK: Try AI for stocks (when all else fails) ===
+            if not price and is_stock_ticker and not target_date:  # Only for current/live prices
+                try:
+                    from ai_price_fetcher import AIPriceFetcher
+                    from database_config_supabase import get_transactions_supabase
+                    
+                    # Get stock name from transactions
+                    stock_name = None
+                    transactions = get_transactions_supabase(user_id=None)
+                    if transactions:
+                        df_trans = pd.DataFrame(transactions)
+                        ticker_trans = df_trans[df_trans['ticker'] == ticker]
+                        if not ticker_trans.empty:
+                            stock_name = ticker_trans.iloc[0].get('stock_name', ticker)
+                    
+                    if stock_name:
+                        print(f"🤖 Stock {ticker}: All sources failed, trying AI as last resort...")
+                        ai_fetcher = AIPriceFetcher()
+                        
+                        if ai_fetcher.is_available():
+                            # Build AI prompt for stock price
+                            prompt = f"""You are a financial data expert. Get the current stock price for this Indian stock:
+
+Stock Name: {stock_name}
+Ticker/Symbol: {ticker}
+
+Search the web and return ONLY the current market price as a number (e.g., "123.45" or "1500.00").
+If the stock is delisted or you cannot find the price, return "NOT_FOUND".
+Do not include currency symbols, units, or any other text - ONLY the numeric price value.
+"""
+                            
+                            response = ai_fetcher._call_ai(prompt)
+                            if response and response != "NOT_FOUND":
+                                ai_price = ai_fetcher._extract_number(response)
+                                if ai_price and ai_price > 0:
+                                    price = float(ai_price)
+                                    price_source = 'ai_gemini_stock'
+                                    print(f"✅ {ticker}: AI found price - ₹{price}")
+                except Exception as e:
+                    print(f"⚠️ Stock {ticker}: AI fallback failed: {e}")
+            
             # Save to database if we got a valid price
             if price and price > 0:
                 try:
@@ -994,7 +1032,7 @@ class PortfolioAnalytics:
                     traceback.print_exc()
                 return price
             
-            print(f"❌ {ticker}: No price found from any source for {target_date_str}")
+            print(f"❌ {ticker}: No price found from any source (including AI) for {target_date_str}")
             return None
             
         except Exception as e:
