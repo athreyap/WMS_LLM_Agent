@@ -136,11 +136,18 @@ class AIPriceFetcher:
         if not self.is_available():
             return None
         
-        # Clear prompt to avoid AI confusion (specify "NAV on date")
+        # ULTRA-CLEAR prompt with explicit separation of date and NAV
         if date:
-            prompt = f"What was the NAV (Net Asset Value) of mutual fund {fund_name} (scheme code: {ticker}) on {date}? Reply with just the NAV number in INR."
+            prompt = f"""Mutual Fund: {fund_name}
+Scheme Code: {ticker}
+Date: {date}
+Question: What was the NAV (Net Asset Value) in Indian Rupees on this date?
+Answer format: Only the NAV number (e.g. 125.50)"""
         else:
-            prompt = f"What is today's NAV or the most recent NAV of mutual fund {fund_name} (scheme code: {ticker})? Reply with just the NAV number in INR."
+            prompt = f"""Mutual Fund: {fund_name}
+Scheme Code: {ticker}
+Question: What is the LATEST NAV (Net Asset Value) in Indian Rupees?
+Answer format: Only the NAV number (e.g. 125.50)"""
         
         try:
             response = self._call_ai(prompt)
@@ -181,11 +188,18 @@ class AIPriceFetcher:
         if not self.is_available():
             return None
         
-        # Clear prompt to avoid AI confusion (specify "close price" explicitly)
+        # ULTRA-CLEAR prompt with explicit separation of date and price
         if date:
-            prompt = f"What was the closing price of {stock_name} (NSE ticker: {ticker}) on {date}? Reply with just the closing price number in INR."
+            prompt = f"""Stock: {stock_name}
+Ticker: {ticker} (NSE)
+Date: {date}
+Question: What was the CLOSING PRICE in Indian Rupees on this date?
+Answer format: Only the price number (e.g. 2500.50)"""
         else:
-            prompt = f"What is today's closing price or the most recent closing price of {stock_name} (NSE ticker: {ticker})? Reply with just the price number in INR."
+            prompt = f"""Stock: {stock_name}
+Ticker: {ticker} (NSE)
+Question: What is the LATEST CLOSING PRICE in Indian Rupees?
+Answer format: Only the price number (e.g. 2500.50)"""
         
         try:
             response = self._call_ai(prompt)
@@ -375,11 +389,18 @@ class AIPriceFetcher:
         if not self.is_available():
             return None
         
-        # Clear prompt to avoid AI confusion (specify NAV on date)
+        # ULTRA-CLEAR prompt with explicit separation of date and NAV
         if date:
-            prompt = f"What was the NAV (Net Asset Value) or unit value of PMS/AIF fund {fund_name} (SEBI code: {ticker}) on {date}? Reply with just the NAV number in INR."
+            prompt = f"""PMS/AIF Fund: {fund_name}
+SEBI Code: {ticker}
+Date: {date}
+Question: What was the NAV or unit value in Indian Rupees on this date?
+Answer format: Only the NAV/unit value number (e.g. 150.75)"""
         else:
-            prompt = f"What is today's NAV or the most recent NAV/unit value of PMS/AIF fund {fund_name} (SEBI code: {ticker})? Reply with just the NAV number in INR."
+            prompt = f"""PMS/AIF Fund: {fund_name}
+SEBI Code: {ticker}
+Question: What is the LATEST NAV or unit value in Indian Rupees?
+Answer format: Only the NAV/unit value number (e.g. 150.75)"""
         
         try:
             response = self._call_ai(prompt)
