@@ -2135,80 +2135,171 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                 sector = "PMS"
                     
                     elif str(ticker).isdigit() or ticker.startswith('MF_'):
-                        # Mutual fund - use AMFI API first, then mftool as fallback
-                        print(f"🔍 {ticker}: Mutual Fund detected, fetching NAV")
+                        # 🤖 Mutual fund - USE AI PRIMARY (fetch by NAME, not code)
+                        print(f"🤖 {ticker}: Mutual Fund detected, using AI to fetch NAV by fund name")
                         live_price = None
                         sector = "Mutual Fund"
                         
+                        # Get fund name from transactions
+                        mf_trans = df[df['ticker'] == ticker].iloc[0] if not df[df['ticker'] == ticker].empty else None
+                        fund_name = mf_trans.get('stock_name', ticker) if mf_trans is not None else ticker
+                        
                         try:
-                            # Try mftool (which uses AMFI data internally)
-                            live_price, fund_category = get_mutual_fund_price_and_category(ticker, ticker, user_id, None)
-
-                            # Use fund category from mftool if available
-                            if fund_category and fund_category != 'Unknown':
-                                sector = fund_category
-                                print(f"✅ MF {ticker}: NAV ₹{live_price}, Category: '{sector}'")
+                            from ai_price_fetcher import AIPriceFetcher
+                            ai_fetcher = AIPriceFetcher()
+                            
+                            if ai_fetcher.is_available():
+                                print(f"🤖 AI PRIMARY: Fetching NAV for '{fund_name}' (Code: {ticker})")
+                                live_price = ai_fetcher.get_mutual_fund_nav(ticker, fund_name)
+                                
+                                if live_price and live_price > 0:
+                                    print(f"✅ AI found MF NAV: ₹{live_price} for {fund_name}")
+                                    # Try to get category from fund name
+                                    fund_name_upper = fund_name.upper()
+                                    if 'EQUITY' in fund_name_upper or 'STOCK' in fund_name_upper:
+                                        if 'SMALL' in fund_name_upper:
+                                            sector = "Equity: Small Cap"
+                                        elif 'MID' in fund_name_upper:
+                                            sector = "Equity: Mid Cap"
+                                        elif 'LARGE' in fund_name_upper:
+                                            sector = "Equity: Large Cap"
+                                        else:
+                                            sector = "Equity: Multi Cap"
+                                    elif 'DEBT' in fund_name_upper or 'BOND' in fund_name_upper:
+                                        sector = "Debt Fund"
+                                    elif 'HYBRID' in fund_name_upper or 'BALANCED' in fund_name_upper:
+                                        sector = "Hybrid Fund"
+                                    elif 'LIQUID' in fund_name_upper:
+                                        sector = "Liquid Fund"
+                                    elif 'GOLD' in fund_name_upper:
+                                        sector = "Gold Fund"
+                                    elif 'INTERNATIONAL' in fund_name_upper or 'GLOBAL' in fund_name_upper:
+                                        sector = "International Fund"
+                                    else:
+                                        sector = "Mutual Fund"
+                                else:
+                                    raise Exception("AI returned no price")
                             else:
-                                print(f"✅ MF {ticker}: NAV ₹{live_price} (no category)")
-                        except Exception as e:
-                            print(f"⚠️ MF {ticker}: mftool failed ({e}), using transaction price as fallback")
-                            # Use transaction price as fallback (shows 0% return, better than fake data)
-                            mf_trans = df[df['ticker'] == ticker].iloc[0] if not df[df['ticker'] == ticker].empty else None
-                            if mf_trans is not None and 'price' in mf_trans:
-                                live_price = float(mf_trans['price'])
-                                print(f"   📊 Fallback: Using transaction price ₹{live_price} (MF data unavailable)")
-                            else:
-                                live_price = None  # No data available
-                                print(f"   ❌ Fallback: No transaction price available for {ticker}")
+                                raise Exception("AI not available")
+                                
+                        except Exception as ai_error:
+                            print(f"⚠️ AI failed for {ticker} ({ai_error}), trying legacy API fallback...")
+                            # Fallback to old API method
+                            try:
+                                live_price, fund_category = get_mutual_fund_price_and_category(ticker, ticker, user_id, None)
+                                if fund_category and fund_category != 'Unknown':
+                                    sector = fund_category
+                                print(f"✅ API Fallback: MF {ticker}: NAV ₹{live_price}")
+                            except Exception as api_error:
+                                print(f"⚠️ API fallback also failed ({api_error}), using transaction price")
+                                # Final fallback: transaction price
+                                if mf_trans is not None and 'price' in mf_trans:
+                                    live_price = float(mf_trans['price'])
+                                    print(f"   📊 Transaction Price Fallback: ₹{live_price}")
+                                else:
+                                    live_price = None
+                                    print(f"   ❌ No price available for {ticker}")
 
                     else:
-                        # Stock or ETF - use improved priority order
-                        # Check if ticker is an ETF
+                        # 🤖 Stock or ETF - USE AI PRIMARY (fetch by NAME)
                         is_etf = ticker_upper.endswith('BEES') or ticker_upper.endswith('ETF')
                         
-                        if is_etf:
-                            print(f"🔍 {ticker}: ETF detected, trying exchanges")
-                        else:
-                            print(f"🔍 {ticker}: Stock ticker, trying yfinance")
+                        # Get stock name from transactions
+                        stock_trans = df[df['ticker'] == ticker].iloc[0] if not df[df['ticker'] == ticker].empty else None
+                        stock_name = stock_trans.get('stock_name', ticker) if stock_trans is not None else ticker
+                        
+                        print(f"🤖 {ticker}: {'ETF' if is_etf else 'Stock'} detected, using AI PRIMARY")
                         
                         try:
-                            # Priority 1: Try with .NS suffix first
-                            live_price, sector, market_cap = get_stock_price_and_sector(f"{ticker}.NS", ticker, None)
+                            from ai_price_fetcher import AIPriceFetcher
+                            ai_fetcher = AIPriceFetcher()
                             
-                            if not live_price or live_price <= 0:
-                                # Priority 2: Try with .BO suffix
-                                live_price, sector, market_cap = get_stock_price_and_sector(f"{ticker}.BO", ticker, None)
+                            if ai_fetcher.is_available():
+                                print(f"🤖 AI PRIMARY: Fetching price for '{stock_name}' (Ticker: {ticker})")
+                                live_price = ai_fetcher.get_stock_price(ticker, stock_name)
+                                
+                                if live_price and live_price > 0:
+                                    print(f"✅ AI found stock price: ₹{live_price} for {stock_name}")
+                                    
+                                    # For ETFs, set sector
+                                    if is_etf:
+                                        sector = "ETF"
+                                    else:
+                                        # Intelligent sector categorization from stock name
+                                        stock_name_upper = stock_name.upper()
+                                        if any(word in stock_name_upper for word in ['BANK', 'HDFC', 'ICICI', 'SBI', 'AXIS', 'KOTAK']):
+                                            sector = 'Banking'
+                                        elif any(word in stock_name_upper for word in ['TECH', 'INFY', 'TCS', 'WIPRO', 'HCL', 'SOFTWARE']):
+                                            sector = 'Technology'
+                                        elif any(word in stock_name_upper for word in ['PHARMA', 'CIPLA', 'DRREDDY', 'SUNPHARMA', 'DRUG']):
+                                            sector = 'Pharmaceuticals'
+                                        elif any(word in stock_name_upper for word in ['AUTO', 'MARUTI', 'TATA MOTORS', 'BAJAJ', 'MOTOR']):
+                                            sector = 'Automobile'
+                                        elif any(word in stock_name_upper for word in ['STEEL', 'TATASTEEL', 'JSWSTEEL', 'METAL']):
+                                            sector = 'Metals & Mining'
+                                        elif any(word in stock_name_upper for word in ['OIL', 'ONGC', 'COAL', 'RELIANCE', 'PETRO']):
+                                            sector = 'Oil & Gas'
+                                        elif any(word in stock_name_upper for word in ['CONSUMER', 'HINDUNILVR', 'ITC', 'NESTLE', 'FMCG']):
+                                            sector = 'Consumer Goods'
+                                        elif any(word in stock_name_upper for word in ['REALTY', 'DLF', 'GODREJ', 'REAL ESTATE']):
+                                            sector = 'Real Estate'
+                                        elif any(word in stock_name_upper for word in ['POWER', 'POWERGRID', 'NTPC', 'ENERGY']):
+                                            sector = 'Power & Energy'
+                                        elif any(word in stock_name_upper for word in ['INFRA', 'CONSTRUCTION', 'L&T', 'LARSEN']):
+                                            sector = 'Infrastructure'
+                                        else:
+                                            sector = 'Other Stocks'
+                                    
+                                    market_cap = None  # AI doesn't fetch market cap yet
+                                else:
+                                    raise Exception("AI returned no price")
+                            else:
+                                raise Exception("AI not available")
+                                
+                        except Exception as ai_error:
+                            print(f"⚠️ AI failed for {ticker} ({ai_error}), trying legacy API fallback...")
+                            # Fallback to old API methods
+                            live_price = None
+                            sector = None
+                            market_cap = None
                             
-                            if not live_price or live_price <= 0:
-                                # Priority 3: Try without suffix
-                                live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
-
-                            print(f"🔍 DEBUG: {ticker} -> live_price={live_price}, sector={sector}, market_cap={market_cap}")
-
-                            # Store market cap in session state for later use
-                            if market_cap and market_cap > 0:
-                                if not hasattr(self.session_state, 'market_caps'):
-                                    self.session_state.market_caps = {}
-                                self.session_state.market_caps[ticker] = market_cap
-
-                            # For ETFs without sector, set to ETF
-                            if is_etf and (not sector or sector == 'Unknown'):
-                                sector = "ETF"
-
-                            # If still no price, try IndStocks as last resort for stocks
-                            if (not live_price or live_price <= 0) and not is_etf:
-                                print(f"⚠️ {ticker}: No price from yfinance, trying IndStocks")
-                                try:
-                                    from indstocks import stock
-                                    stock_obj = stock(ticker)
-                                    info = stock_obj.info()
-                                    if info and 'price' in info:
-                                        live_price = float(info['price'])
-                                        if 'sector' in info:
-                                            sector = info['sector']
-                                        print(f"✅ {ticker}: Got price ₹{live_price} from IndStocks")
-                                except Exception as ind_error:
-                                    print(f"   ❌ IndStocks failed: {ind_error}")
+                            try:
+                                # Try yfinance
+                                live_price, sector, market_cap = get_stock_price_and_sector(f"{ticker}.NS", ticker, None)
+                                
+                                if not live_price or live_price <= 0:
+                                    live_price, sector, market_cap = get_stock_price_and_sector(f"{ticker}.BO", ticker, None)
+                                
+                                if not live_price or live_price <= 0:
+                                    live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
+                                
+                                if live_price and live_price > 0:
+                                    print(f"✅ API Fallback: Got price ₹{live_price} from yfinance")
+                                    
+                                    # Store market cap
+                                    if market_cap and market_cap > 0:
+                                        if not hasattr(self.session_state, 'market_caps'):
+                                            self.session_state.market_caps = {}
+                                        self.session_state.market_caps[ticker] = market_cap
+                                    
+                                    if is_etf and (not sector or sector == 'Unknown'):
+                                        sector = "ETF"
+                                else:
+                                    # Try IndStocks
+                                    if not is_etf:
+                                        from indstocks import stock
+                                        stock_obj = stock(ticker)
+                                        info = stock_obj.info()
+                                        if info and 'price' in info:
+                                            live_price = float(info['price'])
+                                            if 'sector' in info:
+                                                sector = info['sector']
+                                            print(f"✅ API Fallback: Got price ₹{live_price} from IndStocks")
+                                            
+                            except Exception as api_error:
+                                print(f"⚠️ All methods failed for {ticker}: {api_error}")
+                                live_price = None
+                                sector = 'Unknown'
 
                             # If no sector from yfinance, try to get it from stock data table
                             if not sector or sector == 'Unknown':

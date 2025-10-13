@@ -94,7 +94,8 @@ class AIPriceFetcher:
         ticker: str, 
         fund_name: str, 
         date: Optional[str] = None,
-        allow_closest: bool = True
+        allow_closest: bool = True,
+        verify_both: bool = True
     ) -> Optional[float]:
         """
         Get mutual fund NAV using AI
@@ -120,17 +121,33 @@ Example: 45.67|2024-11-10"""
         else:
             date_instruction = "Get the LATEST available NAV."
         
-        prompt = f"""Get the NAV (Net Asset Value) for this Indian mutual fund:
+        prompt = f"""Get the NAV (Net Asset Value) for this Indian mutual fund using BOTH identifiers for 100% accuracy:
 
-Fund: {fund_name}
-Code: {ticker}
+Fund Name: {fund_name}
+Scheme Code: {ticker}
 {date_instruction}
 
-Search official sources (AMFI, fund house website, Value Research, Morningstar India).
+CRITICAL VERIFICATION (to avoid wrong plan/option):
+1. Search AMFI India NAV list for scheme code {ticker}
+2. VERIFY the fund name matches "{fund_name}"
+3. Check if it's Direct/Regular plan and Growth/Dividend option
+4. If code and name don't match, search by fund name to get correct NAV
 
-Return ONLY the numeric NAV value (e.g., "45.67").
-If date requested and you found closest date, use format: NAV|DATE (e.g., "45.67|2024-11-10")
-If not found, return "NOT_FOUND".
+Common mistakes to avoid:
+- Code 148097 (Dividend) vs 148098 (Growth) = Different NAVs!
+- Regular Plan vs Direct Plan = Different NAVs!
+
+Search these official sources:
+- AMFI India: https://www.amfiindia.com/spages/NAVAll.txt
+- Value Research: https://www.valueresearchonline.com
+- Morningstar India
+- Fund house official website
+
+IMPORTANT: If exact date not available, find CLOSEST available date within ±7 days.
+
+Return ONLY the numeric NAV (e.g., "45.67").
+If using closest date, return: NAV|DATE (e.g., "45.67|2024-11-10")
+If code and name don't match or not found, return "NOT_FOUND".
 No currency symbols, no extra text."""
         
         try:
@@ -154,7 +171,8 @@ No currency symbols, no extra text."""
         ticker: str,
         stock_name: str,
         date: Optional[str] = None,
-        allow_closest: bool = True
+        allow_closest: bool = True,
+        verify_both: bool = True
     ) -> Optional[float]:
         """
         Get stock price using AI (fallback when yfinance fails)
@@ -180,17 +198,35 @@ Example: 1523.45|2024-11-10"""
         else:
             date_instruction = "Get the LATEST market price (today's closing or current price)."
         
-        prompt = f"""Get the stock price for this Indian company:
+        prompt = f"""Get the stock price for this Indian company using BOTH identifiers for 100% accuracy:
 
-Stock: {stock_name}
-Ticker/BSE Code: {ticker}
+Company Name: {stock_name}
+Stock Ticker/Code: {ticker}
 {date_instruction}
 
-Search NSE/BSE official data, MoneyControl, or Economic Times.
+CRITICAL VERIFICATION (to avoid wrong company):
+1. Search NSE/BSE using ticker "{ticker}"
+2. VERIFY the company name matches "{stock_name}"
+3. If mismatch (delisted, renamed, wrong code), search by company name
+4. Check for .NS (NSE) or .BO (BSE) suffix
+
+Common issues to watch:
+- TANFACIND may be delisted or renamed to TNPL
+- BSE code vs NSE ticker differences
+- Company mergers/name changes
+
+Search these official sources in order:
+1. MoneyControl.com (most reliable)
+2. NSE India: https://www.nseindia.com
+3. BSE India: https://www.bseindia.com
+4. Screener.in
+5. Economic Times
+
+IMPORTANT: If exact date not available, find CLOSEST trading day within ±7 days.
 
 Return ONLY the numeric price in INR (e.g., "1523.45").
-If date requested and closest found, use: PRICE|DATE
-If not found, return "NOT_FOUND".
+If using closest date, return: PRICE|DATE (e.g., "1523.45|2024-11-10")
+If ticker and name don't match or not found, return "NOT_FOUND".
 No currency symbols, no extra text."""
         
         try:
@@ -228,29 +264,50 @@ No currency symbols, no extra text."""
         if not self.is_available():
             return {}
         
-        # Build prompt
+        # Build enhanced prompt with monthly CAGR request
         prompt = f"""Get the latest performance data for this Indian PMS/AIF investment:
 
-Fund: {fund_name}
-SEBI Code: {ticker}
+Fund Name: {fund_name}
+SEBI Registration Code: {ticker}
 
-Search SEBI website, fund factsheet, PMS Bazaar, or official fund website for LATEST performance.
+Search these official sources:
+1. SEBI website: https://www.sebi.gov.in
+2. PMS Bazaar: https://www.pmsbazaar.com
+3. AIF Data: https://www.aifdata.in
+4. Fund's official website/factsheet
+5. Fund manager website
 
-Extract and return in this EXACT format (one per line):
+Extract and return performance data in this EXACT format:
+
+MONTHLY (if available):
+1M: [number]
+3M: [number]
+6M: [number]
+
+ANNUAL (required):
 1Y: [number]
 3Y: [number]
 5Y: [number]
 
-Example:
+SINCE INCEPTION (if available):
+SI: [number]
+
+Example output:
+1M: 2.5
+3M: 5.8
+6M: 12.3
 1Y: 15.5
 3Y: 18.2
 5Y: 22.1
+SI: 24.0
 
 Rules:
-- Values are CAGR percentages (annual returns)
-- If not available, write "N/A"
-- Return ONLY numbers in format shown
-- No extra text or explanations"""
+- All values are CAGR percentages (annualized returns)
+- For monthly periods, annualize the return
+- If a period is not available, write "N/A"
+- Return ONLY numbers in the format shown above
+- No extra text, explanations, or commentary
+- Verify both fund name and SEBI code match"""
         
         try:
             response = self._call_ai(prompt)
