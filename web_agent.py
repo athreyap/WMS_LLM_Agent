@@ -1206,16 +1206,10 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 else:
                     st.caption("⏩ Skipping weekly cache (will be populated after all files are processed)")
                 
-                # STEP 3.5: Update PMS/AIF values from factsheets (if any found)
-                try:
-                    from pms_aif_updater import update_pms_aif_for_file
-                    st.info("🔄 Checking for PMS/AIF investments...")
-                    pms_count = update_pms_aif_for_file(user_id, file_id)
-                    if pms_count and pms_count > 0:
-                        st.success(f"✅ Updated {pms_count} PMS/AIF value(s) from factsheets!")
-                except Exception as e:
-                    # Don't fail the upload if PMS update fails
-                    st.info(f"💡 PMS/AIF update: {e}")
+                # STEP 3.5: PMS/AIF values will be updated during login using AI
+                # (Old PDF-based updater removed - was failing to extract returns)
+                # AI-based update happens in background during login for better accuracy
+                st.info("💡 PMS/AIF values will be updated during login using AI")
                 
                 # STEP 4: Refresh portfolio data to include new transactions
                 st.info("🔄 Refreshing portfolio data...")
@@ -2311,12 +2305,19 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                             break
                         else:
                             # Not a connection error, don't retry
-                            portfolio_data = {'error': str(e)}
+                            error_msg_str = str(e) if str(e) else f"{error_type} (no details)"
+                            portfolio_data = {'error': error_msg_str}
+                            print(f"❌ Non-connection error in portfolio load: {error_msg_str}")
                             break
                 
                 if not portfolio_data or 'error' in portfolio_data:
-                    error_detail = portfolio_data.get('error', 'Unknown error') if portfolio_data else 'Failed to load'
+                    if portfolio_data:
+                        error_detail = portfolio_data.get('error') or 'Unknown error occurred'
+                    else:
+                        error_detail = 'Failed to load portfolio data'
+                    
                     st.error(f"Error loading portfolio: {error_detail}")
+                    st.info("💡 Tip: Try logging out and back in, or refresh the page")
                     return
                 
                 # Convert transactions to DataFrame for use by rendering code
