@@ -29,8 +29,50 @@ __version__ = "2.0.1"
 SUPABASE_URL = os.getenv('SUPABASE_URL', 'https://rolcoegikoeblxzqgkix.supabase.co')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJvbGNvZWdpa29lYmx4enFna2l4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY1NDM2MjUsImV4cCI6MjA3MjExOTYyNX0.Vwg2hgdKNQGizJiulgTlxXkTLfy-J3vFNkX8gA_6ul4')
 
-# Initialize Supabase client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Initialize Supabase client with retry logic
+import time
+from functools import wraps
+
+def retry_on_disconnect(max_retries=3, delay=1):
+    """Decorator to retry Supabase operations on disconnect"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    error_msg = str(e).lower()
+                    # Retry on connection errors
+                    if any(err in error_msg for err in ['disconnect', 'timeout', 'connection', 'reset']):
+                        if attempt < max_retries - 1:
+                            wait_time = delay * (2 ** attempt)  # Exponential backoff
+                            print(f"⚠️ Connection error (attempt {attempt + 1}/{max_retries}): {e}")
+                            print(f"   Retrying in {wait_time}s...")
+                            time.sleep(wait_time)
+                            continue
+                    # Don't retry on other errors
+                    raise
+            raise last_exception
+        return wrapper
+    return decorator
+
+# Create client with timeout settings
+supabase: Client = create_client(
+    SUPABASE_URL, 
+    SUPABASE_KEY,
+    options={
+        'auto_refresh_token': True,
+        'persist_session': True,
+        'detect_session_in_url': False,
+        'headers': {
+            'Connection': 'keep-alive',
+            'Keep-Alive': 'timeout=30, max=1000'
+        }
+    }
+)
 
 # PDF Documents Storage Functions (defined after supabase client initialization)
 def save_pdf_document_supabase(user_id: int, filename: str, file_content: str, extracted_text: str, is_global: bool = False) -> Optional[Dict]:
@@ -500,6 +542,7 @@ def save_transaction_supabase(user_id: int, stock_name: str, ticker: str, quanti
         print(f"❌ Error saving transaction: {e}")
         return None
 
+@retry_on_disconnect(max_retries=3, delay=1)
 def get_transactions_supabase(user_id: int = None, file_id: int = None) -> List[Dict]:
     """Get investment transactions using Supabase client"""
     try:
@@ -779,6 +822,7 @@ def update_stock_data_supabase(ticker: str, stock_name: str = None, sector: str 
         else:
             print(f"❌ Error updating stock data: {e}")
 
+@retry_on_disconnect(max_retries=3, delay=1)
 def get_stock_data_supabase(ticker: str = None) -> List[Dict]:
     """Get stock data using Supabase client"""
     try:
