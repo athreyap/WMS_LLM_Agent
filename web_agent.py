@@ -2270,17 +2270,34 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         portfolio_data = get_portfolio_fast(user_id, force_refresh=force_refresh)
                         break  # Success, exit retry loop
                     except Exception as e:
-                        error_msg = str(e).lower()
-                        if any(err in error_msg for err in ['disconnect', 'timeout', 'connection', 'reset']):
-                            if attempt < max_retries - 1:
-                                wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
-                                print(f"⚠️ Connection error loading portfolio (attempt {attempt + 1}/{max_retries}): {e}")
-                                print(f"   Retrying in {wait_time}s...")
-                                time.sleep(wait_time)
-                                continue
-                        # Re-raise if not a connection error or max retries reached
-                        portfolio_data = {'error': str(e)}
-                        break
+                        error_type = type(e).__name__
+                        error_msg = str(e)
+                        
+                        # Check if it's a connection-related error (by type or message)
+                        is_connection_error = (
+                            'RemoteProtocolError' in error_type or
+                            'disconnect' in error_msg.lower() or
+                            'timeout' in error_msg.lower() or
+                            'connection' in error_msg.lower() or
+                            'reset' in error_msg.lower()
+                        )
+                        
+                        if is_connection_error and attempt < max_retries - 1:
+                            wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                            print(f"⚠️ Connection error loading portfolio (attempt {attempt + 1}/{max_retries})")
+                            print(f"   Error: {error_type}: {error_msg}")
+                            print(f"   Retrying in {wait_time}s...")
+                            time.sleep(wait_time)
+                            continue
+                        elif is_connection_error:
+                            # Max retries reached
+                            print(f"❌ Max retries ({max_retries}) reached for connection error")
+                            portfolio_data = {'error': f'Connection failed after {max_retries} attempts: {error_msg}'}
+                            break
+                        else:
+                            # Not a connection error, don't retry
+                            portfolio_data = {'error': str(e)}
+                            break
                 
                 if not portfolio_data or 'error' in portfolio_data:
                     error_detail = portfolio_data.get('error', 'Unknown error') if portfolio_data else 'Failed to load'
