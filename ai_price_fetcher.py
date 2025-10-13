@@ -59,7 +59,8 @@ class AIPriceFetcher:
                 
                 if api_key:
                     genai.configure(api_key=api_key)
-                    self.gemini_client = genai.GenerativeModel('gemini-pro')
+                    # Use gemini-2.5-flash (latest stable fast model)
+                    self.gemini_client = genai.GenerativeModel('models/gemini-2.5-flash')
                     logger.info("✅ Gemini AI initialized")
             except Exception as e:
                 logger.warning(f"Gemini initialization failed: {e}")

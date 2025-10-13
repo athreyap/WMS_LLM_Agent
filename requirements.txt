@@ -38,8 +38,8 @@ urllib3>=1.26.0
 certifi>=2022.12.7
 
 # AI and Chatbot
-openai>=1.0.0
-google-generativeai>=0.3.0
+openai>=2.0.0  # Updated for latest API
+google-generativeai>=0.8.0  # Updated for Gemini 2.5 models
 PyPDF2>=3.0.0
 pdfplumber>=0.9.0
 pytesseract>=0.3.10
