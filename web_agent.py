@@ -411,13 +411,12 @@ class PortfolioAnalytics:
                                 ticker=ticker,
                                 stock_name=stock_name,
                                 sector=sector,
-                                live_price=current_value,
-                                market_cap=None
+                                current_price=current_value
                             )
                             
                             # Save as historical price
                             today = datetime.now().strftime('%Y-%m-%d')
-                            save_stock_price_supabase(ticker, current_value, today)
+                            save_stock_price_supabase(ticker, today, current_value)
                             
                             print(f"✅ Updated {ticker}: ₹{current_value:,.0f}")
                             

@@ -210,13 +210,12 @@ def update_pms_aif_for_file(user_id: int, file_id: Optional[int] = None):
                     ticker=ticker,
                     stock_name=stock_name,
                     sector=sector,
-                    current_price=current_value,  # Updated parameter name
-                    market_cap=None
+                    current_price=current_value
                 )
                 
                 # Save as historical price
                 today = datetime.now().strftime('%Y-%m-%d')
-                save_stock_price_supabase(ticker, current_value, today)
+                save_stock_price_supabase(ticker, today, current_value)
                 
                 logger.info(f"✅ Updated {ticker}: ₹{investment_amount:,.0f} → ₹{current_value:,.0f}")
                 updated_count += 1
