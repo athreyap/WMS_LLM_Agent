@@ -59,20 +59,8 @@ def retry_on_disconnect(max_retries=3, delay=1):
         return wrapper
     return decorator
 
-# Create client with timeout settings
-supabase: Client = create_client(
-    SUPABASE_URL, 
-    SUPABASE_KEY,
-    options={
-        'auto_refresh_token': True,
-        'persist_session': True,
-        'detect_session_in_url': False,
-        'headers': {
-            'Connection': 'keep-alive',
-            'Keep-Alive': 'timeout=30, max=1000'
-        }
-    }
-)
+# Create client - retry logic handles connection issues
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # PDF Documents Storage Functions (defined after supabase client initialization)
 def save_pdf_document_supabase(user_id: int, filename: str, file_content: str, extracted_text: str, is_global: bool = False) -> Optional[Dict]:
