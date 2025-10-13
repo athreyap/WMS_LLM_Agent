@@ -684,6 +684,60 @@ def get_bulk_prices(tickers: List[str], ticker_info: Dict[str, dict]) -> Dict[st
     return all_prices
 
 
+def get_historical_prices_with_ai(
+    tickers: List[str],
+    dates: List[str],
+    ticker_names: Dict[str, str],
+    ticker_types: Dict[str, str]
+) -> Dict[str, Dict[str, float]]:
+    """
+    Fetch historical prices using AI for MF/Stocks when other sources fail
+    
+    Args:
+        tickers: List of tickers
+        dates: List of dates (YYYY-MM-DD format)
+        ticker_names: Dict of {ticker: name}
+        ticker_types: Dict of {ticker: type} where type is 'MF', 'Stock', 'PMS', 'AIF'
+    
+    Returns:
+        Dict of {ticker: {date: price}}
+    """
+    try:
+        from ai_price_fetcher import AIPriceFetcher
+        
+        ai = AIPriceFetcher()
+        if not ai.is_available():
+            logger.warning("AI not available for historical price fetch")
+            return {}
+        
+        results = {}
+        
+        # Group by asset type for better prompts
+        for ticker in tickers:
+            ticker_type = ticker_types.get(ticker, 'Stock')
+            name = ticker_names.get(ticker, ticker)
+            results[ticker] = {}
+            
+            for date in dates:
+                try:
+                    if ticker_type == 'MF':
+                        price = ai.get_mutual_fund_nav(ticker, name, date, allow_closest=True)
+                    else:  # Stock
+                        price = ai.get_stock_price(ticker, name, date, allow_closest=True)
+                    
+                    if price:
+                        results[ticker][date] = price
+                        logger.info(f"✅ AI historical: {ticker} @ {date} = ₹{price}")
+                except Exception as e:
+                    logger.error(f"❌ AI historical failed for {ticker} @ {date}: {e}")
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"❌ AI historical fetch error: {e}")
+        return {}
+
+
 if __name__ == "__main__":
     # Test the bulk fetcher
     print("Testing Bulk Price Fetcher...\n")

@@ -93,15 +93,17 @@ class AIPriceFetcher:
         self, 
         ticker: str, 
         fund_name: str, 
-        date: Optional[str] = None
+        date: Optional[str] = None,
+        allow_closest: bool = True
     ) -> Optional[float]:
         """
         Get mutual fund NAV using AI
         
         Args:
-            ticker: AMFI scheme code
+            ticker: AMFI scheme code or ISIN
             fund_name: Full fund name
             date: Target date (YYYY-MM-DD) or None for latest
+            allow_closest: If True, return closest available date if exact not found
         
         Returns:
             NAV value or None if not found
@@ -109,18 +111,27 @@ class AIPriceFetcher:
         if not self.is_available():
             return None
         
-        # Build prompt
-        date_str = f"as of {date}" if date else "latest available"
-        prompt = f"""You are a financial data expert. Get the current NAV (Net Asset Value) for this Indian mutual fund:
+        # Build prompt with date handling
+        if date:
+            date_instruction = f"""Target Date: {date}
+If the exact date is not available, find the CLOSEST date within 7 days (before or after).
+Return format: NAV_VALUE|DATE
+Example: 45.67|2024-11-10"""
+        else:
+            date_instruction = "Get the LATEST available NAV."
+        
+        prompt = f"""Get the NAV (Net Asset Value) for this Indian mutual fund:
 
-Fund Name: {fund_name}
-AMFI Code: {ticker}
-Date: {date_str}
+Fund: {fund_name}
+Code: {ticker}
+{date_instruction}
 
-Search the web and return ONLY the NAV value as a number (e.g., "45.67" or "123.45").
-If you cannot find the exact NAV, return "NOT_FOUND".
-Do not include currency symbols, units, or any other text - ONLY the numeric NAV value.
-"""
+Search official sources (AMFI, fund house website, Value Research, Morningstar India).
+
+Return ONLY the numeric NAV value (e.g., "45.67").
+If date requested and you found closest date, use format: NAV|DATE (e.g., "45.67|2024-11-10")
+If not found, return "NOT_FOUND".
+No currency symbols, no extra text."""
         
         try:
             response = self._call_ai(prompt)
@@ -138,6 +149,67 @@ Do not include currency symbols, units, or any other text - ONLY the numeric NAV
             logger.error(f"❌ AI NAV fetch failed for {ticker}: {e}")
             return None
     
+    def get_stock_price(
+        self,
+        ticker: str,
+        stock_name: str,
+        date: Optional[str] = None,
+        allow_closest: bool = True
+    ) -> Optional[float]:
+        """
+        Get stock price using AI (fallback when yfinance fails)
+        
+        Args:
+            ticker: Stock ticker (e.g., INFY, RELIANCE, 500325)
+            stock_name: Stock name
+            date: Target date (YYYY-MM-DD) or None for latest
+            allow_closest: If True, return closest available date if exact not found
+        
+        Returns:
+            Stock price or None if not found
+        """
+        if not self.is_available():
+            return None
+        
+        # Build prompt with date handling
+        if date:
+            date_instruction = f"""Target Date: {date}
+If exact date not available, find CLOSEST trading day within 7 days.
+Return format: PRICE|DATE
+Example: 1523.45|2024-11-10"""
+        else:
+            date_instruction = "Get the LATEST market price (today's closing or current price)."
+        
+        prompt = f"""Get the stock price for this Indian company:
+
+Stock: {stock_name}
+Ticker/BSE Code: {ticker}
+{date_instruction}
+
+Search NSE/BSE official data, MoneyControl, or Economic Times.
+
+Return ONLY the numeric price in INR (e.g., "1523.45").
+If date requested and closest found, use: PRICE|DATE
+If not found, return "NOT_FOUND".
+No currency symbols, no extra text."""
+        
+        try:
+            response = self._call_ai(prompt)
+            if response and response != "NOT_FOUND":
+                # Extract numeric value (handle DATE suffix if present)
+                price_str = response.split('|')[0] if '|' in response else response
+                price = self._extract_number(price_str)
+                if price and price > 0:
+                    logger.info(f"✅ AI found price for {ticker}: ₹{price}")
+                    return price
+            
+            logger.warning(f"⚠️ AI could not find price for {ticker}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ AI price fetch failed for {ticker}: {e}")
+            return None
+    
     def get_pms_aif_performance(
         self, 
         ticker: str, 
@@ -151,23 +223,20 @@ Do not include currency symbols, units, or any other text - ONLY the numeric NAV
             fund_name: Full PMS/AIF name
         
         Returns:
-            Dict with '1y_return', '3y_cagr', '5y_cagr' or empty dict
+            Dict with '1Y', '3Y', '5Y' CAGR percentages or empty dict
         """
         if not self.is_available():
             return {}
         
         # Build prompt
-        prompt = f"""You are a financial data expert. Get the latest performance data for this Indian PMS/AIF:
+        prompt = f"""Get the latest performance data for this Indian PMS/AIF investment:
 
-Fund Name: {fund_name}
-SEBI Registration: {ticker}
+Fund: {fund_name}
+SEBI Code: {ticker}
 
-Search the web for the LATEST factsheet or performance report and extract:
-1. 1-Year Return (or CAGR): X%
-2. 3-Year CAGR: X%
-3. 5-Year CAGR: X%
+Search SEBI website, fund factsheet, PMS Bazaar, or official fund website for LATEST performance.
 
-Return the data in this EXACT format (one per line):
+Extract and return in this EXACT format (one per line):
 1Y: [number]
 3Y: [number]
 5Y: [number]
@@ -177,9 +246,11 @@ Example:
 3Y: 18.2
 5Y: 22.1
 
-If any value is not available, write "N/A" for that line.
-Return ONLY the numbers in the format shown - no additional text.
-"""
+Rules:
+- Values are CAGR percentages (annual returns)
+- If not available, write "N/A"
+- Return ONLY numbers in format shown
+- No extra text or explanations"""
         
         try:
             response = self._call_ai(prompt)
@@ -195,11 +266,11 @@ Return ONLY the numbers in the format shown - no additional text.
             five_year = re.search(r'5Y:\s*([+-]?\d+\.?\d*)', response, re.IGNORECASE)
             
             if one_year:
-                returns_data['1y_return'] = float(one_year.group(1))
+                returns_data['1Y'] = float(one_year.group(1))
             if three_year:
-                returns_data['3y_cagr'] = float(three_year.group(1))
+                returns_data['3Y'] = float(three_year.group(1))
             if five_year:
-                returns_data['5y_cagr'] = float(five_year.group(1))
+                returns_data['5Y'] = float(five_year.group(1))
             
             if returns_data:
                 logger.info(f"✅ AI found performance for {ticker}: {returns_data}")

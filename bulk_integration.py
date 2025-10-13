@@ -104,14 +104,58 @@ def fetch_historical_prices_bulk(
     # Get unique transaction dates
     unique_dates = df['date'].unique().tolist()
     
-    # 1. Stocks: Bulk download from yfinance
+    # 1. Stocks: Bulk download from yfinance (with AI fallback for failures)
     if stock_tickers:
         if progress_callback:
             progress_callback(f"📥 Fetching historical prices for {len(stock_tickers)} stocks...")
         
         stock_hist = fetcher.get_stocks_historical_bulk(stock_tickers, unique_dates)
         all_prices.update(stock_hist)
-        logger.info(f"✅ Stocks: {len(stock_hist)} fetched")
+        logger.info(f"✅ Stocks: {len(stock_hist)}/{len(stock_tickers)} fetched via yfinance")
+        
+        # Check for failed tickers (missing or incomplete data)
+        failed_tickers = []
+        for ticker in stock_tickers:
+            if ticker not in stock_hist or len(stock_hist[ticker]) < len(unique_dates):
+                failed_tickers.append(ticker)
+        
+        # Use AI for failed tickers
+        if failed_tickers:
+            logger.info(f"⚠️ {len(failed_tickers)} stocks failed yfinance, trying AI fallback...")
+            if progress_callback:
+                progress_callback(f"🤖 Using AI fallback for {len(failed_tickers)} stocks...")
+            
+            try:
+                from bulk_price_fetcher import get_historical_prices_with_ai
+                
+                # Build ticker types dict
+                ticker_types = {t: 'Stock' for t in failed_tickers}
+                
+                # Get dates for each ticker
+                ticker_dates = {}
+                for ticker in failed_tickers:
+                    ticker_trans = df[df['ticker'] == ticker]
+                    ticker_dates[ticker] = [pd.to_datetime(d).strftime('%Y-%m-%d') for d in ticker_trans['date'].unique()]
+                
+                # Flatten for AI call
+                all_dates = sorted(set([d for dates in ticker_dates.values() for d in dates]))
+                
+                ai_results = get_historical_prices_with_ai(
+                    failed_tickers,
+                    all_dates,
+                    ticker_names,
+                    ticker_types
+                )
+                
+                # Merge AI results
+                for ticker, dates_dict in ai_results.items():
+                    if ticker not in all_prices:
+                        all_prices[ticker] = {}
+                    all_prices[ticker].update(dates_dict)
+                
+                logger.info(f"✅ AI fallback: {len(ai_results)} stocks recovered")
+            except Exception as e:
+                logger.warning(f"⚠️ AI fallback failed: {e}")
     
     # 2. MF (ISIN): Use transaction price (fastest, most accurate)
     if mf_isins:
