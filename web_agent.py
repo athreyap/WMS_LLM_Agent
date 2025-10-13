@@ -2544,15 +2544,18 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 
                 # Store in session state for use by other parts of the app
                 self.session_state.portfolio_data = df  # Store as DataFrame, not dict
-                self.session_state.portfolio_summary = portfolio_data['summary']
-                self.session_state.portfolio_holdings = portfolio_data['holdings']
+                # Optimized loader doesn't return 'summary' and 'holdings' - use .get() with defaults
+                self.session_state.portfolio_summary = portfolio_data.get('summary', {})
+                self.session_state.portfolio_holdings = portfolio_data.get('holdings', [])
                 self.session_state.stock_metadata = portfolio_data.get('stock_metadata', {})
                 self.session_state.price_history = portfolio_data.get('price_history', {})
                 
                 # Set last refresh time
                 self.session_state.last_refresh_time = datetime.now()
                 
-                print(f"✅ Optimized portfolio loaded: {len(df)} transactions, {len(portfolio_data['holdings'])} holdings")
+                # Calculate unique holdings count from transactions
+                unique_holdings = df.groupby('ticker').size().shape[0] if not df.empty else 0
+                print(f"✅ Optimized portfolio loaded: {len(df)} transactions, {unique_holdings} unique holdings")
                 return
             
             # Fallback to legacy method if optimized loader not available
