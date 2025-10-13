@@ -51,28 +51,8 @@ class AIPriceFetcher:
         self.gemini_client = None
         self.openai_client = None
         
-        # 🆕 Try OpenAI FIRST (paid version, no rate limits)
-        if OPENAI_AVAILABLE:
-            try:
-                # Priority: 1) Provided key, 2) Streamlit secrets, 3) Environment variables
-                api_key = openai_key
-                if not api_key:
-                    try:
-                        import streamlit as st
-                        api_key = st.secrets.get("open_ai") or st.session_state.get('openai_api_key')
-                    except:
-                        pass
-                if not api_key:
-                    api_key = os.getenv('OPENAI_API_KEY')
-                
-                if api_key:
-                    self.openai_client = OpenAI(api_key=api_key)
-                    logger.info("✅ OpenAI initialized (PRIORITY)")
-            except Exception as e:
-                logger.warning(f"OpenAI initialization failed: {e}")
-        
-        # Try Gemini as FALLBACK (free tier, rate limited)
-        if GEMINI_AVAILABLE and not self.openai_client:
+        # 🆕 Try Gemini FIRST (FREE tier - user preference)
+        if GEMINI_AVAILABLE:
             try:
                 # Priority: 1) Provided key, 2) Streamlit secrets, 3) Environment variables
                 api_key = gemini_key
@@ -89,9 +69,29 @@ class AIPriceFetcher:
                     genai.configure(api_key=api_key)
                     # Use gemini-2.5-flash (latest stable fast model)
                     self.gemini_client = genai.GenerativeModel('models/gemini-2.5-flash')
-                    logger.info("✅ Gemini AI initialized (FALLBACK)")
+                    logger.info("✅ Gemini AI initialized (PRIMARY - FREE)")
             except Exception as e:
                 logger.warning(f"Gemini initialization failed: {e}")
+        
+        # Try OpenAI as FALLBACK (when Gemini quota exceeded)
+        if OPENAI_AVAILABLE and not self.gemini_client:
+            try:
+                # Priority: 1) Provided key, 2) Streamlit secrets, 3) Environment variables
+                api_key = openai_key
+                if not api_key:
+                    try:
+                        import streamlit as st
+                        api_key = st.secrets.get("open_ai") or st.session_state.get('openai_api_key')
+                    except:
+                        pass
+                if not api_key:
+                    api_key = os.getenv('OPENAI_API_KEY')
+                
+                if api_key:
+                    self.openai_client = OpenAI(api_key=api_key)
+                    logger.info("✅ OpenAI initialized (FALLBACK)")
+            except Exception as e:
+                logger.warning(f"OpenAI initialization failed: {e}")
     
     def is_available(self) -> bool:
         """Check if any AI service is available AND has quota"""
@@ -179,9 +179,9 @@ class AIPriceFetcher:
         if not self.is_available():
             return None
         
-        # Ultra-minimal prompt
+        # Ultra-minimal prompt with NSE preference
         date_part = f" on {date}" if date else ""
-        prompt = f"{stock_name} (Ticker: {ticker}){date_part} price = ?"
+        prompt = f"{stock_name} NSE ({ticker}){date_part} = ?"
         
         try:
             response = self._call_ai(prompt)
@@ -199,6 +199,92 @@ class AIPriceFetcher:
         except Exception as e:
             logger.error(f"❌ AI price fetch failed for {ticker}: {e}")
             return None
+    
+    def get_weekly_prices_in_range(
+        self,
+        ticker: str,
+        name: str,
+        start_date: str,
+        end_date: str = 'TODAY'
+    ) -> Dict[str, float]:
+        """
+        Get weekly prices for a ticker between two dates using AI
+        
+        Args:
+            ticker: Ticker code
+            name: Asset name
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD) or 'TODAY'
+        
+        Returns:
+            Dict of {date: price} with weekly prices
+            Example: {'2024-01-01': 2500.50, '2024-01-08': 2550.00, ...}
+        """
+        if not self.is_available():
+            return {}
+        
+        # Ultra-compact prompt for weekly price range
+        prompt = f"{name} ({ticker}) weekly {start_date} to {end_date}: DATE|PRICE"
+        
+        try:
+            response = self._call_ai(prompt)
+            if not response:
+                return {}
+            
+            # Parse response into dict (robust parsing for various AI formats)
+            results = {}
+            for line in response.strip().split('\n'):
+                line = line.strip()
+                
+                # Skip empty lines or headers
+                if not line or line.lower().startswith(('date', 'ticker', 'week', 'note', 'source')):
+                    continue
+                
+                # Handle different separators: | or : or tab or multiple spaces
+                if '|' in line:
+                    parts = line.split('|')
+                elif ':' in line and line.count(':') == 1:
+                    parts = line.split(':')
+                elif '\t' in line:
+                    parts = line.split('\t')
+                elif '  ' in line:  # Multiple spaces
+                    parts = line.split()
+                else:
+                    continue
+                
+                if len(parts) >= 2:
+                    try:
+                        # Extract date (first part)
+                        date = parts[0].strip()
+                        
+                        # Extract price (second part, remove currency symbols and commas)
+                        price_str = parts[1].strip()
+                        # Remove common prefixes/symbols
+                        for symbol in ['₹', '$', 'Rs', 'INR', 'Rs.', '₹.']:
+                            price_str = price_str.replace(symbol, '')
+                        price_str = price_str.replace(',', '').strip()
+                        
+                        price = float(price_str)
+                        
+                        # Validate: price should be positive and reasonable
+                        if price > 0 and price < 1000000000:  # Less than 1 billion (sanity check)
+                            results[date] = price
+                        else:
+                            logger.warning(f"Skipping invalid price for {date}: {price}")
+                    except (ValueError, IndexError) as e:
+                        logger.debug(f"Failed to parse line '{line}': {e}")
+                        continue
+            
+            if results:
+                logger.info(f"✅ AI weekly range: {ticker} - {len(results)} weekly prices")
+                return results
+            else:
+                logger.warning(f"⚠️ AI weekly range: No data for {ticker}")
+                return {}
+                
+        except Exception as e:
+            logger.error(f"❌ AI weekly range fetch failed for {ticker}: {e}")
+            return {}
     
     def get_bulk_prices_with_dates(
         self,
@@ -226,14 +312,10 @@ class AIPriceFetcher:
             dates = ['LATEST']
         
         # Ultra-minimal bulk prompt
-        ticker_list = [f"{ticker}|{name}" for ticker, name in tickers_with_names.items()]
-        date_str = ', '.join(dates)
+        ticker_list = [f"{name} ({ticker})" for ticker, name in tickers_with_names.items()]
+        date_str = ','.join(dates[:5]) + ('...' if len(dates) > 5 else '')
         
-        prompt = f"""Tickers: {'; '.join(ticker_list[:10])}{'...' if len(ticker_list) > 10 else ''}
-Dates: {date_str}
-
-Format: TICKER|DATE|PRICE
-Example: RELIANCE|2024-01-15|2500.50"""
+        prompt = f"{'; '.join(ticker_list[:5])}{'...' if len(ticker_list) > 5 else ''} @ {date_str}: TICKER|DATE|PRICE"
         
         try:
             response = self._call_ai(prompt)
@@ -268,6 +350,43 @@ Example: RELIANCE|2024-01-15|2500.50"""
         except Exception as e:
             logger.error(f"❌ AI bulk price fetch failed: {e}")
             return {}
+    
+    def get_pms_aif_nav(
+        self,
+        ticker: str,
+        fund_name: str,
+        date: Optional[str] = None
+    ) -> Optional[float]:
+        """
+        Get PMS/AIF NAV using AI (for current value calculation)
+        
+        Args:
+            ticker: SEBI registration code
+            fund_name: Fund name
+            date: Target date or None for latest
+        
+        Returns:
+            NAV/Unit value or None
+        """
+        if not self.is_available():
+            return None
+        
+        date_part = f" on {date}" if date else ""
+        prompt = f"{fund_name} ({ticker}){date_part} NAV = ?"
+        
+        try:
+            response = self._call_ai(prompt)
+            if response and response != "NOT_FOUND":
+                nav = self._extract_number(response)
+                if nav and nav > 0:
+                    logger.info(f"✅ AI found PMS/AIF NAV for {ticker}: ₹{nav}")
+                    return nav
+            
+            logger.warning(f"⚠️ AI could not find PMS/AIF NAV for {ticker}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ AI PMS/AIF NAV fetch failed for {ticker}: {e}")
+            return None
     
     def get_pms_aif_performance(
         self, 
@@ -331,8 +450,47 @@ Example: RELIANCE|2024-01-15|2500.50"""
         Returns:
             AI response text or None
         """
-        # 🆕 Try OpenAI FIRST (paid, no rate limits)
-        if self.openai_client:
+        # Track call count for rate limiting
+        if not hasattr(self, '_call_count'):
+            self._call_count = 0
+            self._call_start_time = time.time()
+            self._use_openai = False  # Start with Gemini
+        
+        # Reset counter every minute
+        elapsed = time.time() - self._call_start_time
+        if elapsed > 60:
+            self._call_count = 0
+            self._call_start_time = time.time()
+            self._use_openai = False  # Reset to Gemini after 1 minute
+            logger.info("🔄 Rate limit counter reset, switching back to Gemini")
+        
+        # 🔄 SMART ALTERNATING STRATEGY: Gemini (9 calls) → OpenAI (while Gemini resets)
+        if self._call_count >= 9 and not self._use_openai:
+            # Switch to OpenAI after 9 Gemini calls
+            logger.info("🔄 Gemini batch complete (9/9), switching to OpenAI...")
+            self._use_openai = True
+        
+        # Try Gemini FIRST (for first 9 calls)
+        if self.gemini_client and not self._use_openai:
+            try:
+                time.sleep(0.3)  # 300ms delay for safety
+                
+                response = self.gemini_client.generate_content(prompt)
+                if response and response.text:
+                    self._call_count += 1
+                    logger.info(f"✅ Gemini call {self._call_count}/9 successful")
+                    return response.text.strip()
+            except Exception as e:
+                error_str = str(e)
+                logger.warning(f"Gemini call failed: {e}")
+                
+                # If it's a rate limit error, switch to OpenAI immediately
+                if "429" in error_str or "quota" in error_str.lower() or "rate" in error_str.lower():
+                    logger.warning("⚠️ Gemini rate limit hit, switching to OpenAI...")
+                    self._use_openai = True
+        
+        # Use OpenAI (after 9 Gemini calls or when Gemini fails)
+        if self.openai_client and self._use_openai:
             try:
                 response = self.openai_client.chat.completions.create(
                     model="gpt-3.5-turbo",  # Fast and cost-effective
@@ -344,27 +502,22 @@ Example: RELIANCE|2024-01-15|2500.50"""
                     max_tokens=50  # Reduced - only need number responses
                 )
                 if response.choices and response.choices[0].message:
+                    logger.info(f"✅ OpenAI call successful (Gemini: {self._call_count}/9)")
                     return response.choices[0].message.content.strip()
             except Exception as e:
-                logger.warning(f"OpenAI call failed: {e}")
+                logger.error(f"OpenAI call failed: {e}")
+                # If OpenAI fails, try Gemini as last resort
+                if self.gemini_client and self._call_count < 9:
+                    logger.warning("⚠️ OpenAI failed, trying Gemini again...")
+                    self._use_openai = False
+                    return self._call_ai(prompt)  # Recursive retry with Gemini
         
-        # Try Gemini as fallback (free tier, rate limited)
-        if self.gemini_client:
-            try:
-                response = self.gemini_client.generate_content(prompt)
-                if response and response.text:
-                    return response.text.strip()
-            except Exception as e:
-                logger.warning(f"Gemini call failed: {e}")
-                # If it's a rate limit error, log it more clearly
-                if "429" in str(e) or "quota" in str(e).lower():
-                    logger.error("❌ Gemini rate limit exceeded! Configure OpenAI API key for unlimited usage.")
-        
+        logger.error("❌ All AI providers failed")
         return None
     
     def _extract_number(self, text: str) -> Optional[float]:
         """
-        Extract a numeric value from text
+        Extract a numeric value from text (robust parsing)
         
         Args:
             text: Text containing a number
@@ -373,16 +526,36 @@ Example: RELIANCE|2024-01-15|2500.50"""
             Float value or None
         """
         try:
-            # Remove common currency symbols and units
-            cleaned = text.replace('₹', '').replace('Rs', '').replace(',', '').strip()
+            # Remove common currency symbols, units, and text
+            cleaned = text
             
-            # Find first number in text
+            # Remove currency symbols and prefixes
+            for symbol in ['₹', '$', 'Rs', 'INR', 'Rs.', '₹.', 'NAV:', 'NAV=', 'Price:', 'Price=', '=']:
+                cleaned = cleaned.replace(symbol, '')
+            
+            # Remove commas (Indian/international number format)
+            cleaned = cleaned.replace(',', '')
+            
+            # Remove extra whitespace
+            cleaned = cleaned.strip()
+            
+            # Try direct conversion first
+            try:
+                return float(cleaned)
+            except ValueError:
+                pass
+            
+            # Find first number in text (handles formats like "2500.50 as of 2024-10-13")
             match = re.search(r'([+-]?\d+\.?\d*)', cleaned)
             if match:
-                return float(match.group(1))
+                value = float(match.group(1))
+                # Sanity check: price should be positive and reasonable
+                if value > 0 and value < 1000000000:
+                    return value
             
             return None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to extract number from '{text}': {e}")
             return None
 
 
