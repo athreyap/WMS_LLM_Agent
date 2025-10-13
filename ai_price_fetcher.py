@@ -94,8 +94,24 @@ class AIPriceFetcher:
                 logger.warning(f"Gemini initialization failed: {e}")
     
     def is_available(self) -> bool:
-        """Check if any AI service is available"""
-        return self.gemini_client is not None or self.openai_client is not None
+        """Check if any AI service is available AND has quota"""
+        # Check if we have any clients
+        has_clients = self.gemini_client is not None or self.openai_client is not None
+        
+        # Check if quota is exhausted for all available clients
+        if has_clients:
+            # If OpenAI is primary but has quota issues, check Gemini
+            if self.openai_client and hasattr(self, '_openai_quota_exhausted'):
+                if self._openai_quota_exhausted and not self.gemini_client:
+                    logger.warning("⚠️ OpenAI quota exhausted and no Gemini fallback")
+                    return False
+            
+            # If both have quota issues, disable AI
+            if hasattr(self, '_both_quotas_exhausted') and self._both_quotas_exhausted:
+                logger.warning("⚠️ Both OpenAI and Gemini quotas exhausted - using traditional APIs")
+                return False
+        
+        return has_clients
     
     def get_mutual_fund_nav(
         self, 
@@ -120,43 +136,9 @@ class AIPriceFetcher:
         if not self.is_available():
             return None
         
-        # Build prompt with date handling
-        if date:
-            date_instruction = f"""Target Date: {date}
-If the exact date is not available, find the CLOSEST date within 7 days (before or after).
-Return format: NAV_VALUE|DATE
-Example: 45.67|2024-11-10"""
-        else:
-            date_instruction = "Get the LATEST available NAV."
-        
-        prompt = f"""Get the NAV (Net Asset Value) for this Indian mutual fund using BOTH identifiers for 100% accuracy:
-
-Fund Name: {fund_name}
-Scheme Code: {ticker}
-{date_instruction}
-
-CRITICAL VERIFICATION (to avoid wrong plan/option):
-1. Search AMFI India NAV list for scheme code {ticker}
-2. VERIFY the fund name matches "{fund_name}"
-3. Check if it's Direct/Regular plan and Growth/Dividend option
-4. If code and name don't match, search by fund name to get correct NAV
-
-Common mistakes to avoid:
-- Code 148097 (Dividend) vs 148098 (Growth) = Different NAVs!
-- Regular Plan vs Direct Plan = Different NAVs!
-
-Search these official sources:
-- AMFI India: https://www.amfiindia.com/spages/NAVAll.txt
-- Value Research: https://www.valueresearchonline.com
-- Morningstar India
-- Fund house official website
-
-IMPORTANT: If exact date not available, find CLOSEST available date within ±7 days.
-
-Return ONLY the numeric NAV (e.g., "45.67").
-If using closest date, return: NAV|DATE (e.g., "45.67|2024-11-10")
-If code and name don't match or not found, return "NOT_FOUND".
-No currency symbols, no extra text."""
+        # Ultra-minimal prompt
+        date_part = f" on {date}" if date else ""
+        prompt = f"{fund_name} (Code: {ticker}){date_part} NAV = ?"
         
         try:
             response = self._call_ai(prompt)
@@ -197,45 +179,9 @@ No currency symbols, no extra text."""
         if not self.is_available():
             return None
         
-        # Build prompt with date handling
-        if date:
-            date_instruction = f"""Target Date: {date}
-If exact date not available, find CLOSEST trading day within 7 days.
-Return format: PRICE|DATE
-Example: 1523.45|2024-11-10"""
-        else:
-            date_instruction = "Get the LATEST market price (today's closing or current price)."
-        
-        prompt = f"""Get the stock price for this Indian company using BOTH identifiers for 100% accuracy:
-
-Company Name: {stock_name}
-Stock Ticker/Code: {ticker}
-{date_instruction}
-
-CRITICAL VERIFICATION (to avoid wrong company):
-1. Search NSE/BSE using ticker "{ticker}"
-2. VERIFY the company name matches "{stock_name}"
-3. If mismatch (delisted, renamed, wrong code), search by company name
-4. Check for .NS (NSE) or .BO (BSE) suffix
-
-Common issues to watch:
-- TANFACIND may be delisted or renamed to TNPL
-- BSE code vs NSE ticker differences
-- Company mergers/name changes
-
-Search these official sources in order:
-1. MoneyControl.com (most reliable)
-2. NSE India: https://www.nseindia.com
-3. BSE India: https://www.bseindia.com
-4. Screener.in
-5. Economic Times
-
-IMPORTANT: If exact date not available, find CLOSEST trading day within ±7 days.
-
-Return ONLY the numeric price in INR (e.g., "1523.45").
-If using closest date, return: PRICE|DATE (e.g., "1523.45|2024-11-10")
-If ticker and name don't match or not found, return "NOT_FOUND".
-No currency symbols, no extra text."""
+        # Ultra-minimal prompt
+        date_part = f" on {date}" if date else ""
+        prompt = f"{stock_name} (Ticker: {ticker}){date_part} price = ?"
         
         try:
             response = self._call_ai(prompt)
@@ -279,52 +225,15 @@ No currency symbols, no extra text."""
         if not dates:
             dates = ['LATEST']
         
-        # Build the batch request
-        ticker_list = []
-        for ticker, name in tickers_with_names.items():
-            ticker_list.append(f"{ticker}|{name}")
-        
-        # Create comprehensive batch prompt
+        # Ultra-minimal bulk prompt
+        ticker_list = [f"{ticker}|{name}" for ticker, name in tickers_with_names.items()]
         date_str = ', '.join(dates)
         
-        prompt = f"""Get prices for these Indian investments for MULTIPLE dates in ONE response:
+        prompt = f"""Tickers: {'; '.join(ticker_list[:10])}{'...' if len(ticker_list) > 10 else ''}
+Dates: {date_str}
 
-TICKERS (Code|Name):
-{chr(10).join([f"{i+1}. {t}" for i, t in enumerate(ticker_list)])}
-
-DATES NEEDED: {date_str}
-(If exact date not available, find CLOSEST within ±7 days)
-
-CRITICAL VERIFICATION:
-- For each ticker, verify BOTH code AND name match
-- For mutual funds: Check if Direct/Regular + Growth/Dividend
-- For stocks: Check if renamed/delisted
-- For each date, get closest available if exact not found
-
-Return in this EXACT format (one line per ticker+date):
-TICKER|DATE|PRICE
-
-Example output:
-RELIANCE|2024-01-15|2500.50
-RELIANCE|2024-02-20|2575.00
-RELIANCE|LATEST|2650.00
-148098|2024-11-25|10.85
-148098|LATEST|11.20
-TANFACIND|2024-10-21|85.50
-TANFACIND|LATEST|87.25
-
-Search official sources:
-- Stocks: MoneyControl, NSE, BSE
-- Mutual Funds: AMFI, Value Research
-- For historical: Get closest trading day/NAV date
-
-Rules:
-- One line per ticker+date combination
-- Format: TICKER|DATE|PRICE (no spaces, no currency)
-- Use LATEST for current price
-- If date found is different, still use requested date label
-- Skip if not found (don't return error lines)
-- Verify code and name match before returning price"""
+Format: TICKER|DATE|PRICE
+Example: RELIANCE|2024-01-15|2500.50"""
         
         try:
             response = self._call_ai(prompt)
@@ -378,50 +287,8 @@ Rules:
         if not self.is_available():
             return {}
         
-        # Build enhanced prompt with monthly CAGR request
-        prompt = f"""Get the latest performance data for this Indian PMS/AIF investment:
-
-Fund Name: {fund_name}
-SEBI Registration Code: {ticker}
-
-Search these official sources:
-1. SEBI website: https://www.sebi.gov.in
-2. PMS Bazaar: https://www.pmsbazaar.com
-3. AIF Data: https://www.aifdata.in
-4. Fund's official website/factsheet
-5. Fund manager website
-
-Extract and return performance data in this EXACT format:
-
-MONTHLY (if available):
-1M: [number]
-3M: [number]
-6M: [number]
-
-ANNUAL (required):
-1Y: [number]
-3Y: [number]
-5Y: [number]
-
-SINCE INCEPTION (if available):
-SI: [number]
-
-Example output:
-1M: 2.5
-3M: 5.8
-6M: 12.3
-1Y: 15.5
-3Y: 18.2
-5Y: 22.1
-SI: 24.0
-
-Rules:
-- All values are CAGR percentages (annualized returns)
-- For monthly periods, annualize the return
-- If a period is not available, write "N/A"
-- Return ONLY numbers in the format shown above
-- No extra text, explanations, or commentary
-- Verify both fund name and SEBI code match"""
+        # Ultra-minimal prompt
+        prompt = f"{fund_name} ({ticker}) returns: 1Y=? 3Y=? 5Y=?"
         
         try:
             response = self._call_ai(prompt)
@@ -470,11 +337,11 @@ Rules:
                 response = self.openai_client.chat.completions.create(
                     model="gpt-3.5-turbo",  # Fast and cost-effective
                     messages=[
-                        {"role": "system", "content": "You are a financial data expert. Provide only the requested data in the exact format specified."},
+                        {"role": "system", "content": "Financial data expert."},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0,  # For consistent results
-                    max_tokens=300  # Increased for batch responses
+                    max_tokens=50  # Reduced - only need number responses
                 )
                 if response.choices and response.choices[0].message:
                     return response.choices[0].message.content.strip()

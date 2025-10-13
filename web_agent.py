@@ -2284,8 +2284,8 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                 sector = "PMS"
                     
                     elif str(ticker).isdigit() or ticker.startswith('MF_'):
-                        # 🤖 Mutual fund - USE AI PRIMARY (fetch by NAME, not code)
-                        print(f"🤖 {ticker}: Mutual Fund detected, using AI to fetch NAV by fund name")
+                        # 📊 Mutual fund - USE API FIRST (FREE), AI as fallback
+                        print(f"📊 {ticker}: Mutual Fund detected, trying API first")
                         live_price = None
                         sector = "Mutual Fund"
                         
@@ -2293,54 +2293,56 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         mf_trans = df[df['ticker'] == ticker].iloc[0] if not df[df['ticker'] == ticker].empty else None
                         fund_name = mf_trans.get('stock_name', ticker) if mf_trans is not None else ticker
                         
+                        # Try API first (FREE, no quota)
                         try:
-                            from ai_price_fetcher import AIPriceFetcher
-                            ai_fetcher = AIPriceFetcher()
+                            live_price, fund_category = get_mutual_fund_price_and_category(ticker, ticker, user_id, None)
+                            if fund_category and fund_category != 'Unknown':
+                                sector = fund_category
+                            print(f"✅ API: MF {ticker}: NAV ₹{live_price}")
+                        except Exception as api_error:
+                            print(f"⚠️ API failed for {ticker} ({api_error}), trying AI fallback...")
                             
-                            if ai_fetcher.is_available():
-                                print(f"🤖 AI PRIMARY: Fetching NAV for '{fund_name}' (Code: {ticker})")
-                                live_price = ai_fetcher.get_mutual_fund_nav(ticker, fund_name)
-                                
-                                if live_price and live_price > 0:
-                                    print(f"✅ AI found MF NAV: ₹{live_price} for {fund_name}")
-                                    # Try to get category from fund name
-                                    fund_name_upper = fund_name.upper()
-                                    if 'EQUITY' in fund_name_upper or 'STOCK' in fund_name_upper:
-                                        if 'SMALL' in fund_name_upper:
-                                            sector = "Equity: Small Cap"
-                                        elif 'MID' in fund_name_upper:
-                                            sector = "Equity: Mid Cap"
-                                        elif 'LARGE' in fund_name_upper:
-                                            sector = "Equity: Large Cap"
-                                        else:
-                                            sector = "Equity: Multi Cap"
-                                    elif 'DEBT' in fund_name_upper or 'BOND' in fund_name_upper:
-                                        sector = "Debt Fund"
-                                    elif 'HYBRID' in fund_name_upper or 'BALANCED' in fund_name_upper:
-                                        sector = "Hybrid Fund"
-                                    elif 'LIQUID' in fund_name_upper:
-                                        sector = "Liquid Fund"
-                                    elif 'GOLD' in fund_name_upper:
-                                        sector = "Gold Fund"
-                                    elif 'INTERNATIONAL' in fund_name_upper or 'GLOBAL' in fund_name_upper:
-                                        sector = "International Fund"
-                                    else:
-                                        sector = "Mutual Fund"
-                                else:
-                                    raise Exception("AI returned no price")
-                            else:
-                                raise Exception("AI not available")
-                                
-                        except Exception as ai_error:
-                            print(f"⚠️ AI failed for {ticker} ({ai_error}), trying legacy API fallback...")
-                            # Fallback to old API method
+                            # AI FALLBACK (when API fails)
                             try:
-                                live_price, fund_category = get_mutual_fund_price_and_category(ticker, ticker, user_id, None)
-                                if fund_category and fund_category != 'Unknown':
-                                    sector = fund_category
-                                print(f"✅ API Fallback: MF {ticker}: NAV ₹{live_price}")
-                            except Exception as api_error:
-                                print(f"⚠️ API fallback also failed ({api_error}), using transaction price")
+                                from ai_price_fetcher import AIPriceFetcher
+                                ai_fetcher = AIPriceFetcher()
+                                
+                                if ai_fetcher.is_available():
+                                    print(f"🤖 AI FALLBACK: Fetching NAV for '{fund_name}' (Code: {ticker})")
+                                    live_price = ai_fetcher.get_mutual_fund_nav(ticker, fund_name)
+                                    
+                                    if live_price and live_price > 0:
+                                        print(f"✅ AI found MF NAV: ₹{live_price} for {fund_name}")
+                                        # Try to get category from fund name
+                                        fund_name_upper = fund_name.upper()
+                                        if 'EQUITY' in fund_name_upper or 'STOCK' in fund_name_upper:
+                                            if 'SMALL' in fund_name_upper:
+                                                sector = "Equity: Small Cap"
+                                            elif 'MID' in fund_name_upper:
+                                                sector = "Equity: Mid Cap"
+                                            elif 'LARGE' in fund_name_upper:
+                                                sector = "Equity: Large Cap"
+                                            else:
+                                                sector = "Equity: Multi Cap"
+                                        elif 'DEBT' in fund_name_upper or 'BOND' in fund_name_upper:
+                                            sector = "Debt Fund"
+                                        elif 'HYBRID' in fund_name_upper or 'BALANCED' in fund_name_upper:
+                                            sector = "Hybrid Fund"
+                                        elif 'LIQUID' in fund_name_upper:
+                                            sector = "Liquid Fund"
+                                        elif 'GOLD' in fund_name_upper:
+                                            sector = "Gold Fund"
+                                        elif 'INTERNATIONAL' in fund_name_upper or 'GLOBAL' in fund_name_upper:
+                                            sector = "International Fund"
+                                        else:
+                                            sector = "Mutual Fund"
+                                    else:
+                                        raise Exception("AI returned no price")
+                                else:
+                                    raise Exception("AI not available")
+                                    
+                            except Exception as ai_error:
+                                print(f"⚠️ AI also failed ({ai_error}), using transaction price")
                                 # Final fallback: transaction price
                                 if mf_trans is not None and 'price' in mf_trans:
                                     live_price = float(mf_trans['price'])
@@ -2350,103 +2352,111 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                     print(f"   ❌ No price available for {ticker}")
 
                     else:
-                        # 🤖 Stock or ETF - USE AI PRIMARY (fetch by NAME)
+                        # 📊 Stock or ETF - USE API FIRST (FREE), AI as fallback
                         is_etf = ticker_upper.endswith('BEES') or ticker_upper.endswith('ETF')
                         
                         # Get stock name from transactions
                         stock_trans = df[df['ticker'] == ticker].iloc[0] if not df[df['ticker'] == ticker].empty else None
                         stock_name = stock_trans.get('stock_name', ticker) if stock_trans is not None else ticker
                         
-                        print(f"🤖 {ticker}: {'ETF' if is_etf else 'Stock'} detected, using AI PRIMARY")
+                        print(f"📊 {ticker}: {'ETF' if is_etf else 'Stock'} detected, trying API first")
                         
+                        live_price = None
+                        sector = None
+                        market_cap = None
+                        
+                        # Try API first (FREE, no quota)
                         try:
-                            from ai_price_fetcher import AIPriceFetcher
-                            ai_fetcher = AIPriceFetcher()
+                            # Try yfinance with NSE suffix
+                            live_price, sector, market_cap = get_stock_price_and_sector(f"{ticker}.NS", ticker, None)
                             
-                            if ai_fetcher.is_available():
-                                print(f"🤖 AI PRIMARY: Fetching price for '{stock_name}' (Ticker: {ticker})")
-                                live_price = ai_fetcher.get_stock_price(ticker, stock_name)
+                            if not live_price or live_price <= 0:
+                                # Try BSE suffix
+                                live_price, sector, market_cap = get_stock_price_and_sector(f"{ticker}.BO", ticker, None)
+                            
+                            if not live_price or live_price <= 0:
+                                # Try without suffix
+                                live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
+                            
+                            if live_price and live_price > 0:
+                                print(f"✅ API: Got price ₹{live_price} from yfinance")
                                 
-                                if live_price and live_price > 0:
-                                    print(f"✅ AI found stock price: ₹{live_price} for {stock_name}")
-                                    
-                                    # For ETFs, set sector
-                                    if is_etf:
-                                        sector = "ETF"
-                                    else:
-                                        # Intelligent sector categorization from stock name
-                                        stock_name_upper = stock_name.upper()
-                                        if any(word in stock_name_upper for word in ['BANK', 'HDFC', 'ICICI', 'SBI', 'AXIS', 'KOTAK']):
-                                            sector = 'Banking'
-                                        elif any(word in stock_name_upper for word in ['TECH', 'INFY', 'TCS', 'WIPRO', 'HCL', 'SOFTWARE']):
-                                            sector = 'Technology'
-                                        elif any(word in stock_name_upper for word in ['PHARMA', 'CIPLA', 'DRREDDY', 'SUNPHARMA', 'DRUG']):
-                                            sector = 'Pharmaceuticals'
-                                        elif any(word in stock_name_upper for word in ['AUTO', 'MARUTI', 'TATA MOTORS', 'BAJAJ', 'MOTOR']):
-                                            sector = 'Automobile'
-                                        elif any(word in stock_name_upper for word in ['STEEL', 'TATASTEEL', 'JSWSTEEL', 'METAL']):
-                                            sector = 'Metals & Mining'
-                                        elif any(word in stock_name_upper for word in ['OIL', 'ONGC', 'COAL', 'RELIANCE', 'PETRO']):
-                                            sector = 'Oil & Gas'
-                                        elif any(word in stock_name_upper for word in ['CONSUMER', 'HINDUNILVR', 'ITC', 'NESTLE', 'FMCG']):
-                                            sector = 'Consumer Goods'
-                                        elif any(word in stock_name_upper for word in ['REALTY', 'DLF', 'GODREJ', 'REAL ESTATE']):
-                                            sector = 'Real Estate'
-                                        elif any(word in stock_name_upper for word in ['POWER', 'POWERGRID', 'NTPC', 'ENERGY']):
-                                            sector = 'Power & Energy'
-                                        elif any(word in stock_name_upper for word in ['INFRA', 'CONSTRUCTION', 'L&T', 'LARSEN']):
-                                            sector = 'Infrastructure'
-                                        else:
-                                            sector = 'Other Stocks'
-                                    
-                                    market_cap = None  # AI doesn't fetch market cap yet
-                                else:
-                                    raise Exception("AI returned no price")
+                                # Store market cap
+                                if market_cap and market_cap > 0:
+                                    if not hasattr(self.session_state, 'market_caps'):
+                                        self.session_state.market_caps = {}
+                                    self.session_state.market_caps[ticker] = market_cap
+                                
+                                if is_etf and (not sector or sector == 'Unknown'):
+                                    sector = "ETF"
                             else:
-                                raise Exception("AI not available")
-                                
-                        except Exception as ai_error:
-                            print(f"⚠️ AI failed for {ticker} ({ai_error}), trying legacy API fallback...")
-                            # Fallback to old API methods
-                            live_price = None
-                            sector = None
-                            market_cap = None
-                            
-                            try:
-                                # Try yfinance
-                                live_price, sector, market_cap = get_stock_price_and_sector(f"{ticker}.NS", ticker, None)
-                                
-                                if not live_price or live_price <= 0:
-                                    live_price, sector, market_cap = get_stock_price_and_sector(f"{ticker}.BO", ticker, None)
-                                
-                                if not live_price or live_price <= 0:
-                                    live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
-                                
-                                if live_price and live_price > 0:
-                                    print(f"✅ API Fallback: Got price ₹{live_price} from yfinance")
-                                    
-                                    # Store market cap
-                                    if market_cap and market_cap > 0:
-                                        if not hasattr(self.session_state, 'market_caps'):
-                                            self.session_state.market_caps = {}
-                                        self.session_state.market_caps[ticker] = market_cap
-                                    
-                                    if is_etf and (not sector or sector == 'Unknown'):
-                                        sector = "ETF"
+                                # Try IndStocks as secondary API
+                                if not is_etf:
+                                    from indstocks import stock
+                                    stock_obj = stock(ticker)
+                                    info = stock_obj.info()
+                                    if info and 'price' in info:
+                                        live_price = float(info['price'])
+                                        if 'sector' in info:
+                                            sector = info['sector']
+                                        print(f"✅ API: Got price ₹{live_price} from IndStocks")
+                                    else:
+                                        raise Exception("IndStocks also failed")
                                 else:
-                                    # Try IndStocks
-                                    if not is_etf:
-                                        from indstocks import stock
-                                        stock_obj = stock(ticker)
-                                        info = stock_obj.info()
-                                        if info and 'price' in info:
-                                            live_price = float(info['price'])
-                                            if 'sector' in info:
-                                                sector = info['sector']
-                                            print(f"✅ API Fallback: Got price ₹{live_price} from IndStocks")
-                                            
-                            except Exception as api_error:
-                                print(f"⚠️ All methods failed for {ticker}: {api_error}")
+                                    raise Exception("yfinance failed for ETF")
+                                    
+                        except Exception as api_error:
+                            print(f"⚠️ API failed for {ticker} ({api_error}), trying AI fallback...")
+                            
+                            # AI FALLBACK (when APIs fail)
+                            try:
+                                from ai_price_fetcher import AIPriceFetcher
+                                ai_fetcher = AIPriceFetcher()
+                                
+                                if ai_fetcher.is_available():
+                                    print(f"🤖 AI FALLBACK: Fetching price for '{stock_name}' (Ticker: {ticker})")
+                                    live_price = ai_fetcher.get_stock_price(ticker, stock_name)
+                                    
+                                    if live_price and live_price > 0:
+                                        print(f"✅ AI found stock price: ₹{live_price} for {stock_name}")
+                                        
+                                        # For ETFs, set sector
+                                        if is_etf:
+                                            sector = "ETF"
+                                        else:
+                                            # Intelligent sector categorization from stock name
+                                            stock_name_upper = stock_name.upper()
+                                            if any(word in stock_name_upper for word in ['BANK', 'HDFC', 'ICICI', 'SBI', 'AXIS', 'KOTAK']):
+                                                sector = 'Banking'
+                                            elif any(word in stock_name_upper for word in ['TECH', 'INFY', 'TCS', 'WIPRO', 'HCL', 'SOFTWARE']):
+                                                sector = 'Technology'
+                                            elif any(word in stock_name_upper for word in ['PHARMA', 'CIPLA', 'DRREDDY', 'SUNPHARMA', 'DRUG']):
+                                                sector = 'Pharmaceuticals'
+                                            elif any(word in stock_name_upper for word in ['AUTO', 'MARUTI', 'TATA MOTORS', 'BAJAJ', 'MOTOR']):
+                                                sector = 'Automobile'
+                                            elif any(word in stock_name_upper for word in ['STEEL', 'TATASTEEL', 'JSWSTEEL', 'METAL']):
+                                                sector = 'Metals & Mining'
+                                            elif any(word in stock_name_upper for word in ['OIL', 'ONGC', 'COAL', 'RELIANCE', 'PETRO']):
+                                                sector = 'Oil & Gas'
+                                            elif any(word in stock_name_upper for word in ['CONSUMER', 'HINDUNILVR', 'ITC', 'NESTLE', 'FMCG']):
+                                                sector = 'Consumer Goods'
+                                            elif any(word in stock_name_upper for word in ['REALTY', 'DLF', 'GODREJ', 'REAL ESTATE']):
+                                                sector = 'Real Estate'
+                                            elif any(word in stock_name_upper for word in ['POWER', 'POWERGRID', 'NTPC', 'ENERGY']):
+                                                sector = 'Power & Energy'
+                                            elif any(word in stock_name_upper for word in ['INFRA', 'CONSTRUCTION', 'L&T', 'LARSEN']):
+                                                sector = 'Infrastructure'
+                                            else:
+                                                sector = 'Other Stocks'
+                                        
+                                        market_cap = None  # AI doesn't fetch market cap yet
+                                    else:
+                                        raise Exception("AI returned no price")
+                                else:
+                                    raise Exception("AI not available")
+                                    
+                            except Exception as ai_error:
+                                print(f"⚠️ AI also failed for {ticker}: {ai_error}")
                                 live_price = None
                                 sector = 'Unknown'
 
@@ -9589,91 +9599,36 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             # Build conversation context for ChatGPT-style interaction
             conversation_messages = []
             
-            # Build detailed portfolio context with ACTUAL data
-            holdings_list = ""
+            # Compact portfolio context (only top 20 holdings to save tokens)
+            holdings_compact = ""
             if context_data['portfolio_summary'].get('holdings'):
-                holdings_list = "\n\nCOMPLETE HOLDINGS LIST:\n"
-                for holding in context_data['portfolio_summary']['holdings']:
-                    holdings_list += f"- {holding.get('ticker', 'N/A')} ({holding.get('stock_name', 'N/A')}): "
-                    holdings_list += f"Qty: {holding.get('quantity', 0):.2f}, "
-                    holdings_list += f"Invested: ₹{holding.get('invested_amount', 0):,.2f}, "
-                    holdings_list += f"Current: ₹{holding.get('current_value', 0):,.2f}, "
-                    holdings_list += f"P&L: ₹{holding.get('unrealized_pnl', 0):,.2f} ({holding.get('pnl_percentage', 0):.2f}%)\n"
+                top_holdings = context_data['portfolio_summary']['holdings'][:20]  # Limit to 20
+                for h in top_holdings:
+                    holdings_compact += f"{h.get('ticker')}({h.get('stock_name','')}): ₹{h.get('unrealized_pnl',0):,.0f}({h.get('pnl_percentage',0):.1f}%)|"
             
-            top_performers_text = ""
-            if context_data['portfolio_summary'].get('top_performers'):
-                top_performers_text = "\n\nTOP 5 PERFORMERS:\n"
-                for i, stock in enumerate(context_data['portfolio_summary']['top_performers'], 1):
-                    top_performers_text += f"{i}. {stock.get('ticker')} ({stock.get('stock_name', 'N/A')}): "
-                    top_performers_text += f"P&L: ₹{stock.get('unrealized_pnl', 0):,.2f} ({stock.get('pnl_percentage', 0):.2f}%)\n"
-            
-            worst_performers_text = ""
-            if context_data['portfolio_summary'].get('worst_performers'):
-                worst_performers_text = "\n\nWORST 5 PERFORMERS:\n"
-                for i, stock in enumerate(context_data['portfolio_summary']['worst_performers'], 1):
-                    worst_performers_text += f"{i}. {stock.get('ticker')} ({stock.get('stock_name', 'N/A')}): "
-                    worst_performers_text += f"P&L: ₹{stock.get('unrealized_pnl', 0):,.2f} ({stock.get('pnl_percentage', 0):.2f}%)\n"
-            
-            sector_text = ""
-            if context_data['portfolio_summary'].get('sector_allocation'):
-                sector_text = "\n\nSECTOR ALLOCATION:\n"
-                for sector, amount in context_data['portfolio_summary']['sector_allocation'].items():
-                    sector_text += f"- {sector}: ₹{amount:,.2f}\n"
-            
-            # System message with COMPLETE portfolio context
-            system_prompt = f"""You are an expert financial advisor and portfolio analyst with COMPLETE ACCESS to real-time portfolio data.
+            # Ultra-compact system prompt
+            system_prompt = f"""Portfolio Analyst. Data:
+Invested: ₹{context_data['portfolio_summary'].get('total_invested', 0):,.0f}
+Current: ₹{context_data['portfolio_summary'].get('current_value', 0):,.0f}  
+P&L: ₹{context_data['portfolio_summary'].get('total_pnl', 0):,.0f} ({context_data['portfolio_summary'].get('pnl_percentage', 0):.1f}%)
+Holdings: {context_data['portfolio_summary'].get('total_stocks', 0)}
 
-PORTFOLIO SUMMARY:
-- Total Invested: ₹{context_data['portfolio_summary'].get('total_invested', 0):,.2f}
-- Current Value: ₹{context_data['portfolio_summary'].get('current_value', 0):,.2f}
-- Total P&L: ₹{context_data['portfolio_summary'].get('total_pnl', 0):,.2f} ({context_data['portfolio_summary'].get('pnl_percentage', 0):.2f}%)
-- Number of Holdings: {context_data['portfolio_summary'].get('total_stocks', 0)}
+Top: {holdings_compact[:500]}
 
-{holdings_list}
-
-{top_performers_text}
-
-{worst_performers_text}
-
-{sector_text}
-
-IMPORTANT INSTRUCTIONS:
-1. Use the ACTUAL stock names, tickers, and numbers provided above
-2. When asked about "best performers", reference the TOP 5 PERFORMERS list
-3. When asked about "worst performers", reference the WORST 5 PERFORMERS list
-4. Always cite specific numbers from the data
-5. Do NOT use generic placeholders like "Stock XYZ" - use the REAL ticker symbols
-6. Provide actionable insights based on the actual portfolio data
-
-🆕 FUNCTION CALLING CAPABILITY:
-You can trigger Python functions by using this format in your response:
-FUNCTION_CALL: function_name(param1, param2)
-
-Available functions:
-- fetch_all_prices() - Fetch ALL prices for all holdings using AI batch method
-- refresh_portfolio() - Reload portfolio data from database
-- process_csv_file(file_index) - Process CSV file (use 0 for first CSV file uploaded)
-- get_price_for_ticker(ticker, name) - Get current price for specific ticker
-
-Examples:
-- If user uploads CSV and asks to process it: "I'll process that CSV file for you. FUNCTION_CALL: process_csv_file(0)"
-- If user asks to update prices: "I'll fetch the latest prices. FUNCTION_CALL: fetch_all_prices()"
-- If user asks for specific stock price: "FUNCTION_CALL: get_price_for_ticker('RELIANCE', 'Reliance Industries')"
-
-After function call, continue with normal response."""
+Functions: fetch_all_prices(), refresh_portfolio(), process_csv_file(0), get_price_for_ticker(ticker,name)
+Call: FUNCTION_CALL: function_name(params)"""
 
             conversation_messages.append({"role": "system", "content": system_prompt})
             
-            # Add conversation history (last 10 messages for context)
-            for msg in st.session_state.chat_history[-11:-1]:  # Exclude current message
+            # Add conversation history (last 5 messages to save tokens)
+            for msg in st.session_state.chat_history[-6:-1]:  # Reduced from 11 to 6
                 conversation_messages.append(msg)
             
-            # Add current user message
+            # Add current user message with compact file content
             current_message = user_query
             if file_content:
-                # Include more content and make it clear to AI
-                current_message += f"\n\n=== UPLOADED DOCUMENTS (MUST READ AND ANALYZE) ===\n{file_content[:15000]}"  # Increased to 15000 chars
-                current_message += "\n\n=== END OF DOCUMENTS ===\n\nIMPORTANT: The above documents contain detailed analysis, charts, and data. Please read and analyze them carefully to answer the user's question."
+                # Ultra-compact file content (first 3000 chars only)
+                current_message += f"\n\nDocs: {file_content[:3000]}{'...' if len(file_content) > 3000 else ''}"
             
             conversation_messages.append({"role": "user", "content": current_message})
             
@@ -9828,7 +9783,7 @@ After function call, continue with normal response."""
                     model="gpt-3.5-turbo",
                     messages=conversation_messages,
                     temperature=0.7,
-                    max_tokens=2000
+                    max_tokens=500  # Reduced from 2000 to save costs
                 )
                 
                 return response.choices[0].message.content
