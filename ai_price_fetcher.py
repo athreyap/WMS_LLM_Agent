@@ -7,7 +7,7 @@ Uses Google Gemini (free tier) and OpenAI GPT as fallback
 import os
 import re
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
@@ -245,6 +245,112 @@ No currency symbols, no extra text."""
         except Exception as e:
             logger.error(f"❌ AI price fetch failed for {ticker}: {e}")
             return None
+    
+    def get_bulk_prices_with_dates(
+        self,
+        tickers_with_names: Dict[str, str],
+        dates: List[str] = None,
+        asset_type: str = 'AUTO'
+    ) -> Dict[str, Dict[str, float]]:
+        """
+        Get prices for multiple tickers with multiple dates in ONE AI call
+        
+        Args:
+            tickers_with_names: Dict of {ticker: name} pairs
+            dates: List of dates ['2024-01-15', '2024-02-20', 'LATEST'] or None for latest only
+            asset_type: 'STOCK', 'MF', or 'AUTO' (auto-detect)
+        
+        Returns:
+            Dict of {ticker: {date: price}} 
+            Example: {'RELIANCE': {'2024-01-15': 2500.50, 'LATEST': 2650.00}}
+        """
+        if not self.is_available() or not tickers_with_names:
+            return {}
+        
+        # Default to latest if no dates provided
+        if not dates:
+            dates = ['LATEST']
+        
+        # Build the batch request
+        ticker_list = []
+        for ticker, name in tickers_with_names.items():
+            ticker_list.append(f"{ticker}|{name}")
+        
+        # Create comprehensive batch prompt
+        date_str = ', '.join(dates)
+        
+        prompt = f"""Get prices for these Indian investments for MULTIPLE dates in ONE response:
+
+TICKERS (Code|Name):
+{chr(10).join([f"{i+1}. {t}" for i, t in enumerate(ticker_list)])}
+
+DATES NEEDED: {date_str}
+(If exact date not available, find CLOSEST within ±7 days)
+
+CRITICAL VERIFICATION:
+- For each ticker, verify BOTH code AND name match
+- For mutual funds: Check if Direct/Regular + Growth/Dividend
+- For stocks: Check if renamed/delisted
+- For each date, get closest available if exact not found
+
+Return in this EXACT format (one line per ticker+date):
+TICKER|DATE|PRICE
+
+Example output:
+RELIANCE|2024-01-15|2500.50
+RELIANCE|2024-02-20|2575.00
+RELIANCE|LATEST|2650.00
+148098|2024-11-25|10.85
+148098|LATEST|11.20
+TANFACIND|2024-10-21|85.50
+TANFACIND|LATEST|87.25
+
+Search official sources:
+- Stocks: MoneyControl, NSE, BSE
+- Mutual Funds: AMFI, Value Research
+- For historical: Get closest trading day/NAV date
+
+Rules:
+- One line per ticker+date combination
+- Format: TICKER|DATE|PRICE (no spaces, no currency)
+- Use LATEST for current price
+- If date found is different, still use requested date label
+- Skip if not found (don't return error lines)
+- Verify code and name match before returning price"""
+        
+        try:
+            response = self._call_ai(prompt)
+            if not response:
+                return {}
+            
+            # Parse response into nested dict
+            results = {}
+            for line in response.strip().split('\n'):
+                line = line.strip()
+                if '|' in line:
+                    parts = line.split('|')
+                    if len(parts) >= 3:
+                        ticker = parts[0].strip()
+                        date = parts[1].strip()
+                        try:
+                            price = float(parts[2].strip())
+                            if ticker not in results:
+                                results[ticker] = {}
+                            results[ticker][date] = price
+                        except ValueError:
+                            continue
+            
+            if results:
+                total_prices = sum(len(dates) for dates in results.values())
+                logger.info(f"✅ AI bulk fetch: {len(results)} tickers, {total_prices} prices")
+                return results
+            else:
+                logger.warning("⚠️ AI bulk fetch returned no parseable data")
+                return {}
+                
+        except Exception as e:
+            logger.error(f"❌ AI bulk price fetch failed: {e}")
+            return {}
     
     def get_pms_aif_performance(
         self, 

@@ -764,6 +764,150 @@ class PortfolioAnalytics:
             st.error(f"Error fetching historical prices: {e}")
             return df
     
+    def bulk_fetch_and_cache_all_prices(self, user_id, show_ui=True):
+        """
+        🆕 BATCH FETCH: Get ALL prices (historical, weekly, live) in ONE AI call
+        Then cache everything to database so no repeated fetching needed
+        
+        Args:
+            user_id: User ID to fetch prices for
+            show_ui: If True, show UI messages. If False, run silently (for auto-fetch)
+        """
+        try:
+            if show_ui:
+                st.info("🤖 Using AI to fetch ALL prices in batch (historical + weekly + live)...")
+            
+            # Get all transactions to find tickers and dates
+            from database_config_supabase import get_transactions_supabase, save_stock_price_supabase, get_stock_price_supabase
+            transactions = get_transactions_supabase(user_id=user_id)
+            
+            if not transactions:
+                if show_ui:
+                    st.warning("No transactions found")
+                return
+            
+            df = pd.DataFrame(transactions)
+            
+            # Collect all unique tickers with names
+            tickers_with_names = {}
+            for _, row in df.iterrows():
+                ticker = row['ticker']
+                name = row.get('stock_name', ticker)
+                if ticker not in tickers_with_names:
+                    tickers_with_names[ticker] = name
+            
+            # Collect all unique dates needed
+            dates_needed = set()
+            
+            # 1. Transaction dates (historical)
+            df['date'] = pd.to_datetime(df['date'])
+            for date in df['date'].unique():
+                dates_needed.add(date.strftime('%Y-%m-%d'))
+            
+            # 2. Weekly dates (for charts - last 26 weeks)
+            today = datetime.now()
+            for i in range(26):
+                week_date = today - timedelta(weeks=i)
+                # Use Monday of each week
+                week_monday = week_date - timedelta(days=week_date.weekday())
+                dates_needed.add(week_monday.strftime('%Y-%m-%d'))
+            
+            # 3. Latest/current price
+            dates_needed.add('LATEST')
+            
+            dates_list = sorted(list(dates_needed))
+            
+            if show_ui:
+                st.info(f"📊 Fetching prices for {len(tickers_with_names)} tickers across {len(dates_list)} dates...")
+                st.caption(f"Total price points: {len(tickers_with_names) * len(dates_list)} (fetched in ONE AI call!)")
+            
+            # Call AI batch fetcher
+            from ai_price_fetcher import AIPriceFetcher
+            ai_fetcher = AIPriceFetcher()
+            
+            if not ai_fetcher.is_available():
+                if show_ui:
+                    st.error("❌ AI not available. Please configure OpenAI API key.")
+                print("❌ AI not available for batch fetch")
+                return
+            
+            # Fetch all prices at once
+            if show_ui:
+                with st.spinner("🤖 AI is fetching all prices..."):
+                    results = ai_fetcher.get_bulk_prices_with_dates(
+                        tickers_with_names=tickers_with_names,
+                        dates=dates_list,
+                        asset_type='AUTO'
+                    )
+            else:
+                print(f"🤖 Silently fetching {len(tickers_with_names)} tickers x {len(dates_list)} dates...")
+                results = ai_fetcher.get_bulk_prices_with_dates(
+                    tickers_with_names=tickers_with_names,
+                    dates=dates_list,
+                    asset_type='AUTO'
+                )
+            
+            if not results:
+                if show_ui:
+                    st.warning("⚠️ AI returned no results")
+                print("⚠️ AI batch fetch returned no results")
+                return
+            
+            # Save all results to database cache
+            saved_count = 0
+            skipped_count = 0
+            
+            if show_ui:
+                progress_bar = st.progress(0)
+            total_items = sum(len(date_prices) for date_prices in results.values())
+            current_item = 0
+            
+            for ticker, date_prices in results.items():
+                for date, price in date_prices.items():
+                    try:
+                        # Convert LATEST to today's date for storage
+                        if date == 'LATEST':
+                            date_str = datetime.now().strftime('%Y-%m-%d')
+                        else:
+                            date_str = date
+                        
+                        # Save to cache
+                        save_stock_price_supabase(ticker, date_str, price, 'ai_bulk_fetch')
+                        saved_count += 1
+                        
+                    except Exception as e:
+                        print(f"Failed to save {ticker} on {date}: {e}")
+                        skipped_count += 1
+                    
+                    # Update progress
+                    current_item += 1
+                    if show_ui:
+                        progress_bar.progress(current_item / total_items)
+            
+            if show_ui:
+                progress_bar.empty()
+                
+                # Success message
+                st.success(f"✅ Batch fetch complete!")
+                st.info(f"📊 Cached {saved_count} price points to database")
+                st.caption(f"   • Tickers: {len(results)}")
+                st.caption(f"   • Avg dates per ticker: {saved_count / len(results):.1f}")
+                if skipped_count > 0:
+                    st.warning(f"   • Skipped: {skipped_count} (already cached or errors)")
+                st.success("💾 All prices cached! Future fetches will be instant from database.")
+            else:
+                print(f"✅ Silent batch fetch: {saved_count} prices cached, {skipped_count} skipped")
+            
+        except Exception as e:
+            if show_ui:
+                st.error(f"❌ Batch fetch failed: {e}")
+                import traceback
+                st.error(traceback.format_exc())
+            else:
+                print(f"❌ Silent batch fetch failed: {e}")
+                import traceback
+                print(traceback.format_exc())
+    
     def fetch_historical_price_comprehensive(self, ticker, target_date):
         """
         Comprehensive historical price fetcher - tries ALL sources:
@@ -1411,17 +1555,22 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             progress_bar.empty()
             status_text.empty()
             
-            # Step 2.5: Populate weekly cache for all tickers (only if some files succeeded)
+            # Step 2.5: 🆕 AI BATCH FETCH - Get ALL prices at once (only if some files succeeded)
             if processed_count > 0:
                 st.markdown("---")
-                st.info("🔄 Building weekly price cache for all holdings... This may take a few minutes...")
+                st.info("🤖 Using AI to fetch ALL prices (historical + weekly + live) in one batch...")
                 try:
-                    with st.spinner("⏳ Caching weekly price data... Please wait..."):
-                        self.populate_weekly_and_monthly_cache(user_id)
-                    st.success("✅ Weekly price cache populated successfully!")
+                    with st.spinner("⏳ AI is fetching and caching all prices... Please wait..."):
+                        self.bulk_fetch_and_cache_all_prices(user_id)
+                    st.success("✅ All prices cached successfully!")
                 except Exception as cache_error:
-                    st.warning(f"⚠️ Weekly cache population had warnings: {cache_error}")
-                    st.info("💡 Charts may have limited data. You can refresh the cache later from Settings.")
+                    st.warning(f"⚠️ AI batch fetch had warnings: {cache_error}")
+                    st.info("💡 Falling back to standard cache method...")
+                    try:
+                        self.populate_weekly_and_monthly_cache(user_id)
+                        st.success("✅ Standard cache populated!")
+                    except:
+                        st.info("💡 Some data may be limited. You can refresh from Settings.")
             
             # Step 3: Show summary
             st.markdown("---")
@@ -3243,6 +3392,16 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         if success:
                             st.sidebar.success("✅ File processed successfully!")
                             st.info("🔄 File processed successfully, refreshing portfolio data...")
+                            
+                            # 🆕 AUTO BATCH FETCH: Get all prices after file upload (silent)
+                            try:
+                                print("🤖 Auto-fetching prices via AI (silent batch)...")
+                                self.bulk_fetch_and_cache_all_prices(self.session_state.user_id, show_ui=False)
+                                print("✅ Silent batch fetch complete!")
+                            except Exception as batch_error:
+                                print(f"⚠️ AI batch fetch warning: {batch_error}")
+                                # Silently skip if batch fetch fails
+                            
                             # Refresh portfolio data
                             self.load_portfolio_data(self.session_state.user_id)
                             st.info("🔄 Portfolio data refreshed, calling rerun...")
@@ -3326,13 +3485,13 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                     except Exception as e:
                         st.caption(f"⚠️ PDF storage: {str(e)[:50]}")
                 
-                # Upload new PDFs
+                # Upload new documents (PDF, TXT, CSV)
                 uploaded_files = st.file_uploader(
                     "Upload new documents",
-                    type=['pdf', 'txt'],
+                    type=['pdf', 'txt', 'csv'],
                     accept_multiple_files=True,
                     key="ai_sidebar_pdf_upload",
-                    help="Upload PDFs for AI analysis" + (" (saved permanently)" if PDF_STORAGE_AVAILABLE else " (temporary)")
+                    help="Upload PDFs for analysis, or CSV for transactions" + (" (saved permanently)" if PDF_STORAGE_AVAILABLE else " (temporary)")
                 )
             
             # Chat input
@@ -3556,6 +3715,28 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             return
         
         df = self.session_state.portfolio_data
+        
+        # 🆕 AUTO-DETECT MISSING PRICES: If current_value is 0 or NaN, trigger batch fetch
+        if not hasattr(self.session_state, 'auto_batch_fetch_done'):
+            missing_prices = (
+                (df['current_value'].isna()).any() or 
+                (df['current_value'] == 0).any()
+            )
+            
+            if missing_prices:
+                print("🤖 Detected missing prices, triggering auto batch fetch...")
+                try:
+                    # Run silently in background
+                    self.bulk_fetch_and_cache_all_prices(self.session_state.user_id, show_ui=False)
+                    self.session_state.auto_batch_fetch_done = True
+                    # Reload portfolio after fetching
+                    print("🔄 Reloading portfolio after batch fetch...")
+                    self.load_portfolio_data(self.session_state.user_id, force_refresh=True)
+                    st.rerun()
+                except Exception as e:
+                    print(f"⚠️ Auto batch fetch failed: {e}")
+                    # Mark as done anyway to avoid infinite loops
+                    self.session_state.auto_batch_fetch_done = True
         
         # Portfolio summary metrics
         col1, col2, col3, col4 = st.columns(4)
@@ -9270,8 +9451,47 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             st.error(f"Error loading file history: {e}")
             st.info("This might be due to missing columns in the database schema")
     
+    def get_available_functions(self):
+        """Define functions that AI can call"""
+        return {
+            "fetch_all_prices": {
+                "function": lambda: self.bulk_fetch_and_cache_all_prices(self.session_state.user_id, show_ui=True),
+                "description": "Fetch ALL prices (historical, weekly, live) for all holdings using AI in one batch. Use when user asks to update prices, refresh data, or get latest prices.",
+                "parameters": {}
+            },
+            "process_csv_file": {
+                "function": lambda file: self.process_csv_file(file, self.session_state.user_id),
+                "description": "Process uploaded CSV transaction file and add to portfolio. Use when user uploads CSV file or asks to import transactions.",
+                "parameters": {"file": "uploaded_file_object"}
+            },
+            "refresh_portfolio": {
+                "function": lambda: self.load_portfolio_data(self.session_state.user_id, force_refresh=True),
+                "description": "Refresh portfolio data from database. Use when user asks to refresh, reload, or update portfolio.",
+                "parameters": {}
+            },
+            "get_price_for_ticker": {
+                "function": lambda ticker, name: self.get_single_ticker_price_ai(ticker, name),
+                "description": "Get current price for a specific ticker/stock/mutual fund using AI. Use when user asks about price of specific stock/fund.",
+                "parameters": {"ticker": "ticker_code", "name": "stock_name"}
+            }
+        }
+    
+    def get_single_ticker_price_ai(self, ticker, name):
+        """Helper to get single ticker price using AI"""
+        from ai_price_fetcher import AIPriceFetcher
+        ai_fetcher = AIPriceFetcher()
+        if ai_fetcher.is_available():
+            # Detect type
+            if str(ticker).isdigit():
+                price = ai_fetcher.get_mutual_fund_nav(ticker, name)
+                return {"ticker": ticker, "price": price, "type": "Mutual Fund"}
+            else:
+                price = ai_fetcher.get_stock_price(ticker, name)
+                return {"ticker": ticker, "price": price, "type": "Stock"}
+        return {"error": "AI not available"}
+    
     def process_ai_query_with_db_access(self, user_query, uploaded_files=None):
-        """Process AI query with full database access - ChatGPT style with conversation history"""
+        """Process AI query with full database access + FUNCTION CALLING capability"""
         try:
             # Add user message to chat history
             st.session_state.chat_history.append({"role": "user", "content": user_query})
@@ -9304,12 +9524,21 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                     "channel_allocation": df.groupby('channel')['invested_amount'].sum().to_dict() if 'channel' in df.columns else {}
                 }
             
-            # Process and save uploaded files (PDFs)
+            # Process and save uploaded files (PDFs, CSVs, TXT)
             file_content = ""
+            csv_files_to_process = []
+            
             if uploaded_files:
                 with st.spinner("📄 Processing documents..."):
                     import base64
                     for file in uploaded_files:
+                        # 🆕 Handle CSV files
+                        if file.name.endswith('.csv'):
+                            csv_files_to_process.append(file)
+                            file_content += f"\n\n--- CSV File: {file.name} (will be processed) ---\n"
+                            st.info(f"📊 CSV file detected: {file.name} - Will process transactions")
+                            continue
+                        
                         # Extract text from file
                         if file.type == "application/pdf":
                             pdf_bytes = file.read()
@@ -9416,7 +9645,22 @@ IMPORTANT INSTRUCTIONS:
 5. Do NOT use generic placeholders like "Stock XYZ" - use the REAL ticker symbols
 6. Provide actionable insights based on the actual portfolio data
 
-You can also suggest creating charts/graphs based on this data."""
+🆕 FUNCTION CALLING CAPABILITY:
+You can trigger Python functions by using this format in your response:
+FUNCTION_CALL: function_name(param1, param2)
+
+Available functions:
+- fetch_all_prices() - Fetch ALL prices for all holdings using AI batch method
+- refresh_portfolio() - Reload portfolio data from database
+- process_csv_file(file_index) - Process CSV file (use 0 for first CSV file uploaded)
+- get_price_for_ticker(ticker, name) - Get current price for specific ticker
+
+Examples:
+- If user uploads CSV and asks to process it: "I'll process that CSV file for you. FUNCTION_CALL: process_csv_file(0)"
+- If user asks to update prices: "I'll fetch the latest prices. FUNCTION_CALL: fetch_all_prices()"
+- If user asks for specific stock price: "FUNCTION_CALL: get_price_for_ticker('RELIANCE', 'Reliance Industries')"
+
+After function call, continue with normal response."""
 
             conversation_messages.append({"role": "system", "content": system_prompt})
             
@@ -9436,6 +9680,78 @@ You can also suggest creating charts/graphs based on this data."""
             # Generate AI response using Gemini with conversation context
             with st.spinner("🤔 Analyzing your portfolio..."):
                 ai_response = self.generate_conversational_response(conversation_messages, "Google Gemini 2.5 Flash (Fast)")
+            
+            # 🆕 PARSE FUNCTION CALLS from AI response
+            function_results = []
+            if "FUNCTION_CALL:" in ai_response:
+                import re
+                function_calls = re.findall(r'FUNCTION_CALL:\s*(\w+)\((.*?)\)', ai_response)
+                
+                for func_name, params_str in function_calls:
+                    st.info(f"🤖 AI is calling function: {func_name}({params_str})")
+                    
+                    try:
+                        # Execute function based on name
+                        if func_name == "fetch_all_prices":
+                            with st.spinner("⏳ Fetching all prices..."):
+                                self.bulk_fetch_and_cache_all_prices(self.session_state.user_id, show_ui=True)
+                            function_results.append(f"✅ Successfully fetched all prices")
+                        
+                        elif func_name == "refresh_portfolio":
+                            with st.spinner("⏳ Refreshing portfolio..."):
+                                self.load_portfolio_data(self.session_state.user_id, force_refresh=True)
+                            function_results.append(f"✅ Portfolio refreshed successfully")
+                            st.rerun()  # Reload page to show updated data
+                        
+                        elif func_name == "process_csv_file":
+                            # Extract file index
+                            file_idx = int(params_str.strip())
+                            if csv_files_to_process and file_idx < len(csv_files_to_process):
+                                csv_file = csv_files_to_process[file_idx]
+                                with st.spinner(f"⏳ Processing {csv_file.name}..."):
+                                    success = self.process_csv_file(csv_file, self.session_state.user_id)
+                                    if success:
+                                        function_results.append(f"✅ Successfully processed {csv_file.name}")
+                                        # Auto-fetch prices after CSV processing
+                                        st.info("🤖 Auto-fetching prices for new transactions...")
+                                        self.bulk_fetch_and_cache_all_prices(self.session_state.user_id, show_ui=False)
+                                        st.success("✅ Prices cached!")
+                                    else:
+                                        function_results.append(f"❌ Failed to process {csv_file.name}")
+                            else:
+                                function_results.append(f"❌ CSV file index {file_idx} not found")
+                        
+                        elif func_name == "get_price_for_ticker":
+                            # Extract ticker and name
+                            params = [p.strip().strip("'\"") for p in params_str.split(',')]
+                            if len(params) >= 2:
+                                ticker, name = params[0], params[1]
+                                with st.spinner(f"⏳ Fetching price for {ticker}..."):
+                                    result = self.get_single_ticker_price_ai(ticker, name)
+                                    if 'error' in result:
+                                        function_results.append(f"❌ {result['error']}")
+                                    else:
+                                        function_results.append(f"✅ {result['type']} {ticker}: ₹{result['price']}")
+                            else:
+                                function_results.append(f"❌ Invalid parameters for get_price_for_ticker")
+                        
+                        else:
+                            function_results.append(f"❌ Unknown function: {func_name}")
+                    
+                    except Exception as func_error:
+                        function_results.append(f"❌ Error executing {func_name}: {str(func_error)}")
+                
+                # Show function results
+                if function_results:
+                    st.markdown("### 🔧 Function Execution Results:")
+                    for result in function_results:
+                        if result.startswith("✅"):
+                            st.success(result)
+                        else:
+                            st.error(result)
+                
+                # Remove FUNCTION_CALL tags from display
+                ai_response = re.sub(r'FUNCTION_CALL:\s*\w+\(.*?\)', '', ai_response).strip()
             
             # Add AI response to chat history
             st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
