@@ -1451,8 +1451,8 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             # Always fetch live prices for portfolio calculations, but don't force refresh unless needed
             self.fetch_live_prices_and_sectors(user_id, force_refresh=False)
             
-            # Refresh portfolio with updated live prices
-            self.load_portfolio_data(user_id)
+            # Refresh portfolio with updated live prices - MUST use force_refresh to bypass cache!
+            self.load_portfolio_data(user_id, force_refresh=True)
             
             # Initialize cache flags and trigger automatic population for missing weeks
             if not skip_cache_population:
