@@ -1376,7 +1376,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                             skip_weekly_cache=True,
                             skip_live_prices=True
                         )
-                        
+                    
                         if success:
                             st.success(f"✅ {uploaded_file.name}")
                             processed_count += 1
@@ -2023,7 +2023,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             successful_fetches = 0
             max_consecutive_failures = 5
             consecutive_failures = 0
-            
+
             # Add progress bar for live updates
             progress_bar = st.progress(0)
             status_text = st.empty()
@@ -2172,103 +2172,103 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                             print(f"🔍 {ticker}: Stock ticker, trying yfinance")
                         
                         try:
-                                # Priority 1: Try with .NS suffix first
-                                live_price, sector, market_cap = get_stock_price_and_sector(f"{ticker}.NS", ticker, None)
-                                
-                                if not live_price or live_price <= 0:
-                                    # Priority 2: Try with .BO suffix
-                                    live_price, sector, market_cap = get_stock_price_and_sector(f"{ticker}.BO", ticker, None)
-                                
-                                if not live_price or live_price <= 0:
-                                    # Priority 3: Try without suffix
-                                    live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
+                            # Priority 1: Try with .NS suffix first
+                            live_price, sector, market_cap = get_stock_price_and_sector(f"{ticker}.NS", ticker, None)
+                            
+                            if not live_price or live_price <= 0:
+                                # Priority 2: Try with .BO suffix
+                                live_price, sector, market_cap = get_stock_price_and_sector(f"{ticker}.BO", ticker, None)
+                            
+                            if not live_price or live_price <= 0:
+                                # Priority 3: Try without suffix
+                                live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
 
-                                print(f"🔍 DEBUG: {ticker} -> live_price={live_price}, sector={sector}, market_cap={market_cap}")
+                            print(f"🔍 DEBUG: {ticker} -> live_price={live_price}, sector={sector}, market_cap={market_cap}")
 
-                                # Store market cap in session state for later use
-                                if market_cap and market_cap > 0:
-                                    if not hasattr(self.session_state, 'market_caps'):
-                                        self.session_state.market_caps = {}
-                                    self.session_state.market_caps[ticker] = market_cap
+                            # Store market cap in session state for later use
+                            if market_cap and market_cap > 0:
+                                if not hasattr(self.session_state, 'market_caps'):
+                                    self.session_state.market_caps = {}
+                                self.session_state.market_caps[ticker] = market_cap
 
-                                # For ETFs without sector, set to ETF
-                                if is_etf and (not sector or sector == 'Unknown'):
-                                    sector = "ETF"
+                            # For ETFs without sector, set to ETF
+                            if is_etf and (not sector or sector == 'Unknown'):
+                                sector = "ETF"
 
-                                # If still no price, try IndStocks as last resort for stocks
-                                if (not live_price or live_price <= 0) and not is_etf:
-                                    print(f"⚠️ {ticker}: No price from yfinance, trying IndStocks")
+                            # If still no price, try IndStocks as last resort for stocks
+                            if (not live_price or live_price <= 0) and not is_etf:
+                                print(f"⚠️ {ticker}: No price from yfinance, trying IndStocks")
+                                try:
+                                    from indstocks import stock
+                                    stock_obj = stock(ticker)
+                                    info = stock_obj.info()
+                                    if info and 'price' in info:
+                                        live_price = float(info['price'])
+                                        if 'sector' in info:
+                                            sector = info['sector']
+                                        print(f"✅ {ticker}: Got price ₹{live_price} from IndStocks")
+                                except Exception as ind_error:
+                                    print(f"   ❌ IndStocks failed: {ind_error}")
+
+                            # If no sector from yfinance, try to get it from stock data table
+                            if not sector or sector == 'Unknown':
+                                stock_data = get_stock_data_supabase(ticker)
+                                # get_stock_data_supabase returns a list, get first item if available
+                                if stock_data and isinstance(stock_data, list) and len(stock_data) > 0:
+                                    sector = stock_data[0].get('sector', None)
+                                else:
+                                    sector = None
+
+                                # If still no sector, try to fetch it from stock_data_agent
+                                if not sector or sector == 'Unknown':
                                     try:
-                                        from indstocks import stock
-                                        stock_obj = stock(ticker)
-                                        info = stock_obj.info()
-                                        if info and 'price' in info:
-                                            live_price = float(info['price'])
-                                            if 'sector' in info:
-                                                sector = info['sector']
-                                            print(f"✅ {ticker}: Got price ₹{live_price} from IndStocks")
-                                    except Exception as ind_error:
-                                        print(f"   ❌ IndStocks failed: {ind_error}")
+                                        from stock_data_agent import get_sector
+                                        sector = get_sector(ticker)
+                                        if sector and sector != 'Unknown':
+                                            # Update the stock_data table with the sector
+                                            try:
+                                                if stock_data:
+                                                    update_stock_data_supabase(ticker, sector=sector)
+                                                else:
+                                                    # Create new stock data entry
+                                                    from stock_data_agent import get_stock_name
+                                                    stock_name = get_stock_name(ticker) or ticker
+                                                    # This would require a create function - for now just store in session
+                                                    pass
+                                            except Exception as e:
+                                                print(f"Could not update sector for {ticker}: {e}")
+                                    except Exception as e:
+                                        print(f"Could not fetch sector for {ticker}: {e}")
+                                        sector = 'Unknown'
 
-                                # If no sector from yfinance, try to get it from stock data table
-                                if not sector or sector == 'Unknown':
-                                    stock_data = get_stock_data_supabase(ticker)
-                                    # get_stock_data_supabase returns a list, get first item if available
-                                    if stock_data and isinstance(stock_data, list) and len(stock_data) > 0:
-                                        sector = stock_data[0].get('sector', None)
-                                    else:
-                                        sector = None
-
-                                    # If still no sector, try to fetch it from stock_data_agent
-                                    if not sector or sector == 'Unknown':
-                                        try:
-                                            from stock_data_agent import get_sector
-                                            sector = get_sector(ticker)
-                                            if sector and sector != 'Unknown':
-                                                # Update the stock_data table with the sector
-                                                try:
-                                                    if stock_data:
-                                                        update_stock_data_supabase(ticker, sector=sector)
-                                                    else:
-                                                        # Create new stock data entry
-                                                        from stock_data_agent import get_stock_name
-                                                        stock_name = get_stock_name(ticker) or ticker
-                                                        # This would require a create function - for now just store in session
-                                                        pass
-                                                except Exception as e:
-                                                    print(f"Could not update sector for {ticker}: {e}")
-                                        except Exception as e:
-                                            print(f"Could not fetch sector for {ticker}: {e}")
-                                            sector = 'Unknown'
-
-                                # If still no sector, use a more intelligent categorization
-                                if not sector or sector == 'Unknown':
-                                    # Try to categorize based on ticker name patterns
-                                    ticker_upper = ticker.upper()
-                                    if any(word in ticker_upper for word in ['BANK', 'HDFC', 'ICICI', 'SBI', 'AXIS', 'KOTAK']):
-                                        sector = 'Banking'
-                                    elif any(word in ticker_upper for word in ['TECH', 'INFY', 'TCS', 'WIPRO', 'HCL']):
-                                        sector = 'Technology'
-                                    elif any(word in ticker_upper for word in ['PHARMA', 'CIPLA', 'DRREDDY', 'SUNPHARMA']):
-                                        sector = 'Pharmaceuticals'
-                                    elif any(word in ticker_upper for word in ['AUTO', 'MARUTI', 'TATAMOTORS', 'BAJAJ']):
-                                        sector = 'Automobile'
-                                    elif any(word in ticker_upper for word in ['STEEL', 'TATASTEEL', 'JSWSTEEL']):
-                                        sector = 'Metals & Mining'
-                                    elif any(word in ticker_upper for word in ['OIL', 'ONGC', 'COAL']):
-                                        sector = 'Oil & Gas'
-                                    elif any(word in ticker_upper for word in ['CONSUMER', 'HINDUNILVR', 'ITC', 'NESTLE']):
-                                        sector = 'Consumer Goods'
-                                    elif any(word in ticker_upper for word in ['REALTY', 'DLF', 'GODREJ']):
-                                        sector = 'Real Estate'
-                                    elif any(word in ticker_upper for word in ['POWER', 'POWERGRID', 'NTPC']):
-                                        sector = 'Power & Energy'
-                                    else:
-                                        sector = 'Other Stocks'
+                            # If still no sector, use a more intelligent categorization
+                            if not sector or sector == 'Unknown':
+                                # Try to categorize based on ticker name patterns
+                                ticker_upper = ticker.upper()
+                                if any(word in ticker_upper for word in ['BANK', 'HDFC', 'ICICI', 'SBI', 'AXIS', 'KOTAK']):
+                                    sector = 'Banking'
+                                elif any(word in ticker_upper for word in ['TECH', 'INFY', 'TCS', 'WIPRO', 'HCL']):
+                                    sector = 'Technology'
+                                elif any(word in ticker_upper for word in ['PHARMA', 'CIPLA', 'DRREDDY', 'SUNPHARMA']):
+                                    sector = 'Pharmaceuticals'
+                                elif any(word in ticker_upper for word in ['AUTO', 'MARUTI', 'TATAMOTORS', 'BAJAJ']):
+                                    sector = 'Automobile'
+                                elif any(word in ticker_upper for word in ['STEEL', 'TATASTEEL', 'JSWSTEEL']):
+                                    sector = 'Metals & Mining'
+                                elif any(word in ticker_upper for word in ['OIL', 'ONGC', 'COAL']):
+                                    sector = 'Oil & Gas'
+                                elif any(word in ticker_upper for word in ['CONSUMER', 'HINDUNILVR', 'ITC', 'NESTLE']):
+                                    sector = 'Consumer Goods'
+                                elif any(word in ticker_upper for word in ['REALTY', 'DLF', 'GODREJ']):
+                                    sector = 'Real Estate'
+                                elif any(word in ticker_upper for word in ['POWER', 'POWERGRID', 'NTPC']):
+                                    sector = 'Power & Energy'
+                                else:
+                                    sector = 'Other Stocks'
                         except Exception as e:
-                                print(f"⚠️ {ticker}: yfinance/stock fetch failed: {e}")
-                                live_price = None
-                                sector = 'Unknown'
+                            print(f"⚠️ {ticker}: yfinance/stock fetch failed: {e}")
+                            live_price = None
+                            sector = 'Unknown'
                 except Exception as e:
                     print(f"⚠️ {ticker}: fetch failed: {e}")
                     live_price = None
@@ -4756,7 +4756,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                 st.markdown(f"💰 P&L: ₹{row['unrealized_pnl']:,.0f} | 📊 {row['pnl_percentage']:.2f}%")
                                 st.progress(min(row['pnl_percentage'] / 100, 1.0))
                                 st.markdown("---")
-                        else:
+                    else:
                             st.info("No gainers yet")
 
                 with col2:
@@ -4847,31 +4847,31 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 st.subheader("📊 Portfolio Statistics")
                 
                 col1, col2, col3, col4 = st.columns(4)
-                
+            
                 with col1:
                     avg_pnl_pct = df.groupby('ticker')['pnl_percentage'].first().mean()
                     st.metric("📈 Avg Return per Holding", f"{avg_pnl_pct:.2f}%")
-                
+            
                 with col2:
                     winning_holdings = len(df[df['unrealized_pnl'] > 0].groupby('ticker'))
                     total_holdings_count = len(df.groupby('ticker'))
                     win_rate = (winning_holdings / total_holdings_count * 100) if total_holdings_count > 0 else 0
                     st.metric("🎯 Win Rate", f"{win_rate:.1f}%", delta=f"{winning_holdings}/{total_holdings_count}")
-                
+            
                 with col3:
                     if 'sector' in df.columns:
                         sector_count = len(df['sector'].dropna().unique())
                         st.metric("🏢 Sectors", f"{sector_count}")
                     else:
                         st.metric("🏢 Sectors", "N/A")
-                
+            
                 with col4:
                     if 'channel' in df.columns:
                         channel_count = len(df['channel'].dropna().unique())
                         st.metric("📡 Channels", f"{channel_count}")
                     else:
                         st.metric("📡 Channels", "N/A")
-                
+            
                 st.markdown("---")
                 
                 # ===== Holdings Multi-Select with Weekly Values Comparison =====
@@ -4936,97 +4936,69 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                     use_container_width=True,
                     height=400
                 )
-                
+            
             except Exception as e:
                 st.error(f"Error in overall performance: {e}")
                 import traceback
                 st.error(traceback.format_exc())   
+    
     def render_sector_performance_analysis(self, df):
-            """Render sector-wise performance breakdown with interactive drill-down"""
-            st.subheader("📊 Performance Analysis - Sector & Channel Drill-Down")
+        """Render sector-wise performance breakdown with interactive drill-down"""
+        st.subheader("📊 Performance Analysis - Sector & Channel Drill-Down")
+        
+        # Create tabs for Sector and Channel analysis  
+        tab1, tab2 = st.tabs(["🏢 By Sector", "📡 By Channel"])
+        
+        with tab1:
+            st.subheader("🏢 Sector-Wise Performance")
             
-            # Create tabs for Sector and Channel analysis  
-            tab1, tab2 = st.tabs(["🏢 By Sector", "📡 By Channel"])
-            
-            with tab1:
-                st.subheader("🏢 Sector-Wise Performance")
+            try:
+                # Debug: Check what's in the sector column
+                print(f"🔍 DEBUG: df.columns = {df.columns.tolist()}")
                 
-                try:
-                    # Debug: Check what's in the sector column
-                    print(f"🔍 DEBUG: df.columns = {df.columns.tolist()}")
+                # Check for sector column - try multiple variations
+                sector_col = None
+                if 'sector' in df.columns and not df['sector'].isna().all():
+                    sector_col = 'sector'
+                elif 'sector_db' in df.columns and not df['sector_db'].isna().all():
+                    sector_col = 'sector_db'
+                    # Copy sector_db to sector for consistency
+                    df['sector'] = df['sector_db']
+                    sector_col = 'sector'
+                
+                if sector_col:
+                    print(f"🔍 DEBUG: Using sector column: {sector_col}")
+                    print(f"🔍 DEBUG: df['{sector_col}'].unique() = {df[sector_col].unique()}")
+                    print(f"🔍 DEBUG: df['{sector_col}'].value_counts() = {df[sector_col].value_counts()}")
+                    print(f"🔍 DEBUG: df['{sector_col}'].isna().sum() = {df[sector_col].isna().sum()}")
                     
-                    # Check for sector column - try multiple variations
-                    sector_col = None
-                    if 'sector' in df.columns and not df['sector'].isna().all():
-                        sector_col = 'sector'
-                    elif 'sector_db' in df.columns and not df['sector_db'].isna().all():
-                        sector_col = 'sector_db'
-                        # Copy sector_db to sector for consistency
-                        df['sector'] = df['sector_db']
-                        sector_col = 'sector'
+                if not sector_col or df['sector'].isna().all():
+                    st.warning("⚠️ Sector information not available in portfolio data")
+                    st.info("💡 Sectors are automatically fetched when prices are loaded. Reload data to populate sectors.")
+                    # Show what we have for debugging
+                    with st.expander("🔍 Debug: Show available columns"):
+                        st.json(df.columns.tolist())
+                    return
+                
+                # Check if all sectors are Unknown
+                valid_sectors = df[~df['sector'].isin(['Unknown', '', None])]['sector'].dropna()
+                if len(valid_sectors) == 0:
+                    st.warning("⚠️ No sector information available - all holdings show as 'Unknown'")
+                    st.info("💡 Please use the '🔄 Refresh Portfolio Data' button in Settings to fetch sector information.")
                     
-                    if sector_col:
-                        print(f"🔍 DEBUG: Using sector column: {sector_col}")
-                        print(f"🔍 DEBUG: df['{sector_col}'].unique() = {df[sector_col].unique()}")
-                        print(f"🔍 DEBUG: df['{sector_col}'].value_counts() = {df[sector_col].value_counts()}")
-                        print(f"🔍 DEBUG: df['{sector_col}'].isna().sum() = {df[sector_col].isna().sum()}")
-                    
-                    if not sector_col or df['sector'].isna().all():
-                        st.warning("⚠️ Sector information not available in portfolio data")
-                        st.info("💡 Sectors are automatically fetched when prices are loaded. Reload data to populate sectors.")
-                        # Show what we have for debugging
-                        with st.expander("🔍 Debug: Show available columns"):
-                            st.json(df.columns.tolist())
-                        return
-                    
-                    # Check if all sectors are Unknown
-                    valid_sectors = df[~df['sector'].isin(['Unknown', '', None])]['sector'].dropna()
-                    if len(valid_sectors) == 0:
-                        st.warning("⚠️ No sector information available - all holdings show as 'Unknown'")
-                        st.info("💡 Please use the '🔄 Refresh Portfolio Data' button in Settings to fetch sector information.")
-                        
-                        # Show breakdown by ticker instead
-                        st.subheader("📊 Holdings Breakdown (Without Sectors)")
-                        holdings_summary = df.groupby('ticker').agg({
-                            'stock_name': 'first',
-                            'invested_amount': 'sum',
-                            'current_value': 'sum',
-                            'unrealized_pnl': 'sum'
-                        }).reset_index()
-                        holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
-                        holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
-                        
-                        st.dataframe(
-                            holdings_summary.style.format({
-                                'invested_amount': '₹{:,.0f}',
-                                'current_value': '₹{:,.0f}',
-                                'unrealized_pnl': '₹{:,.0f}',
-                                'pnl_percentage': '{:.2f}%'
-                            }),
-                            use_container_width=True
-                        )
-                        return
-                    
-                    # Group by sector (exclude Unknown if there are other sectors)
-                    sector_data = df.groupby('sector').agg({
+                    # Show breakdown by ticker instead
+                    st.subheader("📊 Holdings Breakdown (Without Sectors)")
+                    holdings_summary = df.groupby('ticker').agg({
+                        'stock_name': 'first',
                         'invested_amount': 'sum',
                         'current_value': 'sum',
                         'unrealized_pnl': 'sum'
                     }).reset_index()
+                    holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
+                    holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
                     
-                    # Filter out 'Unknown' if we have other sectors
-                    if len(sector_data) > 1 and 'Unknown' in sector_data['sector'].values:
-                        print(f"🔍 DEBUG: Filtering out 'Unknown' sector, keeping {len(sector_data)-1} known sectors")
-                        sector_data = sector_data[sector_data['sector'] != 'Unknown']
-                    
-                    sector_data['pnl_percentage'] = (sector_data['unrealized_pnl'] / sector_data['invested_amount'] * 100)
-                    sector_data = sector_data.sort_values('pnl_percentage', ascending=False)
-                    
-                    print(f"🔍 DEBUG: Final sector_data:\n{sector_data}")
-                    
-                    # Display sector performance table
                     st.dataframe(
-                        sector_data.style.format({
+                        holdings_summary.style.format({
                             'invested_amount': '₹{:,.0f}',
                             'current_value': '₹{:,.0f}',
                             'unrealized_pnl': '₹{:,.0f}',
@@ -5034,40 +5006,69 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         }),
                         use_container_width=True
                     )
+                    return
+                
+                # Group by sector (exclude Unknown if there are other sectors)
+                sector_data = df.groupby('sector').agg({
+                    'invested_amount': 'sum',
+                    'current_value': 'sum',
+                    'unrealized_pnl': 'sum'
+                }).reset_index()
+                
+                # Filter out 'Unknown' if we have other sectors
+                if len(sector_data) > 1 and 'Unknown' in sector_data['sector'].values:
+                    print(f"🔍 DEBUG: Filtering out 'Unknown' sector, keeping {len(sector_data)-1} known sectors")
+                    sector_data = sector_data[sector_data['sector'] != 'Unknown']
+                
+                sector_data['pnl_percentage'] = (sector_data['unrealized_pnl'] / sector_data['invested_amount'] * 100)
+                sector_data = sector_data.sort_values('pnl_percentage', ascending=False)
+                
+                print(f"🔍 DEBUG: Final sector_data:\n{sector_data}")
+                
+                # Display sector performance table
+                st.dataframe(
+                    sector_data.style.format({
+                        'invested_amount': '₹{:,.0f}',
+                        'current_value': '₹{:,.0f}',
+                        'unrealized_pnl': '₹{:,.0f}',
+                        'pnl_percentage': '{:.2f}%'
+                    }),
+                    use_container_width=True
+                )
+                
+                # Sector pie chart
+                import plotly.express as px
+                fig = px.pie(
+                    sector_data,
+                    values='current_value',
+                    names='sector',
+                    title='Portfolio Allocation by Sector'
+                )
+                st.plotly_chart(fig, use_container_width=True, key="sector_analysis_pie")
+                
+                # ===== NEW: Sector Multi-Select Filter =====
+                st.markdown("---")
+                st.subheader("🔍 Drill-Down by Sector (Multiple Selections Allowed)")
+                
+                # Sector selection multiselect
+                sector_list = sorted(df['sector'].dropna().unique().tolist())
+                selected_sectors = st.multiselect(
+                    "Select Sector(s) to view holdings (multiple selections allowed):",
+                    options=sector_list,
+                    default=[],
+                    key="sector_filter_multiselect"
+                )
+                
+                if selected_sectors and len(selected_sectors) > 0:
+                    # Filter holdings by selected sectors
+                    sector_holdings = df[df['sector'].isin(selected_sectors)].copy()
                     
-                    # Sector pie chart
-                    import plotly.express as px
-                    fig = px.pie(
-                        sector_data,
-                        values='current_value',
-                        names='sector',
-                        title='Portfolio Allocation by Sector'
-                    )
-                    st.plotly_chart(fig, use_container_width=True, key="sector_analysis_pie")
-                    
-                    # ===== NEW: Sector Multi-Select Filter =====
-                    st.markdown("---")
-                    st.subheader("🔍 Drill-Down by Sector (Multiple Selections Allowed)")
-                    
-                    # Sector selection multiselect
-                    sector_list = sorted(df['sector'].dropna().unique().tolist())
-                    selected_sectors = st.multiselect(
-                        "Select Sector(s) to view holdings (multiple selections allowed):",
-                        options=sector_list,
-                        default=[],
-                        key="sector_filter_multiselect"
-                    )
-                    
-                    if selected_sectors and len(selected_sectors) > 0:
-                        # Filter holdings by selected sectors
-                        sector_holdings = df[df['sector'].isin(selected_sectors)].copy()
-                        
-                        if not sector_holdings.empty:
-                            sectors_str = ", ".join(selected_sectors)
-                            st.info(f"📊 Showing {len(sector_holdings)} holding(s) in **{sectors_str}**")
+                    if not sector_holdings.empty:
+                        sectors_str = ", ".join(selected_sectors)
+                        st.info(f"📊 Showing {len(sector_holdings)} holding(s) in **{sectors_str}**")
                             
                             # Show sector-by-sector breakdown if multiple sectors selected
-                            if len(selected_sectors) > 1:
+                        if len(selected_sectors) > 1:
                                 st.markdown("### 📊 Performance by Selected Sectors")
                                 sector_breakdown = sector_holdings.groupby('sector').agg({
                                     'invested_amount': 'sum',
@@ -5149,59 +5150,37 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                 
                                 if selected_stocks and len(selected_stocks) > 0:
                                     self.render_weekly_values_multi(selected_stocks, self.session_state.user_id, context="sector_analysis")
-                
-                except Exception as e:
-                    st.error(f"Error in sector analysis: {e}")
+            
+            except Exception as e:
+                st.error(f"Error in sector analysis: {e}")
         
-            with tab2:
-                st.subheader("📡 Channel-Wise Performance")
+        with tab2:
+            st.subheader("📡 Channel-Wise Performance")
+            
+            try:
+                if 'channel' not in df.columns or df['channel'].isna().all():
+                    st.warning("Channel information not available")
+                    return
                 
-                try:
-                    if 'channel' not in df.columns or df['channel'].isna().all():
-                            st.warning("Channel information not available")
-                            return
-                        
-                            # Check if all channels are Unknown or empty
-                            valid_channels = df[~df['channel'].isin(['Unknown', '', None])]['channel'].dropna()
-                            if len(valid_channels) == 0:
-                                st.warning("⚠️ No channel information available - all holdings show as 'Unknown'")
-                                st.info("💡 Channels are set from the CSV file's 'channel' column. Please ensure your CSV has channel information.")
-                                
-                                # Show breakdown by ticker instead
-                                st.subheader("📊 Holdings Breakdown (Without Channels)")
-                                holdings_summary = df.groupby('ticker').agg({
-                                    'stock_name': 'first',
-                                    'invested_amount': 'sum',
-                                    'current_value': 'sum',
-                                    'unrealized_pnl': 'sum'
-                                }).reset_index()
-                                holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
-                                holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
-                                
-                                st.dataframe(
-                                    holdings_summary.style.format({
-                                        'invested_amount': '₹{:,.0f}',
-                                        'current_value': '₹{:,.0f}',
-                                        'unrealized_pnl': '₹{:,.0f}',
-                                        'pnl_percentage': '{:.2f}%'
-                                    }),
-                                    use_container_width=True
-                                )
-                            return
+                # Check if all channels are Unknown or empty
+                valid_channels = df[~df['channel'].isin(['Unknown', '', None])]['channel'].dropna()
+                if len(valid_channels) == 0:
+                    st.warning("⚠️ No channel information available - all holdings show as 'Unknown'")
+                    st.info("💡 Channels are set from the CSV file's 'channel' column. Please ensure your CSV has channel information.")
                     
-                    # Group by channel
-                    channel_data = df.groupby('channel').agg({
+                    # Show breakdown by ticker instead  
+                    st.subheader("📊 Holdings Breakdown (Without Channels)")
+                    holdings_summary = df.groupby('ticker').agg({
+                        'stock_name': 'first',
                         'invested_amount': 'sum',
                         'current_value': 'sum',
                         'unrealized_pnl': 'sum'
                     }).reset_index()
+                    holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
+                    holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
                     
-                    channel_data['pnl_percentage'] = (channel_data['unrealized_pnl'] / channel_data['invested_amount'] * 100)
-                    channel_data = channel_data.sort_values('pnl_percentage', ascending=False)
-                    
-                    # Display channel performance table
                     st.dataframe(
-                        channel_data.style.format({
+                        holdings_summary.style.format({
                             'invested_amount': '₹{:,.0f}',
                             'current_value': '₹{:,.0f}',
                             'unrealized_pnl': '₹{:,.0f}',
@@ -5209,33 +5188,55 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         }),
                         use_container_width=True
                     )
-                    
-                    # Channel bar chart
-                    import plotly.express as px
-                    fig = px.bar(
-                        channel_data,
-                        x='channel',
-                        y='pnl_percentage',
-                        title='Performance by Channel (%)',
-                        color='pnl_percentage',
-                        color_continuous_scale=['red', 'yellow', 'green']
-                    )
-                    st.plotly_chart(fig, use_container_width=True, key="channel_analysis_bar")
-                    
-                    # ===== NEW: Hierarchical Channel > Sector > Holding Multi-Select =====
-                    st.markdown("---")
-                    st.subheader("🔍 Drill-Down by Channel(s) → Sector(s) → Holdings (Multiple Selections Allowed)")
-                    
-                    # Step 1: Channel multi-selection
-                    channel_list = sorted(df['channel'].dropna().unique().tolist())
-                    selected_channels = st.multiselect(
-                        "1️⃣ Select Channel(s) (leave empty for all):",
-                        options=channel_list,
-                        default=[],
-                        key="channel_filter_multiselect"
-                    )
-                    
-                    if not selected_channels or len(selected_channels) == 0:
+                    return
+                
+                # Group by channel
+                channel_data = df.groupby('channel').agg({
+                    'invested_amount': 'sum',
+                    'current_value': 'sum',
+                    'unrealized_pnl': 'sum'
+                }).reset_index()
+                
+                channel_data['pnl_percentage'] = (channel_data['unrealized_pnl'] / channel_data['invested_amount'] * 100)
+                channel_data = channel_data.sort_values('pnl_percentage', ascending=False)
+                
+                # Display channel performance table
+                st.dataframe(
+                    channel_data.style.format({
+                        'invested_amount': '₹{:,.0f}',
+                        'current_value': '₹{:,.0f}',
+                        'unrealized_pnl': '₹{:,.0f}',
+                        'pnl_percentage': '{:.2f}%'
+                    }),
+                    use_container_width=True
+                )
+                
+                # Channel bar chart
+                import plotly.express as px
+                fig = px.bar(
+                    channel_data,
+                    x='channel',
+                    y='pnl_percentage',
+                    title='Performance by Channel (%)',
+                    color='pnl_percentage',
+                    color_continuous_scale=['red', 'yellow', 'green']
+                )
+                st.plotly_chart(fig, use_container_width=True, key="channel_analysis_bar")
+                
+                # ===== NEW: Hierarchical Channel > Sector > Holding Multi-Select =====
+                st.markdown("---")
+                st.subheader("🔍 Drill-Down by Channel(s) → Sector(s) → Holdings (Multiple Selections Allowed)")
+                
+                # Step 1: Channel multi-selection
+                channel_list = sorted(df['channel'].dropna().unique().tolist())
+                selected_channels = st.multiselect(
+                    "1️⃣ Select Channel(s) (leave empty for all):",
+                    options=channel_list,
+                    default=[],
+                    key="channel_filter_multiselect"
+                )
+                
+                if not selected_channels or len(selected_channels) == 0:
                         # Show all data across all channels
                         st.info(f"📊 Viewing: **All Channels** - {len(df)} transaction(s)")
                         
@@ -5440,7 +5441,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                 # Render weekly values comparison
                                 self.render_weekly_values_multi(selected_holdings, self.session_state.user_id, context="all_channels_no_sector")
                     
-                    else:
+                else:
                         # Filter by selected channels
                         channel_df = df[df['channel'].isin(selected_channels)].copy()
                         
@@ -5647,11 +5648,11 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                     }),
                                     use_container_width=True
                                 )
-                
-                except Exception as e:
-                    st.error(f"Error in channel analysis: {e}")
-                    import traceback
-                    st.error(f"Details: {traceback.format_exc()}")
+            
+            except Exception as e:
+                st.error(f"Error in channel analysis: {e}")
+                import traceback
+                st.error(f"Details: {traceback.format_exc()}")
     
     def render_one_year_performance_page(self):
         """Render 1-year performance page for holdings purchased in last 12 months"""
@@ -5976,7 +5977,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                 st.error(f"❌ Failed to process {uploaded_file.name}")
                                 failed_count += 1
                                 failed_files.append(uploaded_file.name)
-                                    
+                                
                     except Exception as e:
                         st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
                         failed_count += 1
