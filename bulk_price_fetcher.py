@@ -128,6 +128,7 @@ class BulkPriceFetcher:
         """
         Get stock prices in bulk using yfinance
         Much faster than individual calls
+        Handles both NSE (.NS) and BSE (.BO) stocks
         """
         if not tickers:
             return {}
@@ -135,8 +136,19 @@ class BulkPriceFetcher:
         try:
             logger.info(f"📥 Bulk downloading {len(tickers)} stock prices...")
             
-            # Add .NS suffix for NSE
-            ticker_list = [f"{t}.NS" for t in tickers]
+            # Add correct suffix (.NS for NSE, .BO for BSE)
+            ticker_list = []
+            ticker_to_suffix = {}
+            for t in tickers:
+                # BSE codes: 6 digits starting with 5
+                if t.isdigit() and len(t) == 6 and t.startswith('5'):
+                    ticker_with_suffix = f"{t}.BO"
+                    ticker_to_suffix[t] = '.BO'
+                    logger.info(f"   📍 BSE stock: {t} → {ticker_with_suffix}")
+                else:
+                    ticker_with_suffix = f"{t}.NS"
+                    ticker_to_suffix[t] = '.NS'
+                ticker_list.append(ticker_with_suffix)
             
             # Bulk download (1 API call for all stocks!)
             data = yf.download(
@@ -155,18 +167,20 @@ class BulkPriceFetcher:
                 if not data.empty and 'Close' in data.columns:
                     price = float(data['Close'].iloc[-1])
                     results[tickers[0]] = price
-                    logger.info(f"✅ {tickers[0]}: ₹{price}")
+                    suffix = ticker_to_suffix[tickers[0]]
+                    logger.info(f"✅ {tickers[0]} ({suffix}): ₹{price}")
             else:
                 # Multiple tickers
                 for ticker in tickers:
-                    ticker_ns = f"{ticker}.NS"
+                    suffix = ticker_to_suffix[ticker]
+                    ticker_with_suffix = f"{ticker}{suffix}"
                     try:
-                        if ticker_ns in data.columns.levels[0]:
-                            ticker_data = data[ticker_ns]
+                        if ticker_with_suffix in data.columns.levels[0]:
+                            ticker_data = data[ticker_with_suffix]
                             if not ticker_data.empty and 'Close' in ticker_data.columns:
                                 price = float(ticker_data['Close'].iloc[-1])
                                 results[ticker] = price
-                                logger.info(f"✅ {ticker}: ₹{price}")
+                                logger.info(f"✅ {ticker} ({suffix}): ₹{price}")
                     except:
                         continue
             
@@ -449,8 +463,18 @@ Rules:
             start_date = min(dates_dt)
             end_date = max(dates_dt)
             
-            # Add .NS suffix for NSE
-            ticker_list = [f"{t}.NS" for t in tickers]
+            # Add correct suffix (.NS for NSE, .BO for BSE)
+            ticker_list = []
+            ticker_to_suffix = {}
+            for t in tickers:
+                # BSE codes: 6 digits starting with 5
+                if t.isdigit() and len(t) == 6 and t.startswith('5'):
+                    ticker_with_suffix = f"{t}.BO"
+                    ticker_to_suffix[t] = '.BO'
+                else:
+                    ticker_with_suffix = f"{t}.NS"
+                    ticker_to_suffix[t] = '.NS'
+                ticker_list.append(ticker_with_suffix)
             
             # Bulk download
             data = yf.download(
@@ -465,7 +489,8 @@ Rules:
             
             # Parse results for each ticker and date
             for ticker in tickers:
-                ticker_ns = f"{ticker}.NS"
+                suffix = ticker_to_suffix[ticker]
+                ticker_with_suffix = f"{ticker}{suffix}"
                 results[ticker] = {}
                 
                 for date in dates:
@@ -478,8 +503,8 @@ Rules:
                                 results[ticker][date_str] = price
                         else:
                             # Multiple tickers
-                            if ticker_ns in data['Close'].columns and date_str in data.index:
-                                price = float(data['Close'][ticker_ns].loc[date_str])
+                            if ticker_with_suffix in data['Close'].columns and date_str in data.index:
+                                price = float(data['Close'][ticker_with_suffix].loc[date_str])
                                 results[ticker][date_str] = price
                     except:
                         continue
@@ -508,8 +533,18 @@ Rules:
             end_date = datetime.now()
             start_date = end_date - timedelta(weeks=weeks)
             
-            # Add .NS suffix for NSE
-            ticker_list = [f"{t}.NS" for t in tickers]
+            # Add correct suffix (.NS for NSE, .BO for BSE)
+            ticker_list = []
+            ticker_to_suffix = {}
+            for t in tickers:
+                # BSE codes: 6 digits starting with 5
+                if t.isdigit() and len(t) == 6 and t.startswith('5'):
+                    ticker_with_suffix = f"{t}.BO"
+                    ticker_to_suffix[t] = '.BO'
+                else:
+                    ticker_with_suffix = f"{t}.NS"
+                    ticker_to_suffix[t] = '.NS'
+                ticker_list.append(ticker_with_suffix)
             
             # Bulk download with weekly interval
             data = yf.download(
@@ -532,10 +567,11 @@ Rules:
             else:
                 # Multiple tickers
                 for ticker in tickers:
-                    ticker_ns = f"{ticker}.NS"
+                    suffix = ticker_to_suffix[ticker]
+                    ticker_with_suffix = f"{ticker}{suffix}"
                     try:
-                        if ticker_ns in data['Close'].columns:
-                            ticker_data = data['Close'][ticker_ns].dropna()
+                        if ticker_with_suffix in data['Close'].columns:
+                            ticker_data = data['Close'][ticker_with_suffix].dropna()
                             results[ticker] = pd.DataFrame({'price': ticker_data})
                     except:
                         continue
