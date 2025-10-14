@@ -1852,20 +1852,25 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             # Refresh portfolio with updated live prices - MUST use force_refresh to bypass cache!
             self.load_portfolio_data(user_id, force_refresh=True)
             
-            # Initialize cache flags and trigger automatic population for missing weeks
+            # ✅ INCREMENTAL WEEKLY CACHE: Triggered during login
+            # - Checks max date from DB for each ticker
+            # - Fetches ONLY missing weeks since last update
+            # - Uses AI for all asset types
             if not skip_cache_population:
-                cache_key = f'cache_populated_{user_id}'
-                cache_trigger_key = f'cache_trigger_{user_id}'
+                cache_key = f'incremental_cache_done_{user_id}'
                 
+                # Only run once per session
                 if cache_key not in st.session_state:
-                    st.session_state[cache_key] = False
-                
-                if cache_trigger_key not in st.session_state:
-                    st.session_state[cache_trigger_key] = False
-                
-                # Enable automatic cache population during login (non-blocking background mode)
-                # This ensures weekly data is available for charts
-                st.session_state[cache_trigger_key] = True
+                    st.info("🔄 Checking for missing weekly prices...")
+                    try:
+                        # This will only fetch NEW weeks based on max DB date
+                        self.populate_weekly_and_monthly_cache(user_id)
+                        st.session_state[cache_key] = True
+                        st.success("✅ Weekly price cache updated!")
+                    except Exception as cache_error:
+                        print(f"⚠️ Incremental cache warning: {cache_error}")
+                        st.session_state[cache_key] = True  # Mark done to avoid retry loop
+                        st.info("💡 Some weekly data may be fetched on-demand later")
             
         except Exception as e:
             st.error(f"Error initializing portfolio data: {e}")
@@ -2102,22 +2107,55 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                     # Optimized: Bulk query all tickers for this week at once
                     cached_prices = get_stock_prices_bulk_supabase(tickers_for_week, week_date_str)
                     
-                    # Fetch missing prices
+                    # Fetch missing prices using AI
+                    tickers_to_fetch = []
                     for ticker in tickers_for_week:
                         if ticker in cached_prices and cached_prices[ticker] > 0:
                             # Already cached
                             all_weekly_prices[ticker][week_date] = cached_prices[ticker]
                         else:
-                            # Need to fetch
-                            try:
-                                price = self.fetch_historical_price_comprehensive(ticker, week_date)
-                                if price and price > 0:
-                                    all_weekly_prices[ticker][week_date] = price
-                                    weekly_cached_count += 1
-                            except Exception as e:
-                                print(f"⚠️ Error fetching price for {ticker} on {week_date_str}: {e}")
-                                # Continue with next ticker
-                                pass
+                            tickers_to_fetch.append(ticker)
+                    
+                    # ✅ USE AI for missing tickers (batch)
+                    if tickers_to_fetch:
+                        try:
+                            from ai_price_fetcher import AIPriceFetcher
+                            ai_fetcher = AIPriceFetcher()
+                            
+                            if ai_fetcher.is_available():
+                                print(f"🤖 AI: Fetching {len(tickers_to_fetch)} missing prices for week {week_date_str}")
+                                
+                                for ticker in tickers_to_fetch:
+                                    # Get ticker name from transactions
+                                    ticker_trans = buy_transactions[buy_transactions['ticker'] == ticker]
+                                    name = ticker_trans.iloc[0].get('stock_name', ticker) if not ticker_trans.empty else ticker
+                                    
+                                    # Determine asset type
+                                    is_pms_aif = (ticker.startswith('INP') or ticker.startswith('INA') or 'PMS' in ticker.upper() or 'AIF' in ticker.upper())
+                                    is_mutual_fund = str(ticker).isdigit() or ticker.startswith('MF_')
+                                    asset_type = 'PMS/AIF' if is_pms_aif else ('Mutual Fund' if is_mutual_fund else 'Stock')
+                                    
+                                    # Get price via AI
+                                    if is_mutual_fund:
+                                        result = ai_fetcher.get_mutual_fund_nav(ticker, name, week_date_str)
+                                    elif is_pms_aif:
+                                        result = ai_fetcher.get_pms_aif_nav(ticker, name, week_date_str)
+                                    else:
+                                        result = ai_fetcher.get_stock_price(ticker, name, week_date_str)
+                                    
+                                    if result and isinstance(result, dict) and result.get('price', 0) > 0:
+                                        price = result['price']
+                                        all_weekly_prices[ticker][week_date] = price
+                                        weekly_cached_count += 1
+                                        
+                                        # Save to DB cache immediately
+                                        from database_config_supabase import save_stock_price_supabase
+                                        save_stock_price_supabase(ticker, week_date_str, price, 'ai_incremental')
+                                        print(f"✅ AI: {ticker} = ₹{price} on {week_date_str}")
+                            else:
+                                print(f"⚠️ AI not available for incremental fetch")
+                        except Exception as e:
+                            print(f"⚠️ AI fetch failed for week {week_date_str}: {e}")
                 else:
                     # Fallback: Check each ticker individually
                     for ticker in tickers_for_week:
@@ -2127,16 +2165,39 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         if cached_price and cached_price > 0:
                             all_weekly_prices[ticker][week_date] = cached_price
                         else:
-                            # Need to fetch
+                            # ✅ USE AI for missing price
                             try:
-                                price = self.fetch_historical_price_comprehensive(ticker, week_date)
-                                if price and price > 0:
-                                    all_weekly_prices[ticker][week_date] = price
-                                    weekly_cached_count += 1
+                                from ai_price_fetcher import AIPriceFetcher
+                                ai_fetcher = AIPriceFetcher()
+                                
+                                if ai_fetcher.is_available():
+                                    # Get ticker name
+                                    ticker_trans = buy_transactions[buy_transactions['ticker'] == ticker]
+                                    name = ticker_trans.iloc[0].get('stock_name', ticker) if not ticker_trans.empty else ticker
+                                    
+                                    # Determine asset type
+                                    is_pms_aif = (ticker.startswith('INP') or ticker.startswith('INA') or 'PMS' in ticker.upper() or 'AIF' in ticker.upper())
+                                    is_mutual_fund = str(ticker).isdigit() or ticker.startswith('MF_')
+                                    
+                                    # Get price via AI
+                                    if is_mutual_fund:
+                                        result = ai_fetcher.get_mutual_fund_nav(ticker, name, week_date_str)
+                                    elif is_pms_aif:
+                                        result = ai_fetcher.get_pms_aif_nav(ticker, name, week_date_str)
+                                    else:
+                                        result = ai_fetcher.get_stock_price(ticker, name, week_date_str)
+                                    
+                                    if result and isinstance(result, dict) and result.get('price', 0) > 0:
+                                        price = result['price']
+                                        all_weekly_prices[ticker][week_date] = price
+                                        weekly_cached_count += 1
+                                        
+                                        # Save to DB cache
+                                        from database_config_supabase import save_stock_price_supabase
+                                        save_stock_price_supabase(ticker, week_date_str, price, 'ai_incremental')
+                                        print(f"✅ AI: {ticker} = ₹{price} on {week_date_str}")
                             except Exception as e:
-                                print(f"⚠️ Error fetching price for {ticker} on {week_date_str}: {e}")
-                                # Continue with next ticker
-                                pass
+                                print(f"⚠️ AI fetch failed for {ticker} on {week_date_str}: {e}")
             
             # Derive and save monthly prices for all tickers
             status_text.text("📊 Deriving monthly prices from weekly data...")
