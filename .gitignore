@@ -34,7 +34,7 @@ env/
 
 # Streamlit
 .streamlit/secrets.toml
-.streamlit/config.toml
+# Note: config.toml is NOT ignored - needed for Streamlit Cloud deployment
 
 # Environment variables
 .env
