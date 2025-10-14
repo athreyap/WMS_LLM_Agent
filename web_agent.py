@@ -615,6 +615,43 @@ class PortfolioAnalytics:
                         if len(invalid_date_values) > 20:
                             st.write(f"... and {len(invalid_date_values) - 20} more")
             
+            # ✅ FIX FUTURE DATES: Auto-correct dates that are in the future using average date
+            from datetime import datetime, timedelta
+            today = pd.Timestamp(datetime.now().date())
+            future_date_mask = df['date'] > today
+            future_dates_count = future_date_mask.sum()
+            
+            if future_dates_count > 0:
+                # Store original future dates for reporting
+                original_future_dates = df.loc[future_date_mask, 'date'].copy()
+                
+                # Get valid (non-future) dates to calculate average
+                valid_past_dates = df[~future_date_mask]['date']
+                
+                if len(valid_past_dates) > 0:
+                    # Calculate average date from valid past dates
+                    avg_timestamp = valid_past_dates.astype('int64').mean()
+                    avg_date = pd.Timestamp(avg_timestamp)
+                    
+                    # Replace future dates with average date
+                    df.loc[future_date_mask, 'date'] = avg_date
+                    
+                    st.warning(f"🔧 Auto-corrected {future_dates_count} FUTURE dates using average date from file ({avg_date.strftime('%Y-%m-%d')})")
+                else:
+                    # No valid past dates, subtract 1 year as fallback
+                    df.loc[future_date_mask, 'date'] = df.loc[future_date_mask, 'date'] - pd.DateOffset(years=1)
+                    st.warning(f"🔧 Auto-corrected {future_dates_count} FUTURE dates by subtracting 1 year (no valid past dates in file)")
+                
+                with st.expander(f"🔍 Show {future_dates_count} Auto-Corrected Date(s)"):
+                    st.write("**Future dates detected and corrected:**")
+                    correction_df = pd.DataFrame({
+                        'Original (Future) Date': original_future_dates.dt.strftime('%Y-%m-%d'),
+                        'Corrected Date': df.loc[future_date_mask, 'date'].dt.strftime('%Y-%m-%d')
+                    })
+                    st.dataframe(correction_df.head(20))
+                    if len(correction_df) > 20:
+                        st.write(f"... and {len(correction_df) - 20} more corrections")
+            
             st.info(f"📅 Dates processed: {len(df)} rows with valid dates")
             
             # Standardize transaction types
