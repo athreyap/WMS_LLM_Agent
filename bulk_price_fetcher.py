@@ -721,13 +721,25 @@ def get_historical_prices_with_ai(
             for date in dates:
                 try:
                     if ticker_type == 'MF':
-                        price = ai.get_mutual_fund_nav(ticker, name, date, allow_closest=True)
+                        result = ai.get_mutual_fund_nav(ticker, name, date, allow_closest=True)
                     else:  # Stock
-                        price = ai.get_stock_price(ticker, name, date, allow_closest=True)
+                        result = ai.get_stock_price(ticker, name, date, allow_closest=True)
                     
-                    if price:
-                        results[ticker][date] = price
-                        logger.info(f"✅ AI historical: {ticker} @ {date} = ₹{price}")
+                    # Handle new dict format: {'date': 'YYYY-MM-DD', 'price': float, 'sector': str}
+                    if result:
+                        if isinstance(result, dict):
+                            price = result.get('price')
+                            actual_date = result.get('date', date)
+                            sector = result.get('sector', 'Unknown')
+                        else:
+                            # Fallback for old format (just float)
+                            price = result
+                            actual_date = date
+                            sector = 'Unknown'
+                        
+                        if price and price > 0:
+                            results[ticker][date] = price
+                            logger.info(f"✅ AI historical: {ticker} @ {actual_date} = ₹{price} ({sector})")
                 except Exception as e:
                     logger.error(f"❌ AI historical failed for {ticker} @ {date}: {e}")
         
