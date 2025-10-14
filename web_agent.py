@@ -773,6 +773,19 @@ class PortfolioAnalytics:
             user_id: User ID to fetch prices for
             show_ui: If True, show UI messages. If False, run silently (for auto-fetch)
         """
+        # ✅ LOCK: Prevent concurrent bulk fetches for same user
+        lock_key = f"bulk_fetch_lock_{user_id}"
+        
+        if lock_key in st.session_state and st.session_state[lock_key]:
+            print(f"⚠️ Bulk fetch already running for user {user_id}, skipping duplicate call...")
+            if show_ui:
+                st.info("⏳ Bulk fetch is already in progress, please wait...")
+            return
+        
+        # Set lock
+        st.session_state[lock_key] = True
+        print(f"🔒 Acquired bulk fetch lock for user {user_id}")
+        
         try:
             from datetime import datetime, timedelta
             
@@ -1034,6 +1047,10 @@ class PortfolioAnalytics:
             else:
                 print(f"✅ Bulk fetch complete: {saved_count} saved, {skipped_count} skipped")
             
+            # ✅ Mark bulk fetch as complete for this session
+            st.session_state[f"bulk_fetch_done_{user_id}"] = True
+            print(f"✅ Set bulk fetch flag for user {user_id}")
+            
         except Exception as e:
             if show_ui:
                 st.error(f"❌ Batch fetch failed: {e}")
@@ -1043,6 +1060,11 @@ class PortfolioAnalytics:
                 print(f"❌ Silent batch fetch failed: {e}")
                 import traceback
                 print(traceback.format_exc())
+        
+        finally:
+            # ✅ ALWAYS release lock, even if error occurred
+            st.session_state[lock_key] = False
+            print(f"🔓 Released bulk fetch lock for user {user_id}")
     
     def fetch_historical_price_comprehensive(self, ticker, target_date):
         """
@@ -3406,20 +3428,28 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
         
         if cache_trigger_key in st.session_state and st.session_state[cache_trigger_key]:
             if cache_key not in st.session_state or not st.session_state[cache_key]:
-                # Show small status in sidebar
-                with st.sidebar:
-                    with st.status("🔄 Building weekly price cache...", expanded=False) as status:
-                        st.caption("📊 Caching weekly data for charts...")
-                        st.caption("⏱️ Incremental - only new weeks fetched")
-                        try:
-                            self.populate_monthly_prices_cache(user_id)
-                            st.session_state[cache_key] = True
-                            st.session_state[cache_trigger_key] = False
-                            status.update(label="✅ Weekly & monthly cache ready!", state="complete")
-                        except Exception as e:
-                            st.write(f"⚠️ Cache error: {e}")
-                            st.caption("Charts will fetch data on-demand")
-                            status.update(label="⚠️ Cache update failed", state="error")
+                # ✅ CHECK: Skip if bulk fetch was already done this session
+                bulk_fetch_key = f"bulk_fetch_done_{user_id}"
+                if bulk_fetch_key in st.session_state and st.session_state[bulk_fetch_key]:
+                    # Bulk fetch already ran, no need for incremental weekly cache
+                    st.session_state[cache_key] = True
+                    st.session_state[cache_trigger_key] = False
+                    print("✅ Skipping weekly cache - bulk fetch already completed this session")
+                else:
+                    # Show small status in sidebar
+                    with st.sidebar:
+                        with st.status("🔄 Building weekly price cache...", expanded=False) as status:
+                            st.caption("📊 Caching weekly data for charts...")
+                            st.caption("⏱️ Incremental - only new weeks fetched")
+                            try:
+                                self.populate_monthly_prices_cache(user_id)
+                                st.session_state[cache_key] = True
+                                st.session_state[cache_trigger_key] = False
+                                status.update(label="✅ Weekly & monthly cache ready!", state="complete")
+                            except Exception as e:
+                                st.write(f"⚠️ Cache error: {e}")
+                                st.caption("Charts will fetch data on-demand")
+                                status.update(label="⚠️ Cache update failed", state="error")
         
         # File upload in sidebar
         st.sidebar.markdown("---")
@@ -3774,7 +3804,8 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
         df = self.session_state.portfolio_data
         
         # 🆕 AUTO-DETECT MISSING PRICES: If current_value is 0 or NaN, trigger batch fetch
-        if not hasattr(self.session_state, 'auto_batch_fetch_done'):
+        # ✅ FIX: Check session state properly, not object attribute
+        if 'auto_batch_fetch_done' not in st.session_state:
             missing_prices = (
                 (df['current_value'].isna()).any() or 
                 (df['current_value'] == 0).any()
@@ -3785,7 +3816,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 try:
                     # Run silently in background
                     self.bulk_fetch_and_cache_all_prices(self.session_state.user_id, show_ui=False)
-                    self.session_state.auto_batch_fetch_done = True
+                    st.session_state.auto_batch_fetch_done = True
                     # Reload portfolio after fetching
                     print("🔄 Reloading portfolio after batch fetch...")
                     self.load_portfolio_data(self.session_state.user_id, force_refresh=True)
@@ -3793,7 +3824,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 except Exception as e:
                     print(f"⚠️ Auto batch fetch failed: {e}")
                     # Mark as done anyway to avoid infinite loops
-                    self.session_state.auto_batch_fetch_done = True
+                    st.session_state.auto_batch_fetch_done = True
         
         # Portfolio summary metrics
         col1, col2, col3, col4 = st.columns(4)
