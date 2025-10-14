@@ -181,20 +181,12 @@ def fetch_historical_prices_bulk(
         
         logger.info(f"✅ MF (ISIN): {len(mf_isins)} using transaction prices")
     
-    # 3. PMS/AIF: Use transaction price (no historical prices exist)
+    # 3. PMS/AIF: Skip bulk processing - handled individually with CAGR calculation
     if pms_tickers:
         if progress_callback:
-            progress_callback(f"💼 Using transaction prices for {len(pms_tickers)} PMS/AIF...")
+            progress_callback(f"💼 Skipping {len(pms_tickers)} PMS/AIF from bulk - will process individually with CAGR...")
         
-        for ticker in pms_tickers:
-            ticker_trans = df[df['ticker'] == ticker]
-            all_prices[ticker] = {}
-            
-            for _, row in ticker_trans.iterrows():
-                date_str = pd.to_datetime(row['date']).strftime('%Y-%m-%d')
-                all_prices[ticker][date_str] = float(row['price'])
-        
-        logger.info(f"✅ PMS/AIF: {len(pms_tickers)} using transaction prices")
+        logger.info(f"⏩ PMS/AIF: {len(pms_tickers)} skipped from bulk (processed individually with CAGR)")
     
     # Save to database in bulk
     if progress_callback:
@@ -308,55 +300,79 @@ def fetch_weekly_prices_bulk(
         
         logger.info(f"✅ MF weekly: {len(current_navs)} calculated")
     
-    # 3. PMS/AIF: Get CAGR using AI bulk, then calculate weekly values
+    # 3. PMS/AIF: Fetch current NAV via AI and calculate weekly values using CAGR
     if pms_tickers:
         if progress_callback:
-            progress_callback(f"💼 Fetching CAGR for {len(pms_tickers)} PMS/AIF using AI...")
+            progress_callback(f"💼 Fetching NAVs for {len(pms_tickers)} PMS/AIF using AI...")
         
-        # Get CAGR data using AI bulk
-        pms_data = fetcher.get_bulk_prices_with_ai(pms_tickers, ticker_names, ticker_type='PMS')
+        from ai_price_fetcher import get_ai_fetcher
+        ai_fetcher = get_ai_fetcher()
         
-        # Calculate weekly values from CAGR
-        for ticker in pms_tickers:
-            if ticker in pms_data:
-                cagr_data = pms_data[ticker]
-                
-                # Get investment details
-                ticker_trans = df[df['ticker'] == ticker]
-                first_trans = ticker_trans.iloc[0]
-                investment_date = pd.to_datetime(first_trans['date'])
-                investment_amount = float(ticker_trans['quantity'].sum() * first_trans['price'])
-                
-                # Use appropriate CAGR
-                years_elapsed = (datetime.now() - investment_date).days / 365.25
-                
-                if years_elapsed >= 5 and '5Y' in cagr_data:
-                    cagr = cagr_data['5Y'] / 100
-                elif years_elapsed >= 3 and '3Y' in cagr_data:
-                    cagr = cagr_data['3Y'] / 100
-                elif '1Y' in cagr_data:
-                    cagr = cagr_data['1Y'] / 100
-                else:
-                    continue
-                
-                # Calculate weekly values
-                weeks_list = []
-                end_date = datetime.now()
-                
-                for i in range(weeks):
-                    week_date = end_date - timedelta(weeks=i)
-                    weeks_from_investment = (week_date - investment_date).days / 7
-                    years_at_week = weeks_from_investment / 52
+        if ai_fetcher.is_available():
+            for ticker in pms_tickers:
+                try:
+                    # Get ticker name
+                    ticker_name = ticker_names.get(ticker, ticker)
                     
-                    weekly_value = investment_amount * ((1 + cagr) ** years_at_week)
-                    weeks_list.append({
-                        'date': week_date,
-                        'price': weekly_value
-                    })
-                
-                all_weekly[ticker] = pd.DataFrame(weeks_list).set_index('date')
-        
-        logger.info(f"✅ PMS/AIF weekly: {len(pms_data)} calculated")
+                    # Fetch current NAV via AI
+                    print(f"🤖 Fetching current NAV for {ticker} ({ticker_name})...")
+                    nav_result = ai_fetcher.get_pms_aif_nav(ticker, ticker_name)
+                    
+                    if nav_result and isinstance(nav_result, dict) and nav_result.get('price', 0) > 0:
+                        current_nav = nav_result['price']
+                        print(f"✅ {ticker}: Current NAV ₹{current_nav}")
+                        
+                        # Get investment details
+                        ticker_trans = df[df['ticker'] == ticker]
+                        if not ticker_trans.empty:
+                            first_trans = ticker_trans.iloc[0]
+                            investment_date = pd.to_datetime(first_trans['date'])
+                            investment_amount = float(first_trans['quantity'] * first_trans['price'])
+                            
+                            # Calculate CAGR
+                            from datetime import datetime
+                            today = datetime.now()
+                            years_elapsed = (today - investment_date).days / 365.25
+                            
+                            if years_elapsed > 0.01:  # At least a few days
+                                cagr = ((current_nav / (investment_amount / first_trans['quantity'])) ** (1 / years_elapsed)) - 1
+                                print(f"✅ {ticker}: CAGR calculated {cagr*100:.2f}% per year")
+                                
+                                # Generate weekly values using CAGR
+                                weeks_list = []
+                                end_date = today
+                                start_date = max(investment_date, end_date - timedelta(weeks=weeks))
+                                
+                                current_week = start_date
+                                while current_week <= end_date:
+                                    weeks_from_investment = (current_week - investment_date).days / 7
+                                    years_at_week = weeks_from_investment / 52
+                                    
+                                    if years_at_week >= 0:
+                                        weekly_nav = (investment_amount / first_trans['quantity']) * ((1 + cagr) ** years_at_week)
+                                        weeks_list.append({
+                                            'date': current_week.strftime('%Y-%m-%d'),
+                                            'price': weekly_nav
+                                        })
+                                    
+                                    current_week += timedelta(days=7)
+                                
+                                if weeks_list:
+                                    all_weekly[ticker] = pd.DataFrame(weeks_list).set_index('date')
+                                    print(f"✅ {ticker}: Generated {len(weeks_list)} weekly NAVs")
+                            else:
+                                print(f"⚠️ {ticker}: Investment too recent for CAGR calculation")
+                        else:
+                            print(f"⚠️ {ticker}: No transaction data found")
+                    else:
+                        print(f"⚠️ {ticker}: AI could not fetch NAV")
+                        
+                except Exception as e:
+                    print(f"⚠️ {ticker}: Error processing PMS/AIF - {e}")
+            
+            logger.info(f"✅ PMS/AIF weekly: {len([t for t in pms_tickers if t in all_weekly])} calculated via AI")
+        else:
+            logger.warning(f"⚠️ PMS/AIF weekly: AI not available, skipping {len(pms_tickers)} tickers")
     
     # Save to database in bulk
     if progress_callback:
