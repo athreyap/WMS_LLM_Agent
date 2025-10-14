@@ -592,7 +592,8 @@ class PortfolioAnalytics:
             # Convert date to datetime
             # Store original date column before conversion for error reporting
             original_dates = df['date'].copy() if 'date' in df.columns else None
-            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+            # ✅ Support both DD/MM/YYYY and MM/DD/YYYY formats
+            df['date'] = pd.to_datetime(df['date'], format='mixed', dayfirst=True, errors='coerce')
             
             # Handle invalid dates with average date from valid dates
             invalid_date_mask = df['date'].isna()
@@ -790,9 +791,9 @@ class PortfolioAnalytics:
                     # Mutual fund - try mftool API
                     try:
                         historical_price = get_mutual_fund_price(
-                            ticker, 
+                        ticker, 
                             stock_name, 
-                            row['user_id'], 
+                        row['user_id'], 
                             date_str
                         )
                         if historical_price and historical_price > 0:
@@ -802,8 +803,8 @@ class PortfolioAnalytics:
                         print(f"⚠️ mftool failed for {ticker}: {e}")
                 
                 elif is_pms_aif:
-                    # ✅ PMS/AIF: Use invested amount and calculate using CAGR
-                    print(f"📊 {ticker}: PMS/AIF detected, calculating from invested amount")
+                    # ✅ PMS/AIF: Calculate prices based on CAGR (don't store CAGR, store calculated prices)
+                    print(f"📊 {ticker}: PMS/AIF detected, calculating prices using CAGR")
                     
                     # Get invested amount from CSV
                     invested_amount = row.get('invested_amount', 0) or row.get('amount', 0)
@@ -818,13 +819,13 @@ class PortfolioAnalytics:
                     if quantity <= 0:
                         quantity = 1
                     
-                    # Calculate per-unit price from invested amount
+                    # Calculate per-unit price from invested amount (transaction price)
                     transaction_price = invested_amount / quantity
                     
-                    # Try to get CURRENT NAV from AI
+                    # Try to get CURRENT NAV from AI and calculate historical prices using CAGR
                     try:
                         if ai_available:
-                            print(f"🤖 Fetching current NAV for {ticker} to calculate CAGR")
+                            print(f"🤖 Fetching current NAV for {ticker} to calculate CAGR-based prices")
                             current_nav_result = ai_fetcher.get_pms_aif_nav(ticker, stock_name)  # No date = current
                             
                             if current_nav_result and isinstance(current_nav_result, dict) and current_nav_result.get('price', 0) > 0:
@@ -839,16 +840,56 @@ class PortfolioAnalytics:
                                 if years_elapsed > 0.01:  # At least a few days
                                     # CAGR formula: ((Current/Initial)^(1/years)) - 1
                                     cagr = ((current_nav / transaction_price) ** (1 / years_elapsed)) - 1
-                                    print(f"✅ PMS/AIF CAGR: {cagr*100:.2f}% per year for {ticker}")
+                                    print(f"✅ PMS/AIF CAGR calculated: {cagr*100:.2f}% per year")
                                     
-                                    # Use transaction price (this will be stored in DB)
+                                    # Store transaction price at transaction date
                                     historical_price = transaction_price
-                                    fetch_method = 'pms_aif_amount'
+                                    fetch_method = 'pms_aif_cagr'
                                     ai_success += 1
                                     
-                                    # Store CAGR for future calculations (we'll add this to the row)
-                                    df.at[idx, 'cagr'] = cagr
-                                    df.at[idx, 'current_nav'] = current_nav
+                                    # Calculate and store current NAV (today's price)
+                                    print(f"💾 Storing current NAV: ₹{current_nav:,.2f} (today)")
+                                    save_stock_price_supabase(
+                                        ticker=ticker,
+                                        price_date=today.strftime('%Y-%m-%d'),
+                                        price=current_nav,
+                                        price_source='ai_current_nav'
+                                    )
+                                    
+                                    # Calculate and store weekly prices using CAGR (past 1 year)
+                                    from datetime import timedelta
+                                    one_year_ago = today - timedelta(days=365)
+                                    
+                                    # Generate weekly dates
+                                    weekly_dates = []
+                                    current_week = transaction_date
+                                    while current_week <= today:
+                                        if current_week >= one_year_ago:  # Only last 1 year
+                                            weekly_dates.append(current_week)
+                                        current_week += timedelta(days=7)
+                                    
+                                    # Calculate price for each week using CAGR
+                                    print(f"📅 Calculating {len(weekly_dates)} weekly prices using CAGR...")
+                                    weekly_prices_to_save = []
+                                    
+                                    for week_date in weekly_dates:
+                                        weeks_from_start = (week_date - transaction_date).days / 365.25
+                                        if weeks_from_start >= 0:
+                                            # Price = Initial * (1 + CAGR)^years
+                                            week_price = transaction_price * ((1 + cagr) ** weeks_from_start)
+                                            weekly_prices_to_save.append({
+                                                'ticker': ticker,
+                                                'date': week_date.strftime('%Y-%m-%d'),
+                                                'price': week_price,
+                                                'source': 'pms_aif_cagr_calculated'
+                                            })
+                                    
+                                    # Bulk save weekly prices
+                                    if weekly_prices_to_save:
+                                        from database_config_supabase import bulk_save_historical_prices
+                                        bulk_save_historical_prices(weekly_prices_to_save)
+                                        print(f"✅ Saved {len(weekly_prices_to_save)} CAGR-calculated weekly prices")
+                                    
                                 else:
                                     # Recent transaction, use current NAV
                                     historical_price = current_nav
@@ -878,9 +919,9 @@ class PortfolioAnalytics:
                             df.at[idx, 'price'] = 0.0
                             failed_count += 1
                             continue
-                        
+                    
                         historical_price = get_stock_price(
-                            ticker, 
+                        ticker, 
                             stock_name, 
                             date_str
                         )
@@ -1843,11 +1884,11 @@ class PortfolioAnalytics:
                 else:
                     # FALLBACK: Use old method
                     st.info("🔄 Caching historical prices for transaction dates...")
-                    try:
+                try:
                         self.update_missing_historical_prices(user_id)
                         st.success("✅ Historical prices cached!")
-                    except Exception as e:
-                        st.warning(f"⚠️ Historical price caching had warnings: {e}")
+                except Exception as e:
+                    st.warning(f"⚠️ Historical price caching had warnings: {e}")
                 
                 # STEP 2: Fetch live prices and sectors for new tickers (skip if requested)
                 if not skip_live_prices:
@@ -2013,7 +2054,7 @@ class PortfolioAnalytics:
                             skip_weekly_cache=True,  # We'll do it manually below
                             skip_live_prices=True     # Live prices at login only
                         )
-                    
+                        
                         if success:
                             st.success(f"✅ {uploaded_file.name} - Transactions saved")
                             
@@ -2030,29 +2071,161 @@ class PortfolioAnalytics:
                                     # Get only tickers from this file (most recent transactions)
                                     file_tickers = df_all['ticker'].unique()[-15:]  # Assume last 15 are from this file
                                     
-                                    # Use optimized bulk fetch for this file's tickers
+                                    # ✅ API-first, AI-fallback strategy for weekly prices
                                     from datetime import datetime, timedelta
                                     import yfinance as yf
+                                    from database_config_supabase import save_stock_price_supabase
+                                    
+                                    stocks_cached = 0
+                                    mf_cached = 0
+                                    pms_skipped = 0
+                                    ai_fallback_count = 0
                                     
                                     for ticker in file_tickers:
                                         try:
-                                            # Fetch ALL 52 weeks in ONE call (fast!)
-                                            one_year_ago = datetime.now() - timedelta(days=365)
-                                            yf_ticker = f"{ticker}.NS" if not str(ticker).isdigit() else f"{ticker}.NS"
-                                            stock = yf.Ticker(yf_ticker)
-                                            hist = stock.history(start=one_year_ago, end=datetime.now(), interval='1wk')
+                                            ticker_str = str(ticker).strip()
+                                            weekly_prices = []  # Store fetched prices
+                                            source = None
                                             
-                                            if not hist.empty:
-                                                # Save all weeks to DB
-                                                from database_config_supabase import save_stock_price_supabase
-                                                for date_idx, price in zip(hist.index, hist['Close']):
-                                                    date_str = date_idx.strftime('%Y-%m-%d')
-                                                    save_stock_price_supabase(ticker, date_str, float(price), 'yfinance_weekly')
-                                                print(f"✅ {ticker}: {len(hist)} weekly prices cached")
+                                            # Detect asset type
+                                            is_pms_aif = (
+                                                ticker_str.startswith('INP') or 
+                                                ticker_str.startswith('INA') or 
+                                                'PMS' in ticker_str.upper() or 
+                                                'AIF' in ticker_str.upper()
+                                            )
+                                            
+                                            # BSE codes are 6 digits starting with 5 (e.g., 500414)
+                                            is_bse_code = (ticker_str.isdigit() and len(ticker_str) == 6 and ticker_str.startswith('5'))
+                                            
+                                            # MF scheme codes are 5-6 digits (but not BSE codes)
+                                            is_mutual_fund = (
+                                                (ticker_str.isdigit() and len(ticker_str) >= 5 and len(ticker_str) <= 6 and not is_bse_code) or
+                                                ticker_str.startswith('MF_')
+                                            )
+                                            
+                                            if is_pms_aif:
+                                                # PMS/AIF: Skip weekly cache (uses CAGR on-demand)
+                                                print(f"⏩ {ticker}: PMS/AIF - skipping weekly cache (uses CAGR)")
+                                                pms_skipped += 1
+                                                continue
+                                            
+                                            elif is_mutual_fund:
+                                                # MUTUAL FUND: Try mftool first, then AI
+                                                print(f"🔍 {ticker}: Mutual Fund detected")
+                                                
+                                                # Step 1: Try mftool (FREE API)
+                                                try:
+                                                    from mf_price_fetcher import MFPriceFetcher
+                                                    mf_fetcher = MFPriceFetcher()
+                                                    scheme_code = ticker_str.replace('MF_', '')
+                                                    
+                                                    # Get current NAV
+                                                    nav_data = mf_fetcher.get_current_nav(scheme_code)
+                                                    if nav_data and nav_data > 0:
+                                                        today_str = datetime.now().strftime('%Y-%m-%d')
+                                                        weekly_prices.append({'date': today_str, 'price': float(nav_data)})
+                                                        source = 'mftool_current'
+                                                        print(f"✅ {ticker}: mftool returned NAV ₹{nav_data}")
+                                                except Exception as mf_err:
+                                                    print(f"⚠️ {ticker}: mftool failed - {mf_err}")
+                                                
+                                                # Step 2: If mftool failed, try AI (fallback)
+                                                if not weekly_prices:
+                                                    print(f"🤖 {ticker}: Trying AI for weekly NAV...")
+                                                    # AI fallback will be handled at login for weekly data
+                                                    # Just log that we need AI
+                                                    print(f"⚠️ {ticker}: MF will use AI at login for weekly data")
+                                                
+                                                if weekly_prices:
+                                                    mf_cached += 1
+                                            
+                                            else:
+                                                # STOCK/ETF: Try yfinance first, then indstocks, then AI
+                                                print(f"🔍 {ticker}: Stock/ETF detected")
+                                                one_year_ago = datetime.now() - timedelta(days=365)
+                                                
+                                                # Step 1: Try yfinance (FREE API) - NSE first
+                                                try:
+                                                    yf_ticker = f"{ticker}.NS"
+                                                    stock = yf.Ticker(yf_ticker)
+                                                    hist = stock.history(start=one_year_ago, end=datetime.now(), interval='1wk')
+                                                    
+                                                    if not hist.empty:
+                                                        for date_idx, price in zip(hist.index, hist['Close']):
+                                                            weekly_prices.append({
+                                                                'date': date_idx.strftime('%Y-%m-%d'),
+                                                                'price': float(price)
+                                                            })
+                                                        source = 'yfinance_weekly_nse'
+                                                        print(f"✅ {ticker}: yfinance (NSE) returned {len(hist)} prices")
+                                                except Exception as yf_err:
+                                                    print(f"⚠️ {ticker}: yfinance NSE failed - {yf_err}")
+                                                
+                                                # Step 2: If NSE failed, try BSE
+                                                if not weekly_prices:
+                                                    try:
+                                                        yf_ticker = f"{ticker}.BO"
+                                                        stock = yf.Ticker(yf_ticker)
+                                                        hist = stock.history(start=one_year_ago, end=datetime.now(), interval='1wk')
+                                                        
+                                                        if not hist.empty:
+                                                            for date_idx, price in zip(hist.index, hist['Close']):
+                                                                weekly_prices.append({
+                                                                    'date': date_idx.strftime('%Y-%m-%d'),
+                                                                    'price': float(price)
+                                                                })
+                                                            source = 'yfinance_weekly_bse'
+                                                            print(f"✅ {ticker}: yfinance (BSE) returned {len(hist)} prices")
+                                                    except Exception as yf_bse_err:
+                                                        print(f"⚠️ {ticker}: yfinance BSE failed - {yf_bse_err}")
+                                                
+                                                # Step 3: If yfinance failed, try indstocks
+                                                if not weekly_prices:
+                                                    try:
+                                                        from indstocks_api import get_stock_price_indstocks
+                                                        # indstocks doesn't have bulk weekly, so get current
+                                                        price = get_stock_price_indstocks(ticker)
+                                                        if price and price > 0:
+                                                            today_str = datetime.now().strftime('%Y-%m-%d')
+                                                            weekly_prices.append({'date': today_str, 'price': float(price)})
+                                                            source = 'indstocks_current'
+                                                            print(f"✅ {ticker}: indstocks returned ₹{price}")
+                                                    except Exception as ind_err:
+                                                        print(f"⚠️ {ticker}: indstocks failed - {ind_err}")
+                                                
+                                                # Step 4: If all APIs failed, mark for AI fallback at login
+                                                if not weekly_prices:
+                                                    print(f"⚠️ {ticker}: All APIs failed, will use AI at login")
+                                                    ai_fallback_count += 1
+                                                else:
+                                                    stocks_cached += 1
+                                            
+                                            # Save fetched prices to DB
+                                            if weekly_prices and source:
+                                                for price_data in weekly_prices:
+                                                    try:
+                                                        save_stock_price_supabase(
+                                                            ticker, 
+                                                            price_data['date'], 
+                                                            price_data['price'], 
+                                                            source
+                                                        )
+                                                    except Exception as save_err:
+                                                        print(f"⚠️ {ticker}: Failed to save {price_data['date']} - {save_err}")
+                                            
                                         except Exception as ticker_err:
-                                            print(f"⚠️ {ticker}: Weekly fetch failed, will use AI fallback at login")
+                                            print(f"❌ {ticker}: Error during weekly fetch - {ticker_err}")
                                     
-                                    st.success(f"✅ {uploaded_file.name} - Weekly prices cached!")
+                                    # Show summary
+                                    if stocks_cached > 0:
+                                        st.success(f"✅ {uploaded_file.name} - {stocks_cached} stock(s) weekly prices cached via API!")
+                                    if mf_cached > 0:
+                                        st.success(f"✅ {uploaded_file.name} - {mf_cached} MF(s) NAV cached via API!")
+                                    if pms_skipped > 0:
+                                        st.info(f"💼 {pms_skipped} PMS/AIF(s) - using CAGR calculation")
+                                    if ai_fallback_count > 0:
+                                        st.warning(f"⚠️ {ai_fallback_count} ticker(s) need AI fallback at login (APIs failed)")
                             except Exception as weekly_err:
                                 print(f"⚠️ Weekly cache error for {uploaded_file.name}: {weekly_err}")
                                 # Continue anyway - weekly prices can be fetched at login
@@ -2118,11 +2291,11 @@ class PortfolioAnalytics:
                 
                 if bulk_fetch_done:
                     st.success("✅ All prices have been cached successfully!")
-                    st.info("👉 Click below to log in to your account")
+                    
                 else:
                     st.warning("⚠️ Price caching is in progress or incomplete.")
                     st.info("💡 You can login now and the system will continue fetching prices in the background, or wait for completion.")
-                
+                st.info("👉 Click below to log in to your account")
                 if st.button("🚀 Log In to Your Account", type="primary", use_container_width=True):
                     # Complete login
                     self.session_state.user_authenticated = True
@@ -2278,15 +2451,15 @@ class PortfolioAnalytics:
                             check_day_str = check_day.strftime('%Y-%m-%d')
                             
                             cached_prices = get_stock_prices_bulk_supabase(tickers_to_check, check_day_str)
-                            
-                            # Update latest cached dates for tickers found
-                            if cached_prices:
-                                for ticker, price in cached_prices.items():
-                                    if price and price > 0:
-                                        ticker_latest_cached[ticker] = monday
+                        
+                        # Update latest cached dates for tickers found
+                        if cached_prices:
+                            for ticker, price in cached_prices.items():
+                                if price and price > 0:
+                                    ticker_latest_cached[ticker] = monday
                                         # Remove from check list
-                                        if ticker in tickers_to_check:
-                                            tickers_to_check.remove(ticker)
+                                    if ticker in tickers_to_check:
+                                        tickers_to_check.remove(ticker)
                             
                             # If all tickers found, no need to check remaining days
                             if not tickers_to_check:
@@ -2305,10 +2478,10 @@ class PortfolioAnalytics:
                         for day_offset in range(7):
                             check_day = monday + timedelta(days=day_offset)
                             cached_price = get_stock_price_supabase(ticker, check_day.strftime('%Y-%m-%d'))
-                            if cached_price and cached_price > 0:
-                                ticker_latest_cached[ticker] = monday
-                                found = True
-                                break
+                        if cached_price and cached_price > 0:
+                            ticker_latest_cached[ticker] = monday
+                            found = True
+                            break
                         
                         if found:
                             break  # Move to next ticker
@@ -2915,7 +3088,7 @@ class PortfolioAnalytics:
                         if not pms_transactions.empty:
                             pms_trans = pms_transactions.iloc[0]
                             pms_name = pms_trans.get('stock_name', ticker).replace('_', ' ')
-                            
+                                
                             # Determine type
                             if is_aif_code(ticker_str) or 'AIF' in ticker_upper:
                                 sector = "AIF"
@@ -3000,13 +3173,13 @@ class PortfolioAnalytics:
                             except Exception as ai_error:
                                 print(f"⚠️ AI also failed ({ai_error}), using transaction price")
                                 # Last fallback: transaction price
-                                if mf_trans is not None and 'price' in mf_trans:
-                                    live_price = float(mf_trans['price'])
-                                    print(f"   📊 Transaction Price Fallback: ₹{live_price}")
-                                else:
-                                    live_price = None
-                                    print(f"   ❌ No price available for {ticker}")
-                    
+                            if mf_trans is not None and 'price' in mf_trans:
+                                live_price = float(mf_trans['price'])
+                                print(f"   📊 Transaction Price Fallback: ₹{live_price}")
+                            else:
+                                live_price = None
+                                print(f"   ❌ No price available for {ticker}")
+
                     else:
                         # 📊 Stock, ETF, Bonds - USE AI FIRST, yfinance fallback
                         is_etf = ticker_upper.endswith('BEES') or ticker_upper.endswith('ETF')
@@ -3126,50 +3299,47 @@ class PortfolioAnalytics:
                                     sector = 'Power & Energy'
                                 else:
                                     sector = 'Other Stocks'
-                        except Exception as e:
-                            print(f"⚠️ {ticker}: yfinance/stock fetch failed: {e}")
-                            live_price = None
-                            sector = 'Unknown'
-                except Exception as e:
-                    print(f"⚠️ {ticker}: fetch failed: {e}")
-                    live_price = None
-                    sector = 'Unknown'
-                
-                print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
+                        
+                        print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
 
-                # Store successful fetch (MUST be inside the for loop)
-                if live_price and live_price > 0:
-                    live_prices[ticker] = live_price
-                    sectors[ticker] = sector
-                    successful_fetches += 1
-                    consecutive_failures = 0
-                    print(f"✅ STORED: {ticker} -> ₹{live_price}")
+                    # Store successful fetch (MUST be inside the for loop)
+                    if live_price and live_price > 0:
+                        live_prices[ticker] = live_price
+                        sectors[ticker] = sector
+                        successful_fetches += 1
+                        consecutive_failures = 0
+                        print(f"✅ STORED: {ticker} -> ₹{live_price}")
+                        
+                        # 💾 SAVE TO DATABASE
+                        # Note: unique_tickers was already filtered to only include tickers without prices
+                        # So we can save directly without double-checking
+                        try:
+                            from database_config_supabase import save_stock_price_supabase
+                            today = datetime.now().strftime('%Y-%m-%d')
+                            
+                            # Save live price to historical_prices table
+                            print(f"💾 Saving live price for {ticker} (₹{live_price}) with today's date: {today}")
+                            save_stock_price_supabase(ticker, today, live_price, 'live_fetch')
+                            print(f"✅ Live price saved to historical_prices with date {today}")
+                            
+                            # Update stock_data table with latest metadata
+                            update_stock_data_supabase(
+                                ticker=ticker,
+                                sector=sector or "Unknown",
+                                current_price=live_price  # Maps to live_price column
+                            )
+                            print(f"💾 Saved {ticker} to database (price + metadata)")
+                        except Exception as db_error:
+                            print(f"⚠️ Could not save {ticker} to DB: {db_error}")
+                            # Continue anyway - at least we have it in session
                     
-                    # 💾 SAVE TO DATABASE
-                    # Note: unique_tickers was already filtered to only include tickers without prices
-                    # So we can save directly without double-checking
-                    try:
-                        from database_config_supabase import save_stock_price_supabase
-                        today = datetime.now().strftime('%Y-%m-%d')
-                        
-                        # Save live price to historical_prices table
-                        print(f"💾 Saving live price for {ticker} (₹{live_price}) with today's date: {today}")
-                        save_stock_price_supabase(ticker, today, live_price, 'live_fetch')
-                        print(f"✅ Live price saved to historical_prices with date {today}")
-                        
-                        # Update stock_data table with latest metadata
-                        update_stock_data_supabase(
-                            ticker=ticker,
-                            sector=sector or "Unknown",
-                            current_price=live_price  # Maps to live_price column
-                        )
-                        print(f"💾 Saved {ticker} to database (price + metadata)")
-                    except Exception as db_error:
-                        print(f"⚠️ Could not save {ticker} to DB: {db_error}")
-                        # Continue anyway - at least we have it in session
-                else:
+                    else:
+                        consecutive_failures += 1
+                        print(f"❌ SKIPPED: {ticker} - invalid price or sector")
+                
+                except Exception as ticker_error:
+                    print(f"❌ ERROR fetching {ticker}: {ticker_error}")
                     consecutive_failures += 1
-                    print(f"❌ SKIPPED: {ticker} - invalid price or sector")
 
             # Clear progress indicators
             progress_bar.empty()
@@ -5724,33 +5894,33 @@ class PortfolioAnalytics:
                 st.subheader("📊 Portfolio Statistics")
                 
                 col1, col2, col3, col4 = st.columns(4)
-            
-                with col1:
-                    avg_pnl_pct = df.groupby('ticker')['pnl_percentage'].first().mean()
-                    st.metric("📈 Avg Return per Holding", f"{avg_pnl_pct:.2f}%")
-            
-                with col2:
-                    winning_holdings = len(df[df['unrealized_pnl'] > 0].groupby('ticker'))
-                    total_holdings_count = len(df.groupby('ticker'))
-                    win_rate = (winning_holdings / total_holdings_count * 100) if total_holdings_count > 0 else 0
-                    st.metric("🎯 Win Rate", f"{win_rate:.1f}%", delta=f"{winning_holdings}/{total_holdings_count}")
-            
-                with col3:
-                    if 'sector' in df.columns:
-                        sector_count = len(df['sector'].dropna().unique())
-                        st.metric("🏢 Sectors", f"{sector_count}")
-                    else:
-                        st.metric("🏢 Sectors", "N/A")
-            
-                with col4:
-                    if 'channel' in df.columns:
-                        channel_count = len(df['channel'].dropna().unique())
-                        st.metric("📡 Channels", f"{channel_count}")
-                    else:
-                        st.metric("📡 Channels", "N/A")
-            
-                st.markdown("---")
                 
+                with col1:
+                        avg_pnl_pct = df.groupby('ticker')['pnl_percentage'].first().mean()
+                        st.metric("📈 Avg Return per Holding", f"{avg_pnl_pct:.2f}%")
+                
+                with col2:
+                        winning_holdings = len(df[df['unrealized_pnl'] > 0].groupby('ticker'))
+                        total_holdings_count = len(df.groupby('ticker'))
+                        win_rate = (winning_holdings / total_holdings_count * 100) if total_holdings_count > 0 else 0
+                        st.metric("🎯 Win Rate", f"{win_rate:.1f}%", delta=f"{winning_holdings}/{total_holdings_count}")
+                
+                with col3:
+                        if 'sector' in df.columns:
+                            sector_count = len(df['sector'].dropna().unique())
+                            st.metric("🏢 Sectors", f"{sector_count}")
+                        else:
+                            st.metric("🏢 Sectors", "N/A")
+                
+                with col4:
+                        if 'channel' in df.columns:
+                            channel_count = len(df['channel'].dropna().unique())
+                            st.metric("📡 Channels", f"{channel_count}")
+                        else:
+                            st.metric("📡 Channels", "N/A")
+                
+                st.markdown("---")
+            
                 # ===== Holdings Multi-Select with Weekly Values Comparison =====
                 st.subheader("📈 Compare Holdings - Weekly Price Charts")
                 
@@ -5820,62 +5990,91 @@ class PortfolioAnalytics:
                 st.error(traceback.format_exc())   
     
     def render_sector_performance_analysis(self, df):
-        """Render sector-wise performance breakdown with interactive drill-down"""
-        st.subheader("📊 Performance Analysis - Sector & Channel Drill-Down")
-        
-        # Create tabs for Sector and Channel analysis  
-        tab1, tab2 = st.tabs(["🏢 By Sector", "📡 By Channel"])
-        
-        with tab1:
-            st.subheader("🏢 Sector-Wise Performance")
+            """Render sector-wise performance breakdown with interactive drill-down"""
+            st.subheader("📊 Performance Analysis - Sector & Channel Drill-Down")
             
-            try:
+            # Create tabs for Sector and Channel analysis  
+            tab1, tab2 = st.tabs(["🏢 By Sector", "📡 By Channel"])
+            
+            with tab1:
+                st.subheader("🏢 Sector-Wise Performance")
+                
+                try:
                 # Debug: Check what's in the sector column
-                print(f"🔍 DEBUG: df.columns = {df.columns.tolist()}")
-                
-                # Check for sector column - try multiple variations
-                sector_col = None
-                if 'sector' in df.columns and not df['sector'].isna().all():
-                    sector_col = 'sector'
-                elif 'sector_db' in df.columns and not df['sector_db'].isna().all():
-                    sector_col = 'sector_db'
-                    # Copy sector_db to sector for consistency
-                    df['sector'] = df['sector_db']
-                    sector_col = 'sector'
-                
-                if sector_col:
-                    print(f"🔍 DEBUG: Using sector column: {sector_col}")
-                    print(f"🔍 DEBUG: df['{sector_col}'].unique() = {df[sector_col].unique()}")
-                    print(f"🔍 DEBUG: df['{sector_col}'].value_counts() = {df[sector_col].value_counts()}")
-                    print(f"🔍 DEBUG: df['{sector_col}'].isna().sum() = {df[sector_col].isna().sum()}")
+                    print(f"🔍 DEBUG: df.columns = {df.columns.tolist()}")
                     
-                if not sector_col or df['sector'].isna().all():
-                    st.warning("⚠️ Sector information not available in portfolio data")
-                    st.info("💡 Sectors are automatically fetched when prices are loaded. Reload data to populate sectors.")
-                    # Show what we have for debugging
-                    with st.expander("🔍 Debug: Show available columns"):
-                        st.json(df.columns.tolist())
-                    return
-                
-                # Check if all sectors are Unknown
-                valid_sectors = df[~df['sector'].isin(['Unknown', '', None])]['sector'].dropna()
-                if len(valid_sectors) == 0:
-                    st.warning("⚠️ No sector information available - all holdings show as 'Unknown'")
-                    st.info("💡 Please use the '🔄 Refresh Portfolio Data' button in Settings to fetch sector information.")
+                    # Check for sector column - try multiple variations
+                    sector_col = None
+                    if 'sector' in df.columns and not df['sector'].isna().all():
+                        sector_col = 'sector'
+                    elif 'sector_db' in df.columns and not df['sector_db'].isna().all():
+                        sector_col = 'sector_db'
+                        # Copy sector_db to sector for consistency
+                        df['sector'] = df['sector_db']
+                        sector_col = 'sector'
                     
-                    # Show breakdown by ticker instead
-                    st.subheader("📊 Holdings Breakdown (Without Sectors)")
-                    holdings_summary = df.groupby('ticker').agg({
-                        'stock_name': 'first',
+                    if sector_col:
+                        print(f"🔍 DEBUG: Using sector column: {sector_col}")
+                        print(f"🔍 DEBUG: df['{sector_col}'].unique() = {df[sector_col].unique()}")
+                        print(f"🔍 DEBUG: df['{sector_col}'].value_counts() = {df[sector_col].value_counts()}")
+                        print(f"🔍 DEBUG: df['{sector_col}'].isna().sum() = {df[sector_col].isna().sum()}")
+                    
+                    if not sector_col or df['sector'].isna().all():
+                        st.warning("⚠️ Sector information not available in portfolio data")
+                        st.info("💡 Sectors are automatically fetched when prices are loaded. Reload data to populate sectors.")
+                        # Show what we have for debugging
+                        with st.expander("🔍 Debug: Show available columns"):
+                            st.json(df.columns.tolist())
+                        return
+                    
+                    # Check if all sectors are Unknown
+                    valid_sectors = df[~df['sector'].isin(['Unknown', '', None])]['sector'].dropna()
+                    if len(valid_sectors) == 0:
+                        st.warning("⚠️ No sector information available - all holdings show as 'Unknown'")
+                        st.info("💡 Please use the '🔄 Refresh Portfolio Data' button in Settings to fetch sector information.")
+                        
+                        # Show breakdown by ticker instead
+                        st.subheader("📊 Holdings Breakdown (Without Sectors)")
+                        holdings_summary = df.groupby('ticker').agg({
+                            'stock_name': 'first',
+                            'invested_amount': 'sum',
+                            'current_value': 'sum',
+                            'unrealized_pnl': 'sum'
+                        }).reset_index()
+                        holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
+                        holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
+                        
+                        st.dataframe(
+                            holdings_summary.style.format({
+                                'invested_amount': '₹{:,.0f}',
+                                'current_value': '₹{:,.0f}',
+                                'unrealized_pnl': '₹{:,.0f}',
+                                'pnl_percentage': '{:.2f}%'
+                            }),
+                            use_container_width=True
+                        )
+                        return
+                    
+                    # Group by sector (exclude Unknown if there are other sectors)
+                    sector_data = df.groupby('sector').agg({
                         'invested_amount': 'sum',
                         'current_value': 'sum',
                         'unrealized_pnl': 'sum'
                     }).reset_index()
-                    holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
-                    holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
                     
+                    # Filter out 'Unknown' if we have other sectors
+                    if len(sector_data) > 1 and 'Unknown' in sector_data['sector'].values:
+                        print(f"🔍 DEBUG: Filtering out 'Unknown' sector, keeping {len(sector_data)-1} known sectors")
+                        sector_data = sector_data[sector_data['sector'] != 'Unknown']
+                    
+                    sector_data['pnl_percentage'] = (sector_data['unrealized_pnl'] / sector_data['invested_amount'] * 100)
+                    sector_data = sector_data.sort_values('pnl_percentage', ascending=False)
+                    
+                    print(f"🔍 DEBUG: Final sector_data:\n{sector_data}")
+                    
+                    # Display sector performance table
                     st.dataframe(
-                        holdings_summary.style.format({
+                        sector_data.style.format({
                             'invested_amount': '₹{:,.0f}',
                             'current_value': '₹{:,.0f}',
                             'unrealized_pnl': '₹{:,.0f}',
@@ -5883,69 +6082,40 @@ class PortfolioAnalytics:
                         }),
                         use_container_width=True
                     )
-                    return
-                
-                # Group by sector (exclude Unknown if there are other sectors)
-                sector_data = df.groupby('sector').agg({
-                    'invested_amount': 'sum',
-                    'current_value': 'sum',
-                    'unrealized_pnl': 'sum'
-                }).reset_index()
-                
-                # Filter out 'Unknown' if we have other sectors
-                if len(sector_data) > 1 and 'Unknown' in sector_data['sector'].values:
-                    print(f"🔍 DEBUG: Filtering out 'Unknown' sector, keeping {len(sector_data)-1} known sectors")
-                    sector_data = sector_data[sector_data['sector'] != 'Unknown']
-                
-                sector_data['pnl_percentage'] = (sector_data['unrealized_pnl'] / sector_data['invested_amount'] * 100)
-                sector_data = sector_data.sort_values('pnl_percentage', ascending=False)
-                
-                print(f"🔍 DEBUG: Final sector_data:\n{sector_data}")
-                
-                # Display sector performance table
-                st.dataframe(
-                    sector_data.style.format({
-                        'invested_amount': '₹{:,.0f}',
-                        'current_value': '₹{:,.0f}',
-                        'unrealized_pnl': '₹{:,.0f}',
-                        'pnl_percentage': '{:.2f}%'
-                    }),
-                    use_container_width=True
-                )
-                
-                # Sector pie chart
-                import plotly.express as px
-                fig = px.pie(
-                    sector_data,
-                    values='current_value',
-                    names='sector',
-                    title='Portfolio Allocation by Sector'
-                )
-                st.plotly_chart(fig, use_container_width=True, key="sector_analysis_pie")
-                
-                # ===== NEW: Sector Multi-Select Filter =====
-                st.markdown("---")
-                st.subheader("🔍 Drill-Down by Sector (Multiple Selections Allowed)")
-                
-                # Sector selection multiselect
-                sector_list = sorted(df['sector'].dropna().unique().tolist())
-                selected_sectors = st.multiselect(
-                    "Select Sector(s) to view holdings (multiple selections allowed):",
-                    options=sector_list,
-                    default=[],
-                    key="sector_filter_multiselect"
-                )
-                
-                if selected_sectors and len(selected_sectors) > 0:
-                    # Filter holdings by selected sectors
-                    sector_holdings = df[df['sector'].isin(selected_sectors)].copy()
                     
-                    if not sector_holdings.empty:
-                        sectors_str = ", ".join(selected_sectors)
-                        st.info(f"📊 Showing {len(sector_holdings)} holding(s) in **{sectors_str}**")
+                    # Sector pie chart
+                    import plotly.express as px
+                    fig = px.pie(
+                        sector_data,
+                        values='current_value',
+                        names='sector',
+                        title='Portfolio Allocation by Sector'
+                    )
+                    st.plotly_chart(fig, use_container_width=True, key="sector_analysis_pie")
+                    
+                    # ===== NEW: Sector Multi-Select Filter =====
+                    st.markdown("---")
+                    st.subheader("🔍 Drill-Down by Sector (Multiple Selections Allowed)")
+                    
+                    # Sector selection multiselect
+                    sector_list = sorted(df['sector'].dropna().unique().tolist())
+                    selected_sectors = st.multiselect(
+                        "Select Sector(s) to view holdings (multiple selections allowed):",
+                        options=sector_list,
+                        default=[],
+                        key="sector_filter_multiselect"
+                    )
+                    
+                    if selected_sectors and len(selected_sectors) > 0:
+                        # Filter holdings by selected sectors
+                        sector_holdings = df[df['sector'].isin(selected_sectors)].copy()
+                        
+                        if not sector_holdings.empty:
+                            sectors_str = ", ".join(selected_sectors)
+                            st.info(f"📊 Showing {len(sector_holdings)} holding(s) in **{sectors_str}**")
                             
                             # Show sector-by-sector breakdown if multiple sectors selected
-                        if len(selected_sectors) > 1:
+                            if len(selected_sectors) > 1:
                                 st.markdown("### 📊 Performance by Selected Sectors")
                                 sector_breakdown = sector_holdings.groupby('sector').agg({
                                     'invested_amount': 'sum',
@@ -6028,36 +6198,58 @@ class PortfolioAnalytics:
                                 if selected_stocks and len(selected_stocks) > 0:
                                     self.render_weekly_values_multi(selected_stocks, self.session_state.user_id, context="sector_analysis")
             
-            except Exception as e:
-                st.error(f"Error in sector analysis: {e}")
-        
-        with tab2:
-            st.subheader("📡 Channel-Wise Performance")
-            
-            try:
-                if 'channel' not in df.columns or df['channel'].isna().all():
-                    st.warning("Channel information not available")
-                    return
-                
-                # Check if all channels are Unknown or empty
-                valid_channels = df[~df['channel'].isin(['Unknown', '', None])]['channel'].dropna()
-                if len(valid_channels) == 0:
-                    st.warning("⚠️ No channel information available - all holdings show as 'Unknown'")
-                    st.info("💡 Channels are set from the CSV file's 'channel' column. Please ensure your CSV has channel information.")
+                except Exception as e:
+                    st.error(f"Error in sector analysis: {e}")
+    
+            with tab2:
+                st.subheader("📡 Channel-Wise Performance")
                     
-                    # Show breakdown by ticker instead  
-                    st.subheader("📊 Holdings Breakdown (Without Channels)")
-                    holdings_summary = df.groupby('ticker').agg({
-                        'stock_name': 'first',
+                try:
+                    if 'channel' not in df.columns or df['channel'].isna().all():
+                            st.warning("Channel information not available")
+                            return
+                        
+                            # Check if all channels are Unknown or empty
+                            valid_channels = df[~df['channel'].isin(['Unknown', '', None])]['channel'].dropna()
+                            if len(valid_channels) == 0:
+                                st.warning("⚠️ No channel information available - all holdings show as 'Unknown'")
+                                st.info("💡 Channels are set from the CSV file's 'channel' column. Please ensure your CSV has channel information.")
+                                
+                                # Show breakdown by ticker instead
+                                st.subheader("📊 Holdings Breakdown (Without Channels)")
+                                holdings_summary = df.groupby('ticker').agg({
+                                    'stock_name': 'first',
+                                    'invested_amount': 'sum',
+                                    'current_value': 'sum',
+                                    'unrealized_pnl': 'sum'
+                                }).reset_index()
+                                holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
+                                holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
+                                
+                                st.dataframe(
+                                    holdings_summary.style.format({
+                                        'invested_amount': '₹{:,.0f}',
+                                        'current_value': '₹{:,.0f}',
+                                        'unrealized_pnl': '₹{:,.0f}',
+                                        'pnl_percentage': '{:.2f}%'
+                                    }),
+                                    use_container_width=True
+                                )
+                            return
+            
+                    # Group by channel
+                    channel_data = df.groupby('channel').agg({
                         'invested_amount': 'sum',
                         'current_value': 'sum',
                         'unrealized_pnl': 'sum'
                     }).reset_index()
-                    holdings_summary['pnl_percentage'] = (holdings_summary['unrealized_pnl'] / holdings_summary['invested_amount'] * 100)
-                    holdings_summary = holdings_summary.sort_values('pnl_percentage', ascending=False)
                     
+                    channel_data['pnl_percentage'] = (channel_data['unrealized_pnl'] / channel_data['invested_amount'] * 100)
+                    channel_data = channel_data.sort_values('pnl_percentage', ascending=False)
+                    
+                    # Display channel performance table
                     st.dataframe(
-                        holdings_summary.style.format({
+                        channel_data.style.format({
                             'invested_amount': '₹{:,.0f}',
                             'current_value': '₹{:,.0f}',
                             'unrealized_pnl': '₹{:,.0f}',
@@ -6065,55 +6257,33 @@ class PortfolioAnalytics:
                         }),
                         use_container_width=True
                     )
-                    return
-                
-                # Group by channel
-                channel_data = df.groupby('channel').agg({
-                    'invested_amount': 'sum',
-                    'current_value': 'sum',
-                    'unrealized_pnl': 'sum'
-                }).reset_index()
-                
-                channel_data['pnl_percentage'] = (channel_data['unrealized_pnl'] / channel_data['invested_amount'] * 100)
-                channel_data = channel_data.sort_values('pnl_percentage', ascending=False)
-                
-                # Display channel performance table
-                st.dataframe(
-                    channel_data.style.format({
-                        'invested_amount': '₹{:,.0f}',
-                        'current_value': '₹{:,.0f}',
-                        'unrealized_pnl': '₹{:,.0f}',
-                        'pnl_percentage': '{:.2f}%'
-                    }),
-                    use_container_width=True
-                )
-                
-                # Channel bar chart
-                import plotly.express as px
-                fig = px.bar(
-                    channel_data,
-                    x='channel',
-                    y='pnl_percentage',
-                    title='Performance by Channel (%)',
-                    color='pnl_percentage',
-                    color_continuous_scale=['red', 'yellow', 'green']
-                )
-                st.plotly_chart(fig, use_container_width=True, key="channel_analysis_bar")
-                
-                # ===== NEW: Hierarchical Channel > Sector > Holding Multi-Select =====
-                st.markdown("---")
-                st.subheader("🔍 Drill-Down by Channel(s) → Sector(s) → Holdings (Multiple Selections Allowed)")
-                
-                # Step 1: Channel multi-selection
-                channel_list = sorted(df['channel'].dropna().unique().tolist())
-                selected_channels = st.multiselect(
-                    "1️⃣ Select Channel(s) (leave empty for all):",
-                    options=channel_list,
-                    default=[],
-                    key="channel_filter_multiselect"
-                )
-                
-                if not selected_channels or len(selected_channels) == 0:
+                    
+                    # Channel bar chart
+                    import plotly.express as px
+                    fig = px.bar(
+                        channel_data,
+                        x='channel',
+                        y='pnl_percentage',
+                        title='Performance by Channel (%)',
+                        color='pnl_percentage',
+                        color_continuous_scale=['red', 'yellow', 'green']
+                    )
+                    st.plotly_chart(fig, use_container_width=True, key="channel_analysis_bar")
+                    
+                    # ===== NEW: Hierarchical Channel > Sector > Holding Multi-Select =====
+                    st.markdown("---")
+                    st.subheader("🔍 Drill-Down by Channel(s) → Sector(s) → Holdings (Multiple Selections Allowed)")
+                    
+                    # Step 1: Channel multi-selection
+                    channel_list = sorted(df['channel'].dropna().unique().tolist())
+                    selected_channels = st.multiselect(
+                        "1️⃣ Select Channel(s) (leave empty for all):",
+                        options=channel_list,
+                        default=[],
+                        key="channel_filter_multiselect"
+                    )
+                    
+                    if not selected_channels or len(selected_channels) == 0:
                         # Show all data across all channels
                         st.info(f"📊 Viewing: **All Channels** - {len(df)} transaction(s)")
                         
@@ -6318,7 +6488,7 @@ class PortfolioAnalytics:
                                 # Render weekly values comparison
                                 self.render_weekly_values_multi(selected_holdings, self.session_state.user_id, context="all_channels_no_sector")
                     
-                else:
+                    else:
                         # Filter by selected channels
                         channel_df = df[df['channel'].isin(selected_channels)].copy()
                         
@@ -6526,10 +6696,10 @@ class PortfolioAnalytics:
                                     use_container_width=True
                                 )
             
-            except Exception as e:
-                st.error(f"Error in channel analysis: {e}")
-                import traceback
-                st.error(f"Details: {traceback.format_exc()}")
+                except Exception as e:
+                    st.error(f"Error in channel analysis: {e}")
+                    import traceback
+                    st.error(f"Details: {traceback.format_exc()}")
     
     def render_one_year_performance_page(self):
         """Render 1-year performance page for holdings purchased in last 12 months"""

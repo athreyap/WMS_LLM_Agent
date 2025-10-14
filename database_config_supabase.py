@@ -1459,10 +1459,16 @@ def diagnose_database_issues():
 # Stock Prices Functions (unified for both weekly and monthly data)
 def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_source: str = 'yfinance') -> bool:
     """
-    Save live stock price to database using Supabase
+    Save stock price to shared price pool (no file_id - prices are common for all users)
     
-    Note: Since stock_prices table doesn't exist, we store live prices in historical_prices
-    with today's date. This is different from transaction prices which use the purchase date.
+    Note: Since stock_prices table doesn't exist, we store all prices in historical_prices.
+    Prices are SHARED across all users/files since market prices are the same for everyone.
+    
+    Args:
+        ticker: Stock ticker symbol
+        price_date: Date for the price
+        price: Price value
+        price_source: Source of price (yfinance, mftool, AI, etc.)
     """
     try:
         # Since stock_prices table doesn't exist in our schema, go directly to historical_prices
@@ -1475,7 +1481,7 @@ def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_
             # For live prices, always use today's date
             from datetime import datetime
             today = datetime.now().strftime('%Y-%m-%d')
-            print(f"💾 Saving live price for {ticker} (₹{price}) with today's date: {today}")
+            print(f"💾 Saving to shared price pool: {ticker} @ ₹{price} on {today}")
             
             # Try upsert first (requires UNIQUE constraint)
             try:
@@ -1506,7 +1512,7 @@ def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_
                             .execute()
                         
                         if existing.data and len(existing.data) > 0:
-                            # Update existing record
+                            # Update existing record in shared pool
                             record_id = existing.data[0]['id']
                             update_result = supabase.table('historical_prices')\
                                 .update({
@@ -1516,10 +1522,10 @@ def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_
                                 })\
                                 .eq('id', record_id)\
                                 .execute()
-                            print(f"✅ Updated existing price record for {ticker}")
+                            print(f"✅ Updated shared price pool for {ticker}")
                             return True
                         else:
-                            # Insert new record
+                            # Insert new record to shared pool
                             insert_result = supabase.table('historical_prices').insert({
                                 'ticker': ticker,
                                 'transaction_date': today,
@@ -1527,7 +1533,7 @@ def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_
                                 'current_price': price,
                                 'price_source': price_source
                             }).execute()
-                            print(f"✅ Inserted new price record for {ticker}")
+                            print(f"✅ Added to shared price pool: {ticker}")
                             return True
                             
                     except Exception as fallback_error:
@@ -1538,7 +1544,7 @@ def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_
                     
         else:
             # For historical transaction prices, use the provided date
-            print(f"💾 Saving historical price for {ticker} (₹{price}) for date: {price_date}")
+            print(f"💾 Saving to shared price pool: {ticker} @ ₹{price} on {price_date}")
             
             # Same fallback logic for historical prices
             try:
@@ -1575,7 +1581,7 @@ def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_
                                 })\
                                 .eq('id', record_id)\
                                 .execute()
-                            print(f"✅ Updated existing historical price for {ticker}")
+                            print(f"✅ Updated shared price pool for {ticker}")
                             return True
                         else:
                             supabase.table('historical_prices').insert({
@@ -1585,7 +1591,7 @@ def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_
                                 'current_price': price,
                                 'price_source': price_source
                             }).execute()
-                            print(f"✅ Inserted new historical price for {ticker}")
+                            print(f"✅ Added to shared price pool: {ticker}")
                             return True
                     except Exception as fallback_error:
                         print(f"❌ Fallback also failed: {fallback_error}")
@@ -1598,36 +1604,63 @@ def save_stock_price_supabase(ticker: str, price_date: str, price: float, price_
         print(f"   Error type: {type(e).__name__}")
         return False
 
-def get_stock_price_supabase(ticker: str, price_date: str) -> Optional[float]:
-    """Get stock price from database using Supabase"""
+def check_prices_in_cache(ticker_date_pairs: List[tuple]) -> Dict[tuple, float]:
+    """
+    Check which prices already exist in shared cache to avoid duplicate API calls
+    
+    Args:
+        ticker_date_pairs: List of (ticker, date) tuples to check
+    
+    Returns:
+        Dict mapping (ticker, date) -> price for found prices
+    """
     try:
-        # Try the new unified stock_prices table first
-        result = supabase.table('stock_prices').select('price').eq('ticker', ticker).eq('price_date', price_date).execute()
+        if not ticker_date_pairs:
+            return {}
         
+        # Extract unique tickers and dates
+        tickers = list(set([t for t, d in ticker_date_pairs]))
+        dates = list(set([d for t, d in ticker_date_pairs]))
+        
+        # Bulk query to check cache
+        result = supabase.table('historical_prices')\
+            .select('ticker, transaction_date, historical_price')\
+            .in_('ticker', tickers)\
+            .in_('transaction_date', dates)\
+            .execute()
+        
+        # Build cache dict
+        cache = {}
         if result.data:
-            return float(result.data[0]['price'])
+            for row in result.data:
+                key = (row['ticker'], row['transaction_date'])
+                cache[key] = float(row['historical_price'])
+        
+        print(f"📦 Cache check: {len(cache)}/{len(ticker_date_pairs)} prices found in shared pool")
+        return cache
+        
+    except Exception as e:
+        print(f"⚠️ Cache check failed: {e}")
+        return {}
+
+
+def get_stock_price_supabase(ticker: str, price_date: str) -> Optional[float]:
+    """Get stock price from shared cache (historical_prices table)"""
+    try:
+        # Query shared price pool
+        result = supabase.table('historical_prices')\
+            .select('historical_price')\
+            .eq('ticker', ticker)\
+            .eq('transaction_date', price_date)\
+            .execute()
+        
+        if result.data and len(result.data) > 0:
+            return float(result.data[0]['historical_price'])
         return None
         
     except Exception as e:
-        error_msg = str(e)
-        
-        # If stock_prices table doesn't exist, try using historical_prices table as fallback
-        # Check for PGRST205 error code (table not found) or any error mentioning stock_prices
-        if ("pgrst205" in error_msg.lower() or "stock_pric" in error_msg.lower()):
-            try:
-                # Map to historical_prices table structure
-                result = supabase.table('historical_prices').select('historical_price').eq('ticker', ticker).eq('transaction_date', price_date).execute()
-                
-                if result.data:
-                    return float(result.data[0]['historical_price'])
-                return None
-                
-            except Exception as fallback_error:
-                print(f"❌ Error getting from historical_prices fallback: {fallback_error}")
-                return None
-        else:
-            print(f"❌ Error getting stock price for {ticker} on {price_date}: {e}")
-            return None
+        print(f"❌ Error getting price from shared pool for {ticker} on {price_date}: {e}")
+        return None
 
 def get_stock_prices_bulk_supabase(tickers: List[str], price_date: str) -> Dict[str, float]:
     """
@@ -2236,7 +2269,9 @@ def bulk_update_stock_data(stock_data_list: list) -> bool:
 @retry_on_disconnect(max_retries=3, delay=1)
 def bulk_save_historical_prices(price_data_list: list) -> bool:
     """
-    Bulk save historical prices - much faster than individual saves
+    Bulk save historical prices to SHARED PRICE POOL - much faster than individual saves
+    
+    Note: Prices are shared across all users/files (no file_id) since market data is universal.
     
     Args:
         price_data_list: List of dicts with {ticker, date, price, source}
@@ -2248,7 +2283,7 @@ def bulk_save_historical_prices(price_data_list: list) -> bool:
         if not price_data_list:
             return True
         
-        # Prepare batch data
+        # Prepare batch data for shared pool
         batch_data = []
         for item in price_data_list:
             batch_data.append({
@@ -2258,13 +2293,13 @@ def bulk_save_historical_prices(price_data_list: list) -> bool:
                 "price_source": item.get('source', 'batch_update')
             })
         
-        # Bulk upsert
+        # Bulk upsert to shared price pool
         result = supabase.table("historical_prices").upsert(
             batch_data,
             on_conflict="ticker,transaction_date"
         ).execute()
         
-        print(f"✅ Bulk saved {len(batch_data)} historical price records")
+        print(f"✅ Bulk saved {len(batch_data)} prices to shared pool (no duplicates)")
         return True
         
     except Exception as e:

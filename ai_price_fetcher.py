@@ -1076,19 +1076,19 @@ Your response (actual data only, no code):"""
                     if self._call_count > 0:
                         time.sleep(0.3)  # 300ms between calls
                     
-                    print(f"🤖 Calling Gemini FREE (call {self._call_count + 1}/9)...")
+                        print(f"🤖 Calling Gemini FREE (call {self._call_count + 1}/9)...")
                     response = self.gemini_client.generate_content(prompt)
-                                
+                                    
                     if response and response.text:
                         self._call_count += 1
                         print(f"✅ Gemini successful ({self._call_count}/9 used)")
                         return response.text.strip()
                 except Exception as e:
-                            logger.error(f"❌ Gemini call failed: {e}")
-                            # If rate limit, switch to OpenAI
-                            if "429" in str(e) or "quota" in str(e).lower():
-                                print(f"⚠️ Gemini rate limit hit! Switching to OpenAI...")
-                                self._call_count = 9  # Mark as exhausted
+                                logger.error(f"❌ Gemini call failed: {e}")
+                                # If rate limit, switch to OpenAI
+                                if "429" in str(e) or "quota" in str(e).lower():
+                                    print(f"⚠️ Gemini rate limit hit! Switching to OpenAI...")
+                                    self._call_count = 9  # Mark as exhausted
                         # Fall through to OpenAI
         
         # Try OpenAI as BACKUP (PAID - when Gemini fails or hits limit)

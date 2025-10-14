@@ -716,10 +716,30 @@ Rules:
                     name_based_prices = self.get_bulk_mf_nav_by_name(still_failed, ticker_names)
                     mf_prices.update(name_based_prices)
         
-        # 2. Stocks: Use yfinance bulk (FREE, fast)
+        # 2. Stocks: Use yfinance bulk (FREE, fast) → AI fallback
         stock_prices = {}
         if stock_tickers:
             stock_prices = self.get_stocks_bulk(stock_tickers)
+            
+            # AI fallback for stocks that failed yfinance
+            failed_stocks = [ticker for ticker in stock_tickers if ticker not in stock_prices]
+            if failed_stocks:
+                logger.info(f"🤖 Using AI fallback for {len(failed_stocks)} stocks (yfinance failed)...")
+                try:
+                    ai_stock_prices = self.get_bulk_prices_with_ai(
+                        failed_stocks,
+                        ticker_names,
+                        ticker_type='Stock'
+                    )
+                    # Extract just prices from AI response (it returns CAGR data for PMS, but prices for stocks)
+                    for ticker, data in ai_stock_prices.items():
+                        if isinstance(data, dict) and 'price' in data:
+                            stock_prices[ticker] = data['price']
+                        elif isinstance(data, (int, float)):
+                            stock_prices[ticker] = float(data)
+                    logger.info(f"✅ AI recovered {len(ai_stock_prices)}/{len(failed_stocks)} stock prices")
+                except Exception as e:
+                    logger.warning(f"⚠️ AI fallback for stocks failed: {e}")
         
         # 3. PMS: Use AI bulk (paid but efficient)
         pms_data = {}
@@ -731,9 +751,9 @@ Rules:
             )
         
         logger.info(f"✅ Bulk fetch complete:")
-        logger.info(f"   - MF: {len(mf_prices)}/{len(mf_tickers) if mf_tickers else 0}")
-        logger.info(f"   - Stocks: {len(stock_prices)}/{len(stock_tickers) if stock_tickers else 0}")
-        logger.info(f"   - PMS/AIF: {len(pms_data)}/{len(pms_tickers) if pms_tickers else 0}")
+        logger.info(f"   - MF: {len(mf_prices)}/{len(mf_tickers) if mf_tickers else 0} (mftool→AI)")
+        logger.info(f"   - Stocks: {len(stock_prices)}/{len(stock_tickers) if stock_tickers else 0} (yfinance→AI)")
+        logger.info(f"   - PMS/AIF: {len(pms_data)}/{len(pms_tickers) if pms_tickers else 0} (AI)")
         
         return mf_prices, stock_prices, pms_data
 
