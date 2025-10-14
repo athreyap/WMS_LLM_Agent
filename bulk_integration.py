@@ -113,11 +113,17 @@ def fetch_historical_prices_bulk(
         all_prices.update(stock_hist)
         logger.info(f"✅ Stocks: {len(stock_hist)}/{len(stock_tickers)} fetched via yfinance")
         
-        # Check for failed tickers (missing or incomplete data)
+        # Check for failed tickers (no data returned or empty data)
         failed_tickers = []
         for ticker in stock_tickers:
-            if ticker not in stock_hist or len(stock_hist[ticker]) < len(unique_dates):
+            # Only consider it failed if:
+            # 1. Ticker not in results, OR
+            # 2. Ticker has no data at all (empty dict)
+            if ticker not in stock_hist or not stock_hist[ticker] or len(stock_hist[ticker]) == 0:
                 failed_tickers.append(ticker)
+                logger.debug(f"   ❌ {ticker} failed yfinance (no data)")
+            else:
+                logger.debug(f"   ✅ {ticker} succeeded with {len(stock_hist[ticker])} prices")
         
         # Use AI for failed tickers
         if failed_tickers:

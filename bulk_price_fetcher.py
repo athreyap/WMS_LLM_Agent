@@ -598,18 +598,48 @@ Rules:
         """
         logger.info("🚀 Starting optimized bulk price fetch...")
         
-        # 1. MF: Handle both ISIN and AMFI codes using AI bulk (most reliable)
+        # 1. MF: Try mftool (FREE) first, then AI fallback
         mf_prices = {}
         if mf_tickers:
-            logger.info(f"📊 Fetching NAV for {len(mf_tickers)} MF using AI bulk...")
-            mf_prices = self.get_bulk_mf_nav_isin(mf_tickers, ticker_names)
+            logger.info(f"📊 Fetching NAV for {len(mf_tickers)} MF using mftool (FREE)...")
             
-            # If some failed, try fetching by name (fallback)
+            # Try mftool for all MF tickers
+            try:
+                from mf_price_fetcher import MFPriceFetcher
+                mf_fetcher = MFPriceFetcher()
+                
+                for code in mf_tickers:
+                    try:
+                        # Remove 'MF_' prefix if exists
+                        clean_code = code.replace('MF_', '')
+                        
+                        # Try getting current NAV
+                        nav = mf_fetcher.get_current_nav(clean_code)
+                        
+                        if nav and nav > 0:
+                            mf_prices[code] = nav
+                            logger.info(f"✅ mftool (FREE): {code} = ₹{nav}")
+                    except Exception as e:
+                        logger.debug(f"   ⚠️ mftool failed for {code}: {e}")
+                        continue
+                
+                logger.info(f"✅ mftool (FREE): {len(mf_prices)}/{len(mf_tickers)} MF prices fetched")
+            except Exception as e:
+                logger.warning(f"⚠️ mftool import/init failed: {e}")
+            
+            # Use AI for failed tickers
             failed_codes = [code for code in mf_tickers if code not in mf_prices]
             if failed_codes:
-                logger.info(f"⚠️ Retrying {len(failed_codes)} failed codes using fund names...")
-                name_based_prices = self.get_bulk_mf_nav_by_name(failed_codes, ticker_names)
-                mf_prices.update(name_based_prices)
+                logger.info(f"🤖 Using AI fallback for {len(failed_codes)} MF codes...")
+                ai_prices = self.get_bulk_mf_nav_isin(failed_codes, ticker_names)
+                mf_prices.update(ai_prices)
+                
+                # If still failed, try by name
+                still_failed = [code for code in failed_codes if code not in mf_prices]
+                if still_failed:
+                    logger.info(f"🤖 Retrying {len(still_failed)} codes using fund names...")
+                    name_based_prices = self.get_bulk_mf_nav_by_name(still_failed, ticker_names)
+                    mf_prices.update(name_based_prices)
         
         # 2. Stocks: Use yfinance bulk (FREE, fast)
         stock_prices = {}
