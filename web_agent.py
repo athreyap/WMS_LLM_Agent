@@ -2143,12 +2143,13 @@ class PortfolioAnalytics:
                                                 scheme_code = ticker_str.replace('MF_', '')
                                                 
                                                 # Get current NAV
-                                                nav_data = mf_fetcher.get_current_nav(scheme_code)
-                                                if nav_data and nav_data > 0:
+                                                nav_data = mf_fetcher.get_mutual_fund_nav(scheme_code)
+                                                if nav_data and isinstance(nav_data, dict) and nav_data.get('nav', 0) > 0:
+                                                    nav_price = nav_data['nav']
                                                     today_str = datetime.now().strftime('%Y-%m-%d')
-                                                    weekly_prices.append({'date': today_str, 'price': float(nav_data)})
+                                                    weekly_prices.append({'date': today_str, 'price': float(nav_price)})
                                                     source = 'mftool_current'
-                                                    print(f"✅ {ticker}: mftool returned NAV ₹{nav_data}")
+                                                    print(f"✅ {ticker}: mftool returned NAV ₹{nav_price}")
                                             except Exception as mf_err:
                                                 print(f"⚠️ {ticker}: mftool failed - {mf_err}")
                                             
@@ -3171,10 +3172,10 @@ class PortfolioAnalytics:
                             
                             # Get current NAV using mftool
                             scheme_code = str(ticker).replace('MF_', '')
-                            nav_data = mf_fetcher.get_current_nav(scheme_code)
+                            nav_data = mf_fetcher.get_mutual_fund_nav(scheme_code)
                             
-                            if nav_data and nav_data > 0:
-                                live_price = nav_data
+                            if nav_data and isinstance(nav_data, dict) and nav_data.get('nav', 0) > 0:
+                                live_price = nav_data['nav']
                                 print(f"✅ mftool (FREE): ₹{live_price} for {fund_name}")
                             else:
                                 raise Exception("mftool returned no NAV")
