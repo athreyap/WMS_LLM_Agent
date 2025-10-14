@@ -834,11 +834,23 @@ class PortfolioAnalytics:
                     # Calculate per-unit price from invested amount (transaction price)
                     transaction_price = invested_amount / quantity
                     
-                    # Try to get CURRENT NAV from AI and calculate historical prices using CAGR
-                    try:
-                        if ai_available:
-                            print(f"🤖 Fetching current NAV for {ticker} to calculate CAGR-based prices")
-                            current_nav_result = ai_fetcher.get_pms_aif_nav(ticker, stock_name)  # No date = current
+                    # ✅ CHECK: Skip CAGR calculation if transaction date is invalid/average date
+                    from datetime import datetime
+                    today = datetime.now()
+                    
+                    # Check if this is likely an invalid/average date (within last 30 days from today)
+                    days_diff = abs((today.date() - transaction_date.date()).days)
+                    if days_diff < 30:
+                        print(f"⚠️ {ticker}: Transaction date appears to be invalid/average date - using transaction price only")
+                        historical_price = transaction_price
+                        fetch_method = 'pms_aif_transaction_price'
+                        ai_success += 1
+                    else:
+                        # Try to get CURRENT NAV from AI and calculate historical prices using CAGR
+                        try:
+                            if ai_available:
+                                print(f"🤖 Fetching current NAV for {ticker} to calculate CAGR-based prices")
+                                current_nav_result = ai_fetcher.get_pms_aif_nav(ticker, stock_name)  # No date = current
                             
                             if current_nav_result and isinstance(current_nav_result, dict) and current_nav_result.get('price', 0) > 0:
                                 current_nav = current_nav_result['price']
@@ -912,15 +924,10 @@ class PortfolioAnalytics:
                                 historical_price = transaction_price
                                 fetch_method = 'pms_aif_amount_only'
                                 print(f"⚠️ Could not fetch current NAV for {ticker}, using transaction price")
-                        else:
-                            # AI not available, use transaction price
+                        except Exception as e:
+                            print(f"⚠️ Error calculating PMS/AIF price for {ticker}: {e}")
                             historical_price = transaction_price
                             fetch_method = 'pms_aif_amount_only'
-                            print(f"⚠️ AI not available for {ticker}, using transaction price")
-                    except Exception as e:
-                        print(f"⚠️ Error calculating PMS/AIF price for {ticker}: {e}")
-                        historical_price = transaction_price
-                        fetch_method = 'pms_aif_amount_only'
                 
                 else:
                     # Stock - try yfinance API (and fetch sector)
