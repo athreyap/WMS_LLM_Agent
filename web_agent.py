@@ -2222,46 +2222,93 @@ class PortfolioAnalytics:
                         else:
                             tickers_to_fetch.append(ticker)
                     
-                    # ✅ USE AI for missing tickers (batch)
+                    # ✅ USE FREE API FIRST, AI FALLBACK for missing tickers
                     if tickers_to_fetch:
-                        try:
-                            from ai_price_fetcher import AIPriceFetcher
-                            ai_fetcher = AIPriceFetcher()
+                        print(f"📊 API: Fetching {len(tickers_to_fetch)} missing prices for week {week_date_str} using FREE APIs...")
+                        
+                        api_failed_tickers = []  # Track which ones failed API fetch
+                        
+                        for ticker in tickers_to_fetch:
+                            # Get ticker name from transactions
+                            ticker_trans = buy_transactions[buy_transactions['ticker'] == ticker]
+                            name = ticker_trans.iloc[0].get('stock_name', ticker) if not ticker_trans.empty else ticker
                             
-                            if ai_fetcher.is_available():
-                                print(f"🤖 AI: Fetching {len(tickers_to_fetch)} missing prices for week {week_date_str}")
-                                
-                                for ticker in tickers_to_fetch:
-                                    # Get ticker name from transactions
-                                    ticker_trans = buy_transactions[buy_transactions['ticker'] == ticker]
-                                    name = ticker_trans.iloc[0].get('stock_name', ticker) if not ticker_trans.empty else ticker
-                                    
-                                    # Determine asset type
-                                    is_pms_aif = (ticker.startswith('INP') or ticker.startswith('INA') or 'PMS' in ticker.upper() or 'AIF' in ticker.upper())
-                                    is_mutual_fund = str(ticker).isdigit() or ticker.startswith('MF_')
-                                    asset_type = 'PMS/AIF' if is_pms_aif else ('Mutual Fund' if is_mutual_fund else 'Stock')
-                                    
-                                    # Get price via AI
-                                    if is_mutual_fund:
-                                        result = ai_fetcher.get_mutual_fund_nav(ticker, name, week_date_str)
-                                    elif is_pms_aif:
-                                        result = ai_fetcher.get_pms_aif_nav(ticker, name, week_date_str)
+                            # Determine asset type
+                            is_pms_aif = (ticker.startswith('INP') or ticker.startswith('INA') or 'PMS' in ticker.upper() or 'AIF' in ticker.upper())
+                            is_mutual_fund = str(ticker).isdigit() or ticker.startswith('MF_')
+                            
+                            price = None
+                            
+                            # Try FREE APIs first
+                            if is_pms_aif:
+                                # PMS/AIF: No free API, must use AI
+                                api_failed_tickers.append((ticker, name, 'PMS/AIF'))
+                            elif is_mutual_fund:
+                                # Try mftool (FREE)
+                                try:
+                                    from mf_price_fetcher import MFPriceFetcher
+                                    mf_fetcher = MFPriceFetcher()
+                                    nav_data = mf_fetcher.get_mutual_fund_nav(ticker, week_date_str)
+                                    if nav_data and nav_data.get('nav', 0) > 0:
+                                        price = float(nav_data['nav'])
+                                        print(f"✅ mftool (FREE): {ticker} = ₹{price} on {week_date_str}")
                                     else:
-                                        result = ai_fetcher.get_stock_price(ticker, name, week_date_str)
-                                    
-                                    if result and isinstance(result, dict) and result.get('price', 0) > 0:
-                                        price = result['price']
-                                        all_weekly_prices[ticker][week_date] = price
-                                        weekly_cached_count += 1
-                                        
-                                        # Save to DB cache immediately
-                                        from database_config_supabase import save_stock_price_supabase
-                                        save_stock_price_supabase(ticker, week_date_str, price, 'ai_incremental')
-                                        print(f"✅ AI: {ticker} = ₹{price} on {week_date_str}")
+                                        api_failed_tickers.append((ticker, name, 'Mutual Fund'))
+                                except Exception as e:
+                                    api_failed_tickers.append((ticker, name, 'Mutual Fund'))
                             else:
-                                print(f"⚠️ AI not available for incremental fetch")
-                        except Exception as e:
-                            print(f"⚠️ AI fetch failed for week {week_date_str}: {e}")
+                                # Try yfinance (FREE)
+                                try:
+                                    import yfinance as yf
+                                    yf_ticker = f"{ticker}.NS" if not ticker.endswith(('.NS', '.BO')) else ticker
+                                    stock = yf.Ticker(yf_ticker)
+                                    hist = stock.history(start=week_date, end=week_date + timedelta(days=1))
+                                    if not hist.empty:
+                                        price = float(hist['Close'].iloc[0])
+                                        print(f"✅ yfinance (FREE): {ticker} = ₹{price} on {week_date_str}")
+                                    else:
+                                        api_failed_tickers.append((ticker, name, 'Stock'))
+                                except Exception as e:
+                                    api_failed_tickers.append((ticker, name, 'Stock'))
+                            
+                            # Save if API succeeded
+                            if price and price > 0:
+                                all_weekly_prices[ticker][week_date] = price
+                                weekly_cached_count += 1
+                                from database_config_supabase import save_stock_price_supabase
+                                save_stock_price_supabase(ticker, week_date_str, price, 'api_incremental')
+                        
+                        # Now use AI for tickers that failed API fetch
+                        if api_failed_tickers:
+                            try:
+                                from ai_price_fetcher import AIPriceFetcher
+                                ai_fetcher = AIPriceFetcher()
+                                
+                                if ai_fetcher.is_available():
+                                    print(f"🤖 AI: Fetching {len(api_failed_tickers)} API-failed prices for week {week_date_str}")
+                                    
+                                    for ticker, name, asset_type in api_failed_tickers:
+                                        # Get price via AI
+                                        if 'Mutual Fund' in asset_type:
+                                            result = ai_fetcher.get_mutual_fund_nav(ticker, name, week_date_str)
+                                        elif 'PMS' in asset_type or 'AIF' in asset_type:
+                                            result = ai_fetcher.get_pms_aif_nav(ticker, name, week_date_str)
+                                        else:
+                                            result = ai_fetcher.get_stock_price(ticker, name, week_date_str)
+                                        
+                                        if result and isinstance(result, dict) and result.get('price', 0) > 0:
+                                            price = result['price']
+                                            all_weekly_prices[ticker][week_date] = price
+                                            weekly_cached_count += 1
+                                            
+                                            # Save to DB cache immediately
+                                            from database_config_supabase import save_stock_price_supabase
+                                            save_stock_price_supabase(ticker, week_date_str, price, 'ai_incremental')
+                                            print(f"✅ AI: {ticker} = ₹{price} on {week_date_str}")
+                                else:
+                                    print(f"⚠️ AI not available for incremental fetch")
+                            except Exception as e:
+                                print(f"⚠️ AI fetch failed for week {week_date_str}: {e}")
                 else:
                     # Fallback: Check each ticker individually
                     for ticker in tickers_for_week:
@@ -2271,39 +2318,72 @@ class PortfolioAnalytics:
                         if cached_price and cached_price > 0:
                             all_weekly_prices[ticker][week_date] = cached_price
                         else:
-                            # ✅ USE AI for missing price
-                            try:
-                                from ai_price_fetcher import AIPriceFetcher
-                                ai_fetcher = AIPriceFetcher()
-                                
-                                if ai_fetcher.is_available():
-                                    # Get ticker name
-                                    ticker_trans = buy_transactions[buy_transactions['ticker'] == ticker]
-                                    name = ticker_trans.iloc[0].get('stock_name', ticker) if not ticker_trans.empty else ticker
+                            # ✅ USE FREE API FIRST, AI FALLBACK for missing price
+                            ticker_trans = buy_transactions[buy_transactions['ticker'] == ticker]
+                            name = ticker_trans.iloc[0].get('stock_name', ticker) if not ticker_trans.empty else ticker
+                            
+                            # Determine asset type
+                            is_pms_aif = (ticker.startswith('INP') or ticker.startswith('INA') or 'PMS' in ticker.upper() or 'AIF' in ticker.upper())
+                            is_mutual_fund = str(ticker).isdigit() or ticker.startswith('MF_')
+                            
+                            price = None
+                            
+                            # Try FREE APIs first
+                            if is_pms_aif:
+                                # PMS/AIF: No free API, skip to AI
+                                pass
+                            elif is_mutual_fund:
+                                # Try mftool (FREE)
+                                try:
+                                    from mf_price_fetcher import MFPriceFetcher
+                                    mf_fetcher = MFPriceFetcher()
+                                    nav_data = mf_fetcher.get_mutual_fund_nav(ticker, week_date_str)
+                                    if nav_data and nav_data.get('nav', 0) > 0:
+                                        price = float(nav_data['nav'])
+                                        print(f"✅ mftool (FREE): {ticker} = ₹{price} on {week_date_str}")
+                                except:
+                                    pass
+                            else:
+                                # Try yfinance (FREE)
+                                try:
+                                    import yfinance as yf
+                                    yf_ticker = f"{ticker}.NS" if not ticker.endswith(('.NS', '.BO')) else ticker
+                                    stock = yf.Ticker(yf_ticker)
+                                    hist = stock.history(start=week_date, end=week_date + timedelta(days=1))
+                                    if not hist.empty:
+                                        price = float(hist['Close'].iloc[0])
+                                        print(f"✅ yfinance (FREE): {ticker} = ₹{price} on {week_date_str}")
+                                except:
+                                    pass
+                            
+                            # If API failed or PMS/AIF, use AI
+                            if not price or price <= 0:
+                                try:
+                                    from ai_price_fetcher import AIPriceFetcher
+                                    ai_fetcher = AIPriceFetcher()
                                     
-                                    # Determine asset type
-                                    is_pms_aif = (ticker.startswith('INP') or ticker.startswith('INA') or 'PMS' in ticker.upper() or 'AIF' in ticker.upper())
-                                    is_mutual_fund = str(ticker).isdigit() or ticker.startswith('MF_')
-                                    
-                                    # Get price via AI
-                                    if is_mutual_fund:
-                                        result = ai_fetcher.get_mutual_fund_nav(ticker, name, week_date_str)
-                                    elif is_pms_aif:
-                                        result = ai_fetcher.get_pms_aif_nav(ticker, name, week_date_str)
-                                    else:
-                                        result = ai_fetcher.get_stock_price(ticker, name, week_date_str)
-                                    
-                                    if result and isinstance(result, dict) and result.get('price', 0) > 0:
-                                        price = result['price']
-                                        all_weekly_prices[ticker][week_date] = price
-                                        weekly_cached_count += 1
+                                    if ai_fetcher.is_available():
+                                        # Get price via AI
+                                        if is_mutual_fund:
+                                            result = ai_fetcher.get_mutual_fund_nav(ticker, name, week_date_str)
+                                        elif is_pms_aif:
+                                            result = ai_fetcher.get_pms_aif_nav(ticker, name, week_date_str)
+                                        else:
+                                            result = ai_fetcher.get_stock_price(ticker, name, week_date_str)
                                         
-                                        # Save to DB cache
-                                        from database_config_supabase import save_stock_price_supabase
-                                        save_stock_price_supabase(ticker, week_date_str, price, 'ai_incremental')
-                                        print(f"✅ AI: {ticker} = ₹{price} on {week_date_str}")
-                            except Exception as e:
-                                print(f"⚠️ AI fetch failed for {ticker} on {week_date_str}: {e}")
+                                        if result and isinstance(result, dict) and result.get('price', 0) > 0:
+                                            price = result['price']
+                                            print(f"✅ AI: {ticker} = ₹{price} on {week_date_str}")
+                                except Exception as e:
+                                    print(f"⚠️ AI fetch failed for {ticker} on {week_date_str}: {e}")
+                            
+                            # Save if we got a price
+                            if price and price > 0:
+                                all_weekly_prices[ticker][week_date] = price
+                                weekly_cached_count += 1
+                                from database_config_supabase import save_stock_price_supabase
+                                save_stock_price_supabase(ticker, week_date_str, price, 'api_or_ai_incremental')
+
             
             # Derive and save monthly prices for all tickers
             status_text.text("📊 Deriving monthly prices from weekly data...")

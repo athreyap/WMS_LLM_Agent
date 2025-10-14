@@ -190,21 +190,37 @@ class AIPriceFetcher:
         
         # CRITICAL: Be explicit to prevent code generation
         if date:
-            prompt = f"""Mutual Fund: {fund_name} (Code: {ticker})
-Date: {date} (or nearest available)
+            prompt = f"""Get the ACTUAL NAV for this mutual fund:
 
-Return ONLY this Python dictionary (no explanations):
-{{'date': 'YYYY-MM-DD', 'price': 150.50, 'sector': 'Equity: Large Cap'}}
+Fund Name: {fund_name}
+Fund Code: {ticker}
+Target Date: {date} (or nearest available date)
 
-RESPOND WITH ONLY THE DICTIONARY:"""
+Provide the REAL NAV data in this exact format:
+{{'date': 'YYYY-MM-DD', 'price': <actual_nav>, 'sector': '<fund_category>'}}
+
+Replace:
+- YYYY-MM-DD with the actual date
+- <actual_nav> with the real NAV value
+- <fund_category> with the fund type (e.g., 'Equity: Large Cap', 'Debt: Short Duration')
+
+Return ONLY the dictionary with REAL data:"""
         else:
-            prompt = f"""Mutual Fund: {fund_name} (Code: {ticker})
-Date: Latest NAV (yesterday if today not published)
+            prompt = f"""Get the LATEST NAV for this mutual fund:
 
-Return ONLY this Python dictionary (no explanations):
-{{'date': 'YYYY-MM-DD', 'price': 150.50, 'sector': 'Equity: Large Cap'}}
+Fund Name: {fund_name}
+Fund Code: {ticker}
+Date: Latest available (yesterday or most recent)
 
-RESPOND WITH ONLY THE DICTIONARY:"""
+Provide the REAL NAV data in this exact format:
+{{'date': 'YYYY-MM-DD', 'price': <actual_nav>, 'sector': '<fund_category>'}}
+
+Replace:
+- YYYY-MM-DD with the actual date
+- <actual_nav> with the real NAV value
+- <fund_category> with the fund type (e.g., 'Equity: Large Cap', 'Debt: Short Duration')
+
+Return ONLY the dictionary with REAL data:"""
         
         # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
         print(f"\n{'='*60}")
@@ -365,21 +381,37 @@ RESPOND WITH ONLY THE DICTIONARY:"""
         
         # CRITICAL: Be explicit to prevent code generation
         if date:
-            prompt = f"""Stock: {stock_name} ({ticker})
-Date: {date} (or nearest trading day)
+            prompt = f"""Get the ACTUAL stock price for this Indian stock:
 
-Return ONLY this Python dictionary (no explanations):
-{{'date': 'YYYY-MM-DD', 'price': 2500.50, 'sector': 'Banking'}}
+Stock Name: {stock_name}
+Ticker: {ticker}
+Target Date: {date} (or nearest trading day)
 
-RESPOND WITH ONLY THE DICTIONARY:"""
+Provide the REAL price data in this exact format:
+{{'date': 'YYYY-MM-DD', 'price': <actual_price>, 'sector': '<company_sector>'}}
+
+Replace:
+- YYYY-MM-DD with the actual trading date
+- <actual_price> with the real closing price
+- <company_sector> with the company's sector (e.g., 'Banking', 'IT Services', 'Automobiles')
+
+Return ONLY the dictionary with REAL data:"""
         else:
-            prompt = f"""Stock: {stock_name} ({ticker})
-Date: Latest closing price (yesterday if market closed)
+            prompt = f"""Get the LATEST stock price for this Indian stock:
 
-Return ONLY this Python dictionary (no explanations):
-{{'date': 'YYYY-MM-DD', 'price': 2500.50, 'sector': 'Banking'}}
+Stock Name: {stock_name}
+Ticker: {ticker}
+Date: Latest closing price (yesterday or most recent trading day)
 
-RESPOND WITH ONLY THE DICTIONARY:"""
+Provide the REAL price data in this exact format:
+{{'date': 'YYYY-MM-DD', 'price': <actual_price>, 'sector': '<company_sector>'}}
+
+Replace:
+- YYYY-MM-DD with the actual trading date
+- <actual_price> with the real closing price
+- <company_sector> with the company's sector (e.g., 'Banking', 'IT Services', 'Automobiles')
+
+Return ONLY the dictionary with REAL data:"""
         
         # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
         print(f"\n{'='*60}")
@@ -1046,17 +1078,17 @@ Your response (actual data only, no code):"""
                     
                     print(f"🤖 Calling Gemini FREE (call {self._call_count + 1}/9)...")
                     response = self.gemini_client.generate_content(prompt)
-                            
+                                
                     if response and response.text:
                         self._call_count += 1
                         print(f"✅ Gemini successful ({self._call_count}/9 used)")
                         return response.text.strip()
                 except Exception as e:
-                        logger.error(f"❌ Gemini call failed: {e}")
-                        # If rate limit, switch to OpenAI
-                        if "429" in str(e) or "quota" in str(e).lower():
-                            print(f"⚠️ Gemini rate limit hit! Switching to OpenAI...")
-                            self._call_count = 9  # Mark as exhausted
+                            logger.error(f"❌ Gemini call failed: {e}")
+                            # If rate limit, switch to OpenAI
+                            if "429" in str(e) or "quota" in str(e).lower():
+                                print(f"⚠️ Gemini rate limit hit! Switching to OpenAI...")
+                                self._call_count = 9  # Mark as exhausted
                         # Fall through to OpenAI
         
         # Try OpenAI as BACKUP (PAID - when Gemini fails or hits limit)
