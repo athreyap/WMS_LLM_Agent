@@ -51,7 +51,10 @@ class AIPriceFetcher:
         self.gemini_client = None
         self.openai_client = None
         
-        # 🆕 Try Gemini FIRST (FREE tier - user preference)
+        # 🆕 HYBRID STRATEGY: Gemini PRIMARY (FREE) + OpenAI BACKUP (PAID)
+        # This maximizes free usage while maintaining speed and reliability
+        
+        # Initialize Gemini FIRST (FREE - 10 requests/minute)
         if GEMINI_AVAILABLE:
             try:
                 # Priority: 1) Provided key, 2) Streamlit secrets, 3) Environment variables
@@ -69,12 +72,12 @@ class AIPriceFetcher:
                     genai.configure(api_key=api_key)
                     # Use gemini-2.5-flash (latest stable fast model)
                     self.gemini_client = genai.GenerativeModel('models/gemini-2.5-flash')
-                    logger.info("✅ Gemini AI initialized (PRIMARY - FREE)")
+                    logger.info("✅ Gemini AI initialized (PRIMARY - FREE, 10 req/min)")
             except Exception as e:
                 logger.warning(f"Gemini initialization failed: {e}")
         
-        # Try OpenAI as FALLBACK (when Gemini quota exceeded)
-        if OPENAI_AVAILABLE and not self.gemini_client:
+        # Initialize OpenAI as BACKUP (PAID - ₹300 available)
+        if OPENAI_AVAILABLE:
             try:
                 # Priority: 1) Provided key, 2) Streamlit secrets, 3) Environment variables
                 api_key = openai_key
@@ -88,8 +91,9 @@ class AIPriceFetcher:
                     api_key = os.getenv('OPENAI_API_KEY')
                 
                 if api_key:
+                    # Create client (use key's default project)
                     self.openai_client = OpenAI(api_key=api_key)
-                    logger.info("✅ OpenAI initialized (FALLBACK)")
+                    logger.info("✅ OpenAI initialized (BACKUP - ₹300 available)")
             except Exception as e:
                 logger.warning(f"OpenAI initialization failed: {e}")
     
@@ -120,9 +124,9 @@ class AIPriceFetcher:
         date: Optional[str] = None,
         allow_closest: bool = True,
         verify_both: bool = True
-    ) -> Optional[float]:
+    ) -> Optional[Dict[str, any]]:
         """
-        Get mutual fund NAV using AI
+        Get mutual fund NAV with date and category using AI
         
         Args:
             ticker: AMFI scheme code or ISIN
@@ -131,32 +135,58 @@ class AIPriceFetcher:
             allow_closest: If True, return closest available date if exact not found
         
         Returns:
-            NAV value or None if not found
+            Dict with {'date': 'YYYY-MM-DD', 'price': float, 'sector': str} or None
         """
         if not self.is_available():
             return None
         
-        # ULTRA-CLEAR prompt with explicit separation of date and NAV
+        # UPDATED prompt - request DATE, NAV, and CATEGORY
         if date:
-            prompt = f"""Mutual Fund: {fund_name}
-Scheme Code: {ticker}
-Date: {date}
-Question: What was the NAV (Net Asset Value) in Indian Rupees on this date?
-Answer format: Only the NAV number (e.g. 125.50)"""
+            prompt = f"""Get NAV for mutual fund '{fund_name}' (code: {ticker}) on or nearest to {date}.
+Reply in format: DATE|NAV|CATEGORY
+Example: 2024-10-14|150.50|Equity: Large Cap
+Category options: Equity: Large Cap, Equity: Mid Cap, Equity: Small Cap, Equity: Multi Cap, Debt Fund, Hybrid Fund, Liquid Fund, Gold Fund, International Fund, Index Fund, Sectoral Fund, Tax Saver (ELSS), Other"""
         else:
-            prompt = f"""Mutual Fund: {fund_name}
-Scheme Code: {ticker}
-Question: What is the LATEST NAV (Net Asset Value) in Indian Rupees?
-Answer format: Only the NAV number (e.g. 125.50)"""
+            prompt = f"""Get the most recent NAV for mutual fund '{fund_name}' (code: {ticker}). If today's NAV is not available, provide yesterday's NAV.
+Reply in format: DATE|NAV|CATEGORY
+Example: 2024-10-13|150.50|Equity: Large Cap
+Category options: Equity: Large Cap, Equity: Mid Cap, Equity: Small Cap, Equity: Multi Cap, Debt Fund, Hybrid Fund, Liquid Fund, Gold Fund, International Fund, Index Fund, Sectoral Fund, Tax Saver (ELSS), Other"""
+        
+        # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
+        print(f"\n{'='*60}")
+        print(f"📤 MF PROMPT for {ticker}:")
+        print(prompt)
+        print(f"{'='*60}\n")
         
         try:
             response = self._call_ai(prompt)
+            print(f"📥 MF RESPONSE for {ticker}: {response}\n")
             if response and response != "NOT_FOUND":
-                # Extract numeric value
-                nav = self._extract_number(response)
-                if nav and nav > 0:
-                    logger.info(f"✅ AI found NAV for {ticker}: ₹{nav}")
-                    return nav
+                # Parse DATE|NAV|CATEGORY format
+                parts = response.strip().split('|')
+                if len(parts) >= 3:
+                    result_date = parts[0].strip()
+                    nav = self._extract_number(parts[1])
+                    category = parts[2].strip()
+                    
+                    if nav and nav > 0:
+                        logger.info(f"✅ AI found NAV for {ticker}: ₹{nav} on {result_date}, category: {category}")
+                        return {
+                            'date': result_date,
+                            'price': nav,
+                            'sector': category
+                        }
+                elif len(parts) >= 2:
+                    # Fallback if category missing
+                    result_date = parts[0].strip()
+                    nav = self._extract_number(parts[1])
+                    if nav and nav > 0:
+                        return {'date': result_date, 'price': nav, 'sector': 'Mutual Fund'}
+                else:
+                    # Fallback if only NAV returned
+                    nav = self._extract_number(response)
+                    if nav and nav > 0:
+                        return {'date': date or 'LATEST', 'price': nav, 'sector': 'Mutual Fund'}
             
             logger.warning(f"⚠️ AI could not find NAV for {ticker}")
             return None
@@ -172,9 +202,9 @@ Answer format: Only the NAV number (e.g. 125.50)"""
         date: Optional[str] = None,
         allow_closest: bool = True,
         verify_both: bool = True
-    ) -> Optional[float]:
+    ) -> Optional[Dict[str, any]]:
         """
-        Get stock price using AI (fallback when yfinance fails)
+        Get stock price with date and sector using AI
         
         Args:
             ticker: Stock ticker (e.g., INFY, RELIANCE, 500325)
@@ -183,33 +213,58 @@ Answer format: Only the NAV number (e.g. 125.50)"""
             allow_closest: If True, return closest available date if exact not found
         
         Returns:
-            Stock price or None if not found
+            Dict with {'date': 'YYYY-MM-DD', 'price': float, 'sector': str} or None
         """
         if not self.is_available():
             return None
         
-        # ULTRA-CLEAR prompt with explicit separation of date and price
+        # UPDATED prompt - request DATE, PRICE, and SECTOR
         if date:
-            prompt = f"""Stock: {stock_name}
-Ticker: {ticker} (NSE)
-Date: {date}
-Question: What was the CLOSING PRICE in Indian Rupees on this date?
-Answer format: Only the price number (e.g. 2500.50)"""
+            prompt = f"""Get closing price for stock '{stock_name}' (NSE: {ticker}) on or nearest to {date}.
+Reply in format: DATE|PRICE|SECTOR
+Example: 2024-10-14|2500.50|Banking
+Sector options: Banking, Technology, Pharmaceuticals, Automobile, Metals & Mining, Oil & Gas, Consumer Goods, Real Estate, Power & Energy, Infrastructure, Telecom, Healthcare, FMCG, Financial Services, Other"""
         else:
-            prompt = f"""Stock: {stock_name}
-Ticker: {ticker} (NSE)
-Question: What is the LATEST CLOSING PRICE in Indian Rupees?
-Answer format: Only the price number (e.g. 2500.50)"""
+            prompt = f"""Get the most recent closing price for stock '{stock_name}' (NSE: {ticker}). If market is closed, provide yesterday's close.
+Reply in format: DATE|PRICE|SECTOR
+Example: 2024-10-14|2500.50|Banking
+Sector options: Banking, Technology, Pharmaceuticals, Automobile, Metals & Mining, Oil & Gas, Consumer Goods, Real Estate, Power & Energy, Infrastructure, Telecom, Healthcare, FMCG, Financial Services, Other"""
+        
+        # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
+        print(f"\n{'='*60}")
+        print(f"📤 STOCK PROMPT for {ticker}:")
+        print(prompt)
+        print(f"{'='*60}\n")
         
         try:
             response = self._call_ai(prompt)
+            print(f"📥 STOCK RESPONSE for {ticker}: {response}\n")
             if response and response != "NOT_FOUND":
-                # Extract numeric value (handle DATE suffix if present)
-                price_str = response.split('|')[0] if '|' in response else response
-                price = self._extract_number(price_str)
-                if price and price > 0:
-                    logger.info(f"✅ AI found price for {ticker}: ₹{price}")
-                    return price
+                # Parse DATE|PRICE|SECTOR format
+                parts = response.strip().split('|')
+                if len(parts) >= 3:
+                    result_date = parts[0].strip()
+                    price = self._extract_number(parts[1])
+                    sector = parts[2].strip()
+                    
+                    if price and price > 0:
+                        logger.info(f"✅ AI found price for {ticker}: ₹{price} on {result_date}, sector: {sector}")
+                        return {
+                            'date': result_date,
+                            'price': price,
+                            'sector': sector
+                        }
+                elif len(parts) >= 2:
+                    # Fallback if sector missing
+                    result_date = parts[0].strip()
+                    price = self._extract_number(parts[1])
+                    if price and price > 0:
+                        return {'date': result_date, 'price': price, 'sector': 'Other Stocks'}
+                else:
+                    # Fallback if only price returned
+                    price = self._extract_number(response)
+                    if price and price > 0:
+                        return {'date': date or 'LATEST', 'price': price, 'sector': 'Other Stocks'}
             
             logger.warning(f"⚠️ AI could not find price for {ticker}")
             return None
@@ -223,39 +278,60 @@ Answer format: Only the price number (e.g. 2500.50)"""
         ticker: str,
         name: str,
         start_date: str,
-        end_date: str = 'TODAY'
-    ) -> Dict[str, float]:
+        end_date: str = 'TODAY',
+        asset_type: str = 'Stock'
+    ) -> Dict[str, Dict[str, any]]:
         """
-        Get weekly prices for a ticker between two dates using AI
+        Get weekly prices with dates and sector for a ticker between two dates using AI
         
         Args:
             ticker: Ticker code
             name: Asset name
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD) or 'TODAY'
+            asset_type: Type of asset (Stock, Mutual Fund, PMS, AIF)
         
         Returns:
-            Dict of {date: price} with weekly prices
-            Example: {'2024-01-01': 2500.50, '2024-01-08': 2550.00, ...}
+            Dict of {date: {'price': float, 'sector': str}} with weekly prices
+            Example: {'2024-01-01': {'price': 2500.50, 'sector': 'Banking'}, ...}
         """
         if not self.is_available():
             return {}
         
-        # Clear prompt for weekly closing prices in date range
-        prompt = f"Provide weekly closing prices for {name} (NSE ticker: {ticker}) from {start_date} to {end_date}. Give one price per week (Monday or first trading day of each week). Format each line as: YYYY-MM-DD|closing_price_in_INR (example: 2024-01-15|2500.50)"
+        # UPDATED prompt for weekly prices with DATE, PRICE, and SECTOR
+        prompt = f"""Get weekly closing prices for '{name}' ({ticker}) from {start_date} to {end_date}. 
+Provide one price per week (Monday or first trading day).
+Reply in format: DATE|PRICE|SECTOR (one per line)
+Example:
+2024-01-08|2500.50|Banking
+2024-01-15|2550.00|Banking
+For {asset_type}, use appropriate sector/category."""
+        
+        # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
+        print(f"\n{'='*60}")
+        print(f"📤 WEEKLY RANGE PROMPT for {ticker}:")
+        print(f"{'='*60}")
+        print(prompt)
+        print(f"{'='*60}\n")
         
         try:
             response = self._call_ai(prompt)
+            print(f"\n{'='*60}")
+            print(f"📥 WEEKLY RANGE RESPONSE for {ticker}:")
+            print(f"{'='*60}")
+            print(response)
+            print(f"{'='*60}\n")
+            
             if not response:
                 return {}
             
-            # Parse response into dict (robust parsing for various AI formats)
+            # Parse response into dict (robust parsing for DATE|PRICE|SECTOR format)
             results = {}
             for line in response.strip().split('\n'):
                 line = line.strip()
                 
                 # Skip empty lines or headers
-                if not line or line.lower().startswith(('date', 'ticker', 'week', 'note', 'source')):
+                if not line or line.lower().startswith(('date', 'ticker', 'week', 'note', 'source', 'example')):
                     continue
                 
                 # Handle different separators: | or : or tab or multiple spaces
@@ -284,9 +360,15 @@ Answer format: Only the price number (e.g. 2500.50)"""
                         
                         price = float(price_str)
                         
+                        # Extract sector (third part, if available)
+                        sector = parts[2].strip() if len(parts) >= 3 else 'Other'
+                        
                         # Validate: price should be positive and reasonable
                         if price > 0 and price < 1000000000:  # Less than 1 billion (sanity check)
-                            results[date] = price
+                            results[date] = {
+                                'price': price,
+                                'sector': sector
+                            }
                         else:
                             logger.warning(f"Skipping invalid price for {date}: {price}")
                     except (ValueError, IndexError) as e:
@@ -335,8 +417,13 @@ Answer format: Only the price number (e.g. 2500.50)"""
         
         prompt = f"Provide closing prices for: {'; '.join(ticker_list[:5])}{'...' if len(ticker_list) > 5 else ''} on dates: {date_list}. For 'LATEST', give today's or most recent closing price. Format each line as: TICKER|YYYY-MM-DD|closing_price_in_INR (example: RELIANCE|2024-01-15|2500.50)"
         
+        # LOG PROMPT FOR DEBUGGING
+        logger.info(f"📤 BULK PROMPT ({len(tickers_with_names)} tickers, {len(dates)} dates):\n{prompt}\n{'='*50}")
+        
         try:
             response = self._call_ai(prompt)
+            logger.info(f"📥 BULK RESPONSE:\n{response}\n{'='*50}")
+            
             if not response:
                 return {}
             
@@ -374,9 +461,9 @@ Answer format: Only the price number (e.g. 2500.50)"""
         ticker: str,
         fund_name: str,
         date: Optional[str] = None
-    ) -> Optional[float]:
+    ) -> Optional[Dict[str, any]]:
         """
-        Get PMS/AIF NAV using AI (for current value calculation)
+        Get PMS/AIF NAV with date and category using AI
         
         Args:
             ticker: SEBI registration code
@@ -384,31 +471,55 @@ Answer format: Only the price number (e.g. 2500.50)"""
             date: Target date or None for latest
         
         Returns:
-            NAV/Unit value or None
+            Dict with {'date': 'YYYY-MM-DD', 'price': float, 'sector': str} or None
         """
         if not self.is_available():
             return None
         
-        # ULTRA-CLEAR prompt with explicit separation of date and NAV
+        # UPDATED prompt - request DATE, NAV, and CATEGORY
         if date:
-            prompt = f"""PMS/AIF Fund: {fund_name}
-SEBI Code: {ticker}
-Date: {date}
-Question: What was the NAV or unit value in Indian Rupees on this date?
-Answer format: Only the NAV/unit value number (e.g. 150.75)"""
+            prompt = f"""Get NAV for PMS/AIF '{fund_name}' (SEBI: {ticker}) on or nearest to {date}.
+Reply in format: DATE|NAV|CATEGORY
+Example: 2024-10-14|150.50|PMS Equity
+Category options: PMS Equity, PMS Debt, PMS Hybrid, AIF Cat I, AIF Cat II, AIF Cat III, Other"""
         else:
-            prompt = f"""PMS/AIF Fund: {fund_name}
-SEBI Code: {ticker}
-Question: What is the LATEST NAV or unit value in Indian Rupees?
-Answer format: Only the NAV/unit value number (e.g. 150.75)"""
+            prompt = f"""Get the most recent NAV for PMS/AIF '{fund_name}' (SEBI: {ticker}). If today's NAV is not available, provide the latest available NAV (yesterday or most recent).
+Reply in format: DATE|NAV|CATEGORY
+Example: 2024-10-13|150.50|PMS Equity
+Category options: PMS Equity, PMS Debt, PMS Hybrid, AIF Cat I, AIF Cat II, AIF Cat III, Other"""
+        
+        # LOG PROMPT FOR DEBUGGING
+        logger.info(f"📤 PMS/AIF PROMPT for {ticker}:\n{prompt}\n{'='*50}")
         
         try:
             response = self._call_ai(prompt)
+            logger.info(f"📥 PMS/AIF RESPONSE for {ticker}: {response}")
             if response and response != "NOT_FOUND":
-                nav = self._extract_number(response)
-                if nav and nav > 0:
-                    logger.info(f"✅ AI found PMS/AIF NAV for {ticker}: ₹{nav}")
-                    return nav
+                # Parse DATE|NAV|CATEGORY format
+                parts = response.strip().split('|')
+                if len(parts) >= 3:
+                    result_date = parts[0].strip()
+                    nav = self._extract_number(parts[1])
+                    category = parts[2].strip()
+                    
+                    if nav and nav > 0:
+                        logger.info(f"✅ AI found PMS/AIF NAV for {ticker}: ₹{nav} on {result_date}, category: {category}")
+                        return {
+                            'date': result_date,
+                            'price': nav,
+                            'sector': category
+                        }
+                elif len(parts) >= 2:
+                    # Fallback if category missing
+                    result_date = parts[0].strip()
+                    nav = self._extract_number(parts[1])
+                    if nav and nav > 0:
+                        return {'date': result_date, 'price': nav, 'sector': 'PMS/AIF'}
+                else:
+                    # Fallback if only NAV returned
+                    nav = self._extract_number(response)
+                    if nav and nav > 0:
+                        return {'date': date or 'LATEST', 'price': nav, 'sector': 'PMS/AIF'}
             
             logger.warning(f"⚠️ AI could not find PMS/AIF NAV for {ticker}")
             return None
@@ -492,53 +603,57 @@ Answer format: Only the NAV/unit value number (e.g. 150.75)"""
             self._use_openai = False  # Reset to Gemini after 1 minute
             logger.info("🔄 Rate limit counter reset, switching back to Gemini")
         
-        # 🔄 SMART ALTERNATING STRATEGY: Gemini (9 calls) → OpenAI (while Gemini resets)
-        if self._call_count >= 9 and not self._use_openai:
-            # Switch to OpenAI after 9 Gemini calls
-            logger.info("🔄 Gemini batch complete (9/9), switching to OpenAI...")
-            self._use_openai = True
+        # 🔄 HYBRID STRATEGY: Gemini FIRST (FREE), then OpenAI BACKUP (PAID)
         
-        # Try Gemini FIRST (for first 9 calls)
-        if self.gemini_client and not self._use_openai:
-            try:
-                time.sleep(0.3)  # 300ms delay for safety
-                
-                response = self.gemini_client.generate_content(prompt)
-                if response and response.text:
-                    self._call_count += 1
-                    logger.info(f"✅ Gemini call {self._call_count}/9 successful")
-                    return response.text.strip()
-            except Exception as e:
-                error_str = str(e)
-                logger.warning(f"Gemini call failed: {e}")
-                
-                # If it's a rate limit error, switch to OpenAI immediately
-                if "429" in error_str or "quota" in error_str.lower() or "rate" in error_str.lower():
-                    logger.warning("⚠️ Gemini rate limit hit, switching to OpenAI...")
-                    self._use_openai = True
+        # Try Gemini FIRST (FREE - maximize free usage!)
+        if self.gemini_client:
+            # Rate limiting for Gemini (10/min free tier)
+            if self._call_count >= 9:
+                wait_time = max(0, 60 - elapsed)
+                if wait_time > 0:
+                    print(f"⏳ Gemini quota: 9/10 used. Switching to OpenAI...")
+                    # Don't wait, immediately switch to OpenAI
+                    self._call_count = 0
+                    self._call_start_time = time.time()
+            else:
+                # Use Gemini if we haven't hit the limit
+                try:
+                    if self._call_count > 0:
+                        time.sleep(0.3)  # 300ms between calls
+                    
+                    print(f"🤖 Calling Gemini FREE (call {self._call_count + 1}/9)...")
+                    response = self.gemini_client.generate_content(prompt)
+                    
+                    if response and response.text:
+                        self._call_count += 1
+                        print(f"✅ Gemini successful ({self._call_count}/9 used)")
+                        return response.text.strip()
+                except Exception as e:
+                    logger.error(f"❌ Gemini call failed: {e}")
+                    # If rate limit, switch to OpenAI
+                    if "429" in str(e) or "quota" in str(e).lower():
+                        print(f"⚠️ Gemini rate limit hit! Switching to OpenAI...")
+                        self._call_count = 9  # Mark as exhausted
+                    # Fall through to OpenAI
         
-        # Use OpenAI (after 9 Gemini calls or when Gemini fails)
-        if self.openai_client and self._use_openai:
+        # Try OpenAI as BACKUP (PAID - when Gemini fails or hits limit)
+        if self.openai_client:
             try:
+                print(f"🤖 Calling OpenAI BACKUP (₹300 credits)...")
                 response = self.openai_client.chat.completions.create(
-                    model="gpt-3.5-turbo",  # Fast and cost-effective
+                    model="gpt-3.5-turbo",
                     messages=[
-                        {"role": "system", "content": "Financial data expert."},
+                        {"role": "system", "content": "You are a financial data expert. Provide only numeric answers."},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0,  # For consistent results
-                    max_tokens=50  # Reduced - only need number responses
+                    temperature=0,
+                    max_tokens=50
                 )
                 if response.choices and response.choices[0].message:
-                    logger.info(f"✅ OpenAI call successful (Gemini: {self._call_count}/9)")
+                    print(f"✅ OpenAI call successful")
                     return response.choices[0].message.content.strip()
             except Exception as e:
-                logger.error(f"OpenAI call failed: {e}")
-                # If OpenAI fails, try Gemini as last resort
-                if self.gemini_client and self._call_count < 9:
-                    logger.warning("⚠️ OpenAI failed, trying Gemini again...")
-                    self._use_openai = False
-                    return self._call_ai(prompt)  # Recursive retry with Gemini
+                logger.error(f"❌ OpenAI call failed: {e}")
         
         logger.error("❌ All AI providers failed")
         return None

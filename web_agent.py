@@ -869,6 +869,8 @@ class PortfolioAnalytics:
                 
                 if show_ui:
                     progress = (idx + 1) / len(all_tickers)
+                    # This loader fetches HISTORICAL/WEEKLY prices (long date ranges)
+                    # Separate from live prices which are fetched via bulk_price_fetcher
                     st.progress(progress, text=f"🤖 Fetching {idx + 1}/{len(all_tickers)}: {name}")
                 
                 # Calculate date range: if historical is older than 1 year, use historical date; else use 1 year ago
@@ -943,13 +945,29 @@ class PortfolioAnalytics:
             current_item = 0
             
             for ticker, date_prices in results.items():
-                for date, price in date_prices.items():
+                for date, price_data in date_prices.items():
                     try:
+                        # Handle new dict format: {'price': float, 'sector': str}
+                        if isinstance(price_data, dict):
+                            price = price_data.get('price')
+                            sector = price_data.get('sector', 'Unknown')
+                        else:
+                            # Fallback for old format (just float)
+                            price = price_data
+                            sector = 'Unknown'
+                        
                         # Convert LATEST to today's date for storage
                         if date == 'LATEST':
                             date_str = datetime.now().strftime('%Y-%m-%d')
                         else:
                             date_str = date
+                        
+                        # ✅ VALIDATE: Skip NaN, inf, and invalid prices
+                        import math
+                        if not isinstance(price, (int, float)) or math.isnan(price) or math.isinf(price) or price <= 0:
+                            print(f"⚠️ Skipping invalid price for {ticker} on {date}: {price}")
+                            skipped_count += 1
+                            continue
                         
                         # Save to cache
                         save_stock_price_supabase(ticker, date_str, price, 'ai_bulk_fetch')
@@ -2304,17 +2322,19 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                             else:
                                 sector = "PMS"
                             
-                            # Use AI to get NAV
+                            # Use AI to get NAV (returns {'date', 'price', 'sector'})
                             try:
                                 from ai_price_fetcher import AIPriceFetcher
                                 ai_fetcher = AIPriceFetcher()
                                 
                                 if ai_fetcher.is_available():
                                     print(f"🤖 AI: Fetching NAV for '{pms_name}' (Code: {ticker})")
-                                    live_price = ai_fetcher.get_pms_aif_nav(ticker, pms_name)
+                                    result = ai_fetcher.get_pms_aif_nav(ticker, pms_name)
                                     
-                                    if live_price and live_price > 0:
-                                        print(f"✅ AI found {sector} NAV: ₹{live_price} for {pms_name}")
+                                    if result and isinstance(result, dict) and result.get('price', 0) > 0:
+                                        live_price = result['price']
+                                        sector = result.get('sector', sector)  # Use AI sector or fallback
+                                        print(f"✅ AI found {sector} NAV: ₹{live_price} for {pms_name} (Date: {result.get('date', 'N/A')})")
                                     else:
                                         raise Exception("AI returned no price")
                                 else:
@@ -2342,40 +2362,19 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         mf_trans = df[df['ticker'] == ticker].iloc[0] if not df[df['ticker'] == ticker].empty else None
                         fund_name = mf_trans.get('stock_name', ticker) if mf_trans is not None else ticker
                         
-                        # Use AI directly (Gemini FREE)
+                        # Use AI directly (Gemini FREE - returns {'date', 'price', 'sector'})
                         try:
                             from ai_price_fetcher import AIPriceFetcher
                             ai_fetcher = AIPriceFetcher()
                             
                             if ai_fetcher.is_available():
                                 print(f"🤖 AI: Fetching NAV for '{fund_name}' (Code: {ticker})")
-                                live_price = ai_fetcher.get_mutual_fund_nav(ticker, fund_name)
+                                result = ai_fetcher.get_mutual_fund_nav(ticker, fund_name)
                                 
-                                if live_price and live_price > 0:
-                                    print(f"✅ AI found MF NAV: ₹{live_price} for {fund_name}")
-                                    # Try to get category from fund name
-                                    fund_name_upper = fund_name.upper()
-                                    if 'EQUITY' in fund_name_upper or 'STOCK' in fund_name_upper:
-                                        if 'SMALL' in fund_name_upper:
-                                            sector = "Equity: Small Cap"
-                                        elif 'MID' in fund_name_upper:
-                                            sector = "Equity: Mid Cap"
-                                        elif 'LARGE' in fund_name_upper:
-                                            sector = "Equity: Large Cap"
-                                        else:
-                                            sector = "Equity: Multi Cap"
-                                    elif 'DEBT' in fund_name_upper or 'BOND' in fund_name_upper:
-                                        sector = "Debt Fund"
-                                    elif 'HYBRID' in fund_name_upper or 'BALANCED' in fund_name_upper:
-                                        sector = "Hybrid Fund"
-                                    elif 'LIQUID' in fund_name_upper:
-                                        sector = "Liquid Fund"
-                                    elif 'GOLD' in fund_name_upper:
-                                        sector = "Gold Fund"
-                                    elif 'INTERNATIONAL' in fund_name_upper or 'GLOBAL' in fund_name_upper:
-                                        sector = "International Fund"
-                                    else:
-                                        sector = "Mutual Fund"
+                                if result and isinstance(result, dict) and result.get('price', 0) > 0:
+                                    live_price = result['price']
+                                    sector = result.get('sector', 'Mutual Fund')  # Use AI category or fallback
+                                    print(f"✅ AI found MF NAV: ₹{live_price} for {fund_name} (Date: {result.get('date', 'N/A')}, Category: {sector})")
                                 else:
                                     raise Exception("AI returned no price")
                             else:
@@ -2407,49 +2406,19 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         sector = None
                         market_cap = None
                         
-                        # Use AI directly (Gemini FREE with NSE preference)
+                        # Use AI directly (Gemini FREE - returns {'date', 'price', 'sector'})
                         try:
                             from ai_price_fetcher import AIPriceFetcher
                             ai_fetcher = AIPriceFetcher()
                             
                             if ai_fetcher.is_available():
                                 print(f"🤖 AI: Fetching price for '{asset_name}' (Ticker: {ticker})")
-                                live_price = ai_fetcher.get_stock_price(ticker, asset_name)
+                                result = ai_fetcher.get_stock_price(ticker, asset_name)
                                 
-                                if live_price and live_price > 0:
-                                    print(f"✅ AI found {asset_type} price: ₹{live_price} for {asset_name}")
-                                    
-                                    # Set sector based on asset type
-                                    if is_bond:
-                                        sector = "Bonds"
-                                    elif is_etf:
-                                        sector = "ETF"
-                                    else:
-                                        # Intelligent sector categorization from stock name
-                                        stock_name_upper = asset_name.upper()
-                                        if any(word in stock_name_upper for word in ['BANK', 'HDFC', 'ICICI', 'SBI', 'AXIS', 'KOTAK']):
-                                            sector = 'Banking'
-                                        elif any(word in stock_name_upper for word in ['TECH', 'INFY', 'TCS', 'WIPRO', 'HCL', 'SOFTWARE']):
-                                            sector = 'Technology'
-                                        elif any(word in stock_name_upper for word in ['PHARMA', 'CIPLA', 'DRREDDY', 'SUNPHARMA', 'DRUG']):
-                                            sector = 'Pharmaceuticals'
-                                        elif any(word in stock_name_upper for word in ['AUTO', 'MARUTI', 'TATA MOTORS', 'BAJAJ', 'MOTOR']):
-                                            sector = 'Automobile'
-                                        elif any(word in stock_name_upper for word in ['STEEL', 'TATASTEEL', 'JSWSTEEL', 'METAL']):
-                                            sector = 'Metals & Mining'
-                                        elif any(word in stock_name_upper for word in ['OIL', 'ONGC', 'COAL', 'RELIANCE', 'PETRO']):
-                                            sector = 'Oil & Gas'
-                                        elif any(word in stock_name_upper for word in ['CONSUMER', 'HINDUNILVR', 'ITC', 'NESTLE', 'FMCG']):
-                                            sector = 'Consumer Goods'
-                                        elif any(word in stock_name_upper for word in ['REALTY', 'DLF', 'GODREJ', 'REAL ESTATE']):
-                                            sector = 'Real Estate'
-                                        elif any(word in stock_name_upper for word in ['POWER', 'POWERGRID', 'NTPC', 'ENERGY']):
-                                            sector = 'Power & Energy'
-                                        elif any(word in stock_name_upper for word in ['INFRA', 'CONSTRUCTION', 'L&T', 'LARSEN']):
-                                            sector = 'Infrastructure'
-                                        else:
-                                            sector = 'Other Stocks'
-                                    
+                                if result and isinstance(result, dict) and result.get('price', 0) > 0:
+                                    live_price = result['price']
+                                    sector = result.get('sector', 'Other Stocks')  # Use AI sector or fallback
+                                    print(f"✅ AI found {asset_type} price: ₹{live_price} for {asset_name} (Date: {result.get('date', 'N/A')}, Sector: {sector})")
                                     market_cap = None  # AI doesn't fetch market cap yet
                                 else:
                                     raise Exception("AI returned no price")
@@ -9488,17 +9457,31 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
         }
     
     def get_single_ticker_price_ai(self, ticker, name):
-        """Helper to get single ticker price using AI"""
+        """Helper to get single ticker price using AI (returns {'date', 'price', 'sector'})"""
         from ai_price_fetcher import AIPriceFetcher
         ai_fetcher = AIPriceFetcher()
         if ai_fetcher.is_available():
             # Detect type
             if str(ticker).isdigit():
-                price = ai_fetcher.get_mutual_fund_nav(ticker, name)
-                return {"ticker": ticker, "price": price, "type": "Mutual Fund"}
+                result = ai_fetcher.get_mutual_fund_nav(ticker, name)
+                if result and isinstance(result, dict):
+                    return {
+                        "ticker": ticker,
+                        "price": result.get('price'),
+                        "date": result.get('date'),
+                        "sector": result.get('sector'),
+                        "type": "Mutual Fund"
+                    }
             else:
-                price = ai_fetcher.get_stock_price(ticker, name)
-                return {"ticker": ticker, "price": price, "type": "Stock"}
+                result = ai_fetcher.get_stock_price(ticker, name)
+                if result and isinstance(result, dict):
+                    return {
+                        "ticker": ticker,
+                        "price": result.get('price'),
+                        "date": result.get('date'),
+                        "sector": result.get('sector'),
+                        "type": "Stock"
+                    }
         return {"error": "AI not available"}
     
     def process_ai_query_with_db_access(self, user_query, uploaded_files=None):
