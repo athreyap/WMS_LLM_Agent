@@ -893,26 +893,107 @@ class PortfolioAnalytics:
                 
                 end_date = 'TODAY'
                 
-                print(f"🤖 AI [{idx + 1}/{len(all_tickers)}] {ticker} ({name}): {start_date} to {end_date}")
+                # Detect asset type
+                is_pms_aif = (
+                    ticker.startswith('INP') or ticker.startswith('INA') or
+                    'PMS' in ticker.upper() or 'AIF' in ticker.upper()
+                )
+                is_mutual_fund = str(ticker).isdigit() or ticker.startswith('MF_')
                 
                 try:
-                    # Get weekly prices in range (1 AI call per ticker)
-                    # AI fetcher handles alternating Gemini/OpenAI automatically
-                    weekly_prices = ai_fetcher.get_weekly_prices_in_range(
-                        ticker=ticker,
-                        name=name,
-                        start_date=start_date,
-                        end_date=end_date
-                    )
+                    weekly_prices = {}
+                    
+                    # Strategy: Try FREE API first, use AI only for missing data or PMS/AIF
+                    if is_pms_aif:
+                        # PMS/AIF: No free API available, use AI
+                        print(f"🤖 AI [{idx + 1}/{len(all_tickers)}] {ticker} (PMS/AIF): {start_date} to {end_date}")
+                        weekly_prices = ai_fetcher.get_weekly_prices_in_range(
+                            ticker=ticker,
+                            name=name,
+                            start_date=start_date,
+                            end_date=end_date,
+                            asset_type='PMS/AIF'
+                        )
+                    
+                    elif is_mutual_fund:
+                        # Mutual Fund: Try mftool API first, AI for missing
+                        print(f"📊 API+AI [{idx + 1}/{len(all_tickers)}] {ticker} (MF): {start_date} to {end_date}")
+                        
+                        # Try mftool for historical data
+                        try:
+                            from mf_price_fetcher import MFPriceFetcher
+                            mf_fetcher = MFPriceFetcher()
+                            scheme_code = str(ticker).replace('MF_', '')
+                            
+                            # Get historical NAVs from mftool
+                            historical_data = mf_fetcher.get_historical_nav(scheme_code, start_date, datetime.now().strftime('%Y-%m-%d'))
+                            
+                            if historical_data and len(historical_data) > 0:
+                                # Convert to weekly prices
+                                for nav_entry in historical_data:
+                                    date_str = nav_entry.get('date')
+                                    nav = nav_entry.get('nav')
+                                    if date_str and nav:
+                                        weekly_prices[date_str] = {'price': float(nav), 'sector': 'Mutual Fund'}
+                                
+                                print(f"✅ mftool (FREE): {len(weekly_prices)} prices for {ticker}")
+                            else:
+                                raise Exception("mftool returned no historical data")
+                                
+                        except Exception as api_error:
+                            # Fallback to AI for missing MF data
+                            print(f"⚠️ mftool failed, using AI: {api_error}")
+                            weekly_prices = ai_fetcher.get_weekly_prices_in_range(
+                                ticker=ticker,
+                                name=name,
+                                start_date=start_date,
+                                end_date=end_date,
+                                asset_type='Mutual Fund'
+                            )
+                    
+                    else:
+                        # Stock/ETF/Bond: Try yfinance API first, AI for missing
+                        print(f"📊 API+AI [{idx + 1}/{len(all_tickers)}] {ticker} (Stock): {start_date} to {end_date}")
+                        
+                        try:
+                            import yfinance as yf
+                            from datetime import datetime
+                            
+                            # Add NSE suffix
+                            yf_ticker = ticker if any(suffix in ticker.upper() for suffix in ['.NS', '.BO', '.BSE']) else f"{ticker}.NS"
+                            
+                            stock = yf.Ticker(yf_ticker)
+                            hist = stock.history(start=start_date, end=datetime.now().strftime('%Y-%m-%d'), interval='1wk')
+                            
+                            if not hist.empty:
+                                sector = stock.info.get('sector', 'Other Stocks') if hasattr(stock, 'info') else 'Other Stocks'
+                                
+                                for date_idx, row in hist.iterrows():
+                                    date_str = date_idx.strftime('%Y-%m-%d')
+                                    price = row['Close']
+                                    if price and price > 0:
+                                        weekly_prices[date_str] = {'price': float(price), 'sector': sector}
+                                
+                                print(f"✅ yfinance (FREE): {len(weekly_prices)} prices for {ticker}")
+                            else:
+                                raise Exception("yfinance returned no historical data")
+                                
+                        except Exception as api_error:
+                            # Fallback to AI for missing stock data
+                            print(f"⚠️ yfinance failed, using AI: {api_error}")
+                            weekly_prices = ai_fetcher.get_weekly_prices_in_range(
+                                ticker=ticker,
+                                name=name,
+                                start_date=start_date,
+                                end_date=end_date,
+                                asset_type='Stock'
+                            )
                     
                     if weekly_prices:
                         results[ticker] = weekly_prices
                         print(f"✅ [{idx + 1}/{len(all_tickers)}] {ticker}: {len(weekly_prices)} prices fetched")
                     else:
                         print(f"⚠️ [{idx + 1}/{len(all_tickers)}] {ticker}: No data returned")
-                    
-                    # No delay needed - AI fetcher handles rate limiting internally
-                    # with smart Gemini (9 calls) → OpenAI alternation
                     
                 except Exception as e:
                     print(f"⚠️ [{idx + 1}/{len(all_tickers)}] {ticker}: Fetch failed - {e}")
@@ -2353,8 +2434,8 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                 sector = "PMS"
                     
                     elif str(ticker).isdigit() or ticker.startswith('MF_'):
-                        # 🤖 Mutual fund - USE AI ONLY (Gemini FREE)
-                        print(f"🤖 {ticker}: Mutual Fund detected, using AI (Gemini)")
+                        # 📊 Mutual fund - USE FREE API (mftool) FIRST, AI fallback
+                        print(f"📊 {ticker}: Mutual Fund detected, using mftool API")
                         live_price = None
                         sector = "Mutual Fund"
                         
@@ -2362,36 +2443,53 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         mf_trans = df[df['ticker'] == ticker].iloc[0] if not df[df['ticker'] == ticker].empty else None
                         fund_name = mf_trans.get('stock_name', ticker) if mf_trans is not None else ticker
                         
-                        # Use AI directly (Gemini FREE - returns {'date', 'price', 'sector'})
+                        # Try mftool FREE API first
                         try:
-                            from ai_price_fetcher import AIPriceFetcher
-                            ai_fetcher = AIPriceFetcher()
+                            from mf_price_fetcher import MFPriceFetcher
+                            mf_fetcher = MFPriceFetcher()
                             
-                            if ai_fetcher.is_available():
-                                print(f"🤖 AI: Fetching NAV for '{fund_name}' (Code: {ticker})")
-                                result = ai_fetcher.get_mutual_fund_nav(ticker, fund_name)
+                            # Get current NAV using mftool
+                            scheme_code = str(ticker).replace('MF_', '')
+                            nav_data = mf_fetcher.get_current_nav(scheme_code)
+                            
+                            if nav_data and nav_data > 0:
+                                live_price = nav_data
+                                print(f"✅ mftool (FREE): ₹{live_price} for {fund_name}")
+                            else:
+                                raise Exception("mftool returned no NAV")
                                 
-                                if result and isinstance(result, dict) and result.get('price', 0) > 0:
-                                    live_price = result['price']
-                                    sector = result.get('sector', 'Mutual Fund')  # Use AI category or fallback
-                                    print(f"✅ AI found MF NAV: ₹{live_price} for {fund_name} (Date: {result.get('date', 'N/A')}, Category: {sector})")
+                        except Exception as api_error:
+                            # Fallback to AI if mftool fails
+                            print(f"⚠️ mftool failed ({api_error}), trying AI...")
+                            try:
+                                from ai_price_fetcher import AIPriceFetcher
+                                ai_fetcher = AIPriceFetcher()
+                                
+                                if ai_fetcher.is_available():
+                                    print(f"🤖 AI: Fetching NAV for '{fund_name}' (Code: {ticker})")
+                                    result = ai_fetcher.get_mutual_fund_nav(ticker, fund_name)
+                                    
+                                    if result and isinstance(result, dict) and result.get('price', 0) > 0:
+                                        live_price = result['price']
+                                        sector = result.get('sector', 'Mutual Fund')
+                                        print(f"✅ AI found MF NAV: ₹{live_price} for {fund_name} (Date: {result.get('date', 'N/A')}, Category: {sector})")
+                                    else:
+                                        raise Exception("AI returned no price")
                                 else:
-                                    raise Exception("AI returned no price")
-                            else:
-                                raise Exception("AI not available")
-                                
-                        except Exception as ai_error:
-                            print(f"⚠️ AI failed ({ai_error}), using transaction price")
-                            # Fallback: transaction price
-                            if mf_trans is not None and 'price' in mf_trans:
-                                live_price = float(mf_trans['price'])
-                                print(f"   📊 Transaction Price Fallback: ₹{live_price}")
-                            else:
-                                live_price = None
-                                print(f"   ❌ No price available for {ticker}")
+                                    raise Exception("AI not available")
+                                    
+                            except Exception as ai_error:
+                                print(f"⚠️ AI also failed ({ai_error}), using transaction price")
+                                # Last fallback: transaction price
+                                if mf_trans is not None and 'price' in mf_trans:
+                                    live_price = float(mf_trans['price'])
+                                    print(f"   📊 Transaction Price Fallback: ₹{live_price}")
+                                else:
+                                    live_price = None
+                                    print(f"   ❌ No price available for {ticker}")
 
                     else:
-                        # 🤖 Stock, ETF, Bonds, or other holdings - USE AI ONLY (Gemini FREE)
+                        # 📊 Stock, ETF, Bonds - USE FREE API (yfinance) FIRST, AI fallback
                         is_etf = ticker_upper.endswith('BEES') or ticker_upper.endswith('ETF')
                         is_bond = 'BOND' in ticker_upper or 'GILT' in ticker_upper or 'GSEC' in ticker_upper
                         
@@ -2400,35 +2498,59 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         asset_name = asset_trans.get('stock_name', ticker) if asset_trans is not None else ticker
                         
                         asset_type = 'Bond' if is_bond else ('ETF' if is_etf else 'Stock')
-                        print(f"🤖 {ticker}: {asset_type} detected, using AI (Gemini)")
+                        print(f"📊 {ticker}: {asset_type} detected, using yfinance API")
                         
                         live_price = None
                         sector = None
                         market_cap = None
                         
-                        # Use AI directly (Gemini FREE - returns {'date', 'price', 'sector'})
+                        # Try yfinance FREE API first
                         try:
-                            from ai_price_fetcher import AIPriceFetcher
-                            ai_fetcher = AIPriceFetcher()
+                            import yfinance as yf
                             
-                            if ai_fetcher.is_available():
-                                print(f"🤖 AI: Fetching price for '{asset_name}' (Ticker: {ticker})")
-                                result = ai_fetcher.get_stock_price(ticker, asset_name)
-                                
-                                if result and isinstance(result, dict) and result.get('price', 0) > 0:
-                                    live_price = result['price']
-                                    sector = result.get('sector', 'Other Stocks')  # Use AI sector or fallback
-                                    print(f"✅ AI found {asset_type} price: ₹{live_price} for {asset_name} (Date: {result.get('date', 'N/A')}, Sector: {sector})")
-                                    market_cap = None  # AI doesn't fetch market cap yet
-                                else:
-                                    raise Exception("AI returned no price")
+                            # Add NSE/BSE suffix for Indian stocks
+                            yf_ticker = ticker
+                            if not any(suffix in ticker_upper for suffix in ['.NS', '.BO', '.BSE']):
+                                yf_ticker = f"{ticker}.NS"
+                            
+                            stock = yf.Ticker(yf_ticker)
+                            info = stock.info
+                            
+                            # Get current price
+                            live_price = info.get('currentPrice') or info.get('regularMarketPrice') or info.get('previousClose')
+                            
+                            if live_price and live_price > 0:
+                                sector = info.get('sector', 'Other Stocks')
+                                market_cap = info.get('marketCap')
+                                print(f"✅ yfinance (FREE): ₹{live_price} for {asset_name} (Sector: {sector})")
                             else:
-                                raise Exception("AI not available")
+                                raise Exception("yfinance returned no price")
                                 
-                        except Exception as ai_error:
-                            print(f"⚠️ AI failed for {ticker} ({ai_error})")
-                            live_price = None
-                            sector = 'Unknown'
+                        except Exception as api_error:
+                            # Fallback to AI if yfinance fails
+                            print(f"⚠️ yfinance failed ({api_error}), trying AI...")
+                            try:
+                                from ai_price_fetcher import AIPriceFetcher
+                                ai_fetcher = AIPriceFetcher()
+                                
+                                if ai_fetcher.is_available():
+                                    print(f"🤖 AI: Fetching price for '{asset_name}' (Ticker: {ticker})")
+                                    result = ai_fetcher.get_stock_price(ticker, asset_name)
+                                    
+                                    if result and isinstance(result, dict) and result.get('price', 0) > 0:
+                                        live_price = result['price']
+                                        sector = result.get('sector', 'Other Stocks')
+                                        print(f"✅ AI found {asset_type} price: ₹{live_price} for {asset_name} (Date: {result.get('date', 'N/A')}, Sector: {sector})")
+                                        market_cap = None
+                                    else:
+                                        raise Exception("AI returned no price")
+                                else:
+                                    raise Exception("AI not available")
+                                    
+                            except Exception as ai_error:
+                                print(f"⚠️ AI also failed ({ai_error})")
+                                live_price = None
+                                sector = 'Unknown'
 
                             # If no sector from yfinance, try to get it from stock data table
                             if not sector or sector == 'Unknown':

@@ -421,7 +421,8 @@ Your output:"""
         print(f"{'='*60}\n")
         
         try:
-            response = self._call_ai(prompt)
+            # Use higher max_tokens for weekly data (52 weeks × ~30 tokens = 1560 tokens needed)
+            response = self._call_ai(prompt, max_tokens=1500)
             print(f"\n{'='*60}")
             print(f"📥 WEEKLY RANGE RESPONSE for {ticker}:")
             print(f"{'='*60}")
@@ -551,7 +552,8 @@ Your output:"""
         logger.info(f"📤 BULK PROMPT ({len(tickers_with_names)} tickers, {len(dates)} dates):\n{prompt}\n{'='*50}")
         
         try:
-            response = self._call_ai(prompt)
+            # Use higher max_tokens for bulk data (5 tickers × 10 dates = 50 entries × 30 tokens = 1500)
+            response = self._call_ai(prompt, max_tokens=1500)
             logger.info(f"📥 BULK RESPONSE:\n{response}\n{'='*50}")
             
             if not response:
@@ -753,12 +755,16 @@ Your output:"""
             logger.error(f"❌ AI performance fetch failed for {ticker}: {e}")
             return {}
     
-    def _call_ai(self, prompt: str) -> Optional[str]:
+    def _call_ai(self, prompt: str, max_tokens: int = 100) -> Optional[str]:
         """
         Call AI service (OpenAI FIRST for paid tier, Gemini fallback)
         
         Args:
             prompt: The prompt to send
+            max_tokens: Maximum tokens for AI response (default: 100)
+                       - Single price: 50-100
+                       - Weekly range (52 weeks): 1500
+                       - Performance data: 300
         
         Returns:
             AI response text or None
@@ -813,7 +819,7 @@ Your output:"""
         # Try OpenAI as BACKUP (PAID - when Gemini fails or hits limit)
         if self.openai_client:
             try:
-                print(f"🤖 Calling OpenAI BACKUP (₹300 credits)...")
+                print(f"🤖 Calling OpenAI BACKUP (max_tokens={max_tokens})...")
                 response = self.openai_client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[
@@ -821,7 +827,7 @@ Your output:"""
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0,
-                    max_tokens=50
+                    max_tokens=max_tokens  # Dynamic based on request type
                 )
                 if response.choices and response.choices[0].message:
                     print(f"✅ OpenAI call successful")
