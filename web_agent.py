@@ -1866,12 +1866,15 @@ class PortfolioAnalytics:
             # Remove rows with zero or negative prices
             df = df[df['price'] > 0]
             
-            # Remove rows with unreasonably large values (overflow protection)
-            MAX_PRICE = 1_000_000  # Max price: 10 lakhs
-            MAX_QUANTITY = 10_000_000  # Max quantity: 1 crore units
+            # ✅ Handle infinity and NaN values properly (no arbitrary limits)
+            # Remove rows with infinite values (inf, -inf)
+            df = df[np.isfinite(df['price'])]
+            df = df[np.isfinite(df['quantity'])]
             
-            df = df[df['price'] <= MAX_PRICE]
-            df = df[df['quantity'] <= MAX_QUANTITY]
+            # Remove rows with extremely large values that might be data errors (not investment limits)
+            # Only filter out values that are clearly data corruption (like 1e+50)
+            df = df[df['price'] < 1e15]  # Allow up to ₹1 quadrillion (way more than any real investment)
+            df = df[df['quantity'] < 1e15]  # Allow up to 1 quadrillion units
             
             final_count = len(df)
             
