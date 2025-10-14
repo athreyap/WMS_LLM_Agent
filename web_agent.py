@@ -1890,17 +1890,30 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 for week_idx in range(10):  # Check last 10 weeks
                     # Get Monday of the week
                     monday = check_date - timedelta(days=check_date.weekday())
-                    monday_str = monday.strftime('%Y-%m-%d')
                     
-                    # Get cached prices for all remaining tickers at once (BULK)
+                    # ✅ FIX: Check ALL 7 days in week (not just Monday)
+                    # This ensures we detect bulk fetch data saved on any day
                     tickers_to_check = [t for t in unique_tickers if ticker_latest_cached[t] is None]
                     if tickers_to_check:
-                        cached_prices = get_stock_prices_bulk_supabase(tickers_to_check, monday_str)
-                        
-                        # Update latest cached dates for tickers found
-                        for ticker, price in cached_prices.items():
-                            if price and price > 0:
-                                ticker_latest_cached[ticker] = monday
+                        # Check each day of the week
+                        for day_offset in range(7):
+                            check_day = monday + timedelta(days=day_offset)
+                            check_day_str = check_day.strftime('%Y-%m-%d')
+                            
+                            cached_prices = get_stock_prices_bulk_supabase(tickers_to_check, check_day_str)
+                            
+                            # Update latest cached dates for tickers found
+                            if cached_prices:
+                                for ticker, price in cached_prices.items():
+                                    if price and price > 0:
+                                        ticker_latest_cached[ticker] = monday
+                                        # Remove from check list
+                                        if ticker in tickers_to_check:
+                                            tickers_to_check.remove(ticker)
+                            
+                            # If all tickers found, no need to check remaining days
+                            if not tickers_to_check:
+                                break
                     
                     check_date -= timedelta(days=7)
             else:
@@ -1909,10 +1922,20 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                     check_date_ticker = current_date
                     for _ in range(10):  # Check last 10 weeks
                         monday = check_date_ticker - timedelta(days=check_date_ticker.weekday())
-                        cached_price = get_stock_price_supabase(ticker, monday.strftime('%Y-%m-%d'))
-                        if cached_price and cached_price > 0:
-                            ticker_latest_cached[ticker] = monday
-                            break
+                        
+                        # ✅ FIX: Check ALL 7 days in week (not just Monday)
+                        found = False
+                        for day_offset in range(7):
+                            check_day = monday + timedelta(days=day_offset)
+                            cached_price = get_stock_price_supabase(ticker, check_day.strftime('%Y-%m-%d'))
+                            if cached_price and cached_price > 0:
+                                ticker_latest_cached[ticker] = monday
+                                found = True
+                                break
+                        
+                        if found:
+                            break  # Move to next ticker
+                        
                         check_date_ticker -= timedelta(days=7)
             
             # Set start dates based on findings
