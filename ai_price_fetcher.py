@@ -140,17 +140,35 @@ class AIPriceFetcher:
         if not self.is_available():
             return None
         
-        # UPDATED prompt - request DATE, NAV, and CATEGORY
+        # Python dictionary format - easiest to parse!
         if date:
-            prompt = f"""Get NAV for mutual fund '{fund_name}' (code: {ticker}) on or nearest to {date}.
-Reply in format: DATE|NAV|CATEGORY
-Example: 2024-10-14|150.50|Equity: Large Cap
-Category options: Equity: Large Cap, Equity: Mid Cap, Equity: Small Cap, Equity: Multi Cap, Debt Fund, Hybrid Fund, Liquid Fund, Gold Fund, International Fund, Index Fund, Sectoral Fund, Tax Saver (ELSS), Other"""
+            prompt = f"""Get mutual fund NAV data for Python:
+
+Fund: {fund_name}
+Scheme Code: {ticker}
+Date: {date} (or nearest available date)
+
+Return ONLY a Python dictionary in this exact format (no extra text):
+{{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'category'}}
+
+Example:
+{{'date': '2024-10-14', 'price': 150.50, 'sector': 'Equity: Large Cap'}}
+
+Your output:"""
         else:
-            prompt = f"""Get the most recent NAV for mutual fund '{fund_name}' (code: {ticker}). If today's NAV is not available, provide yesterday's NAV.
-Reply in format: DATE|NAV|CATEGORY
-Example: 2024-10-13|150.50|Equity: Large Cap
-Category options: Equity: Large Cap, Equity: Mid Cap, Equity: Small Cap, Equity: Multi Cap, Debt Fund, Hybrid Fund, Liquid Fund, Gold Fund, International Fund, Index Fund, Sectoral Fund, Tax Saver (ELSS), Other"""
+            prompt = f"""Get mutual fund NAV data for Python:
+
+Fund: {fund_name}
+Scheme Code: {ticker}
+Date: LATEST (most recent NAV - if today's not published, use yesterday)
+
+Return ONLY a Python dictionary in this exact format (no extra text):
+{{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'category'}}
+
+Example:
+{{'date': '2024-10-13', 'price': 150.50, 'sector': 'Equity: Large Cap'}}
+
+Your output:"""
         
         # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
         print(f"\n{'='*60}")
@@ -162,29 +180,55 @@ Category options: Equity: Large Cap, Equity: Mid Cap, Equity: Small Cap, Equity:
             response = self._call_ai(prompt)
             print(f"📥 MF RESPONSE for {ticker}: {response}\n")
             if response and response != "NOT_FOUND":
-                # Parse DATE|NAV|CATEGORY format
-                parts = response.strip().split('|')
-                if len(parts) >= 3:
-                    result_date = parts[0].strip()
-                    nav = self._extract_number(parts[1])
-                    category = parts[2].strip()
+                clean_response = response.strip()
+                
+                # Try parsing as Python dictionary first (safest and cleanest)
+                try:
+                    import ast
+                    # Extract dictionary from response (handle markdown code blocks)
+                    if '```' in clean_response:
+                        clean_response = clean_response.split('```')[1]
+                        if clean_response.startswith('python'):
+                            clean_response = clean_response[6:]
                     
-                    if nav and nav > 0:
-                        logger.info(f"✅ AI found NAV for {ticker}: ₹{nav} on {result_date}, category: {category}")
-                        return {
-                            'date': result_date,
-                            'price': nav,
-                            'sector': category
-                        }
-                elif len(parts) >= 2:
-                    # Fallback if category missing
-                    result_date = parts[0].strip()
+                    # Find dictionary in response
+                    dict_start = clean_response.find('{')
+                    dict_end = clean_response.rfind('}') + 1
+                    if dict_start >= 0 and dict_end > dict_start:
+                        dict_str = clean_response[dict_start:dict_end]
+                        result = ast.literal_eval(dict_str)
+                        
+                        if isinstance(result, dict) and 'price' in result:
+                            nav = float(result.get('price', 0))
+                            if nav > 0:
+                                logger.info(f"✅ AI found NAV for {ticker}: ₹{nav} on {result.get('date')}, category: {result.get('sector')}")
+                                return {
+                                    'date': result.get('date', date or 'LATEST'),
+                                    'price': nav,
+                                    'sector': result.get('sector', 'Mutual Fund')
+                                }
+                except Exception as e:
+                    logger.debug(f"Failed to parse as dict: {e}, trying CSV fallback")
+                
+                # Fallback: CSV format (comma or pipe separated)
+                if ',' in clean_response:
+                    parts = [p.strip() for p in clean_response.split(',')]
+                elif '|' in clean_response:
+                    parts = [p.strip() for p in clean_response.split('|')]
+                else:
+                    parts = []
+                
+                if len(parts) >= 3:
                     nav = self._extract_number(parts[1])
                     if nav and nav > 0:
-                        return {'date': result_date, 'price': nav, 'sector': 'Mutual Fund'}
+                        return {'date': parts[0], 'price': nav, 'sector': parts[2]}
+                elif len(parts) >= 2:
+                    nav = self._extract_number(parts[1])
+                    if nav and nav > 0:
+                        return {'date': parts[0], 'price': nav, 'sector': 'Mutual Fund'}
                 else:
-                    # Fallback if only NAV returned
-                    nav = self._extract_number(response)
+                    # Last resort: just extract number
+                    nav = self._extract_number(clean_response)
                     if nav and nav > 0:
                         return {'date': date or 'LATEST', 'price': nav, 'sector': 'Mutual Fund'}
             
@@ -218,17 +262,37 @@ Category options: Equity: Large Cap, Equity: Mid Cap, Equity: Small Cap, Equity:
         if not self.is_available():
             return None
         
-        # UPDATED prompt - request DATE, PRICE, and SECTOR
+        # Python dictionary format - easiest to parse!
         if date:
-            prompt = f"""Get closing price for stock '{stock_name}' (NSE: {ticker}) on or nearest to {date}.
-Reply in format: DATE|PRICE|SECTOR
-Example: 2024-10-14|2500.50|Banking
-Sector options: Banking, Technology, Pharmaceuticals, Automobile, Metals & Mining, Oil & Gas, Consumer Goods, Real Estate, Power & Energy, Infrastructure, Telecom, Healthcare, FMCG, Financial Services, Other"""
+            prompt = f"""Get stock price data for Python:
+
+Stock: {stock_name}
+Ticker: {ticker}
+Exchange: NSE
+Date: {date} (or nearest trading day)
+
+Return ONLY a Python dictionary in this exact format (no extra text):
+{{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'string'}}
+
+Example:
+{{'date': '2024-10-14', 'price': 2500.50, 'sector': 'Banking'}}
+
+Your output:"""
         else:
-            prompt = f"""Get the most recent closing price for stock '{stock_name}' (NSE: {ticker}). If market is closed, provide yesterday's close.
-Reply in format: DATE|PRICE|SECTOR
-Example: 2024-10-14|2500.50|Banking
-Sector options: Banking, Technology, Pharmaceuticals, Automobile, Metals & Mining, Oil & Gas, Consumer Goods, Real Estate, Power & Energy, Infrastructure, Telecom, Healthcare, FMCG, Financial Services, Other"""
+            prompt = f"""Get stock price data for Python:
+
+Stock: {stock_name}
+Ticker: {ticker}
+Exchange: NSE
+Date: LATEST (most recent close - if market closed, use yesterday)
+
+Return ONLY a Python dictionary in this exact format (no extra text):
+{{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'string'}}
+
+Example:
+{{'date': '2024-10-13', 'price': 2500.50, 'sector': 'Banking'}}
+
+Your output:"""
         
         # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
         print(f"\n{'='*60}")
@@ -240,29 +304,56 @@ Sector options: Banking, Technology, Pharmaceuticals, Automobile, Metals & Minin
             response = self._call_ai(prompt)
             print(f"📥 STOCK RESPONSE for {ticker}: {response}\n")
             if response and response != "NOT_FOUND":
-                # Parse DATE|PRICE|SECTOR format
-                parts = response.strip().split('|')
-                if len(parts) >= 3:
-                    result_date = parts[0].strip()
-                    price = self._extract_number(parts[1])
-                    sector = parts[2].strip()
+                clean_response = response.strip()
+                
+                # Try parsing as Python dictionary first (safest and cleanest)
+                try:
+                    import ast
+                    # Extract dictionary from response (handle markdown code blocks)
+                    if '```' in clean_response:
+                        # Extract content between code blocks
+                        clean_response = clean_response.split('```')[1]
+                        if clean_response.startswith('python'):
+                            clean_response = clean_response[6:]
                     
-                    if price and price > 0:
-                        logger.info(f"✅ AI found price for {ticker}: ₹{price} on {result_date}, sector: {sector}")
-                        return {
-                            'date': result_date,
-                            'price': price,
-                            'sector': sector
-                        }
-                elif len(parts) >= 2:
-                    # Fallback if sector missing
-                    result_date = parts[0].strip()
+                    # Find dictionary in response
+                    dict_start = clean_response.find('{')
+                    dict_end = clean_response.rfind('}') + 1
+                    if dict_start >= 0 and dict_end > dict_start:
+                        dict_str = clean_response[dict_start:dict_end]
+                        result = ast.literal_eval(dict_str)
+                        
+                        if isinstance(result, dict) and 'price' in result:
+                            price = float(result.get('price', 0))
+                            if price > 0:
+                                logger.info(f"✅ AI found price for {ticker}: ₹{price} on {result.get('date')}, sector: {result.get('sector')}")
+                                return {
+                                    'date': result.get('date', date or 'LATEST'),
+                                    'price': price,
+                                    'sector': result.get('sector', 'Other Stocks')
+                                }
+                except Exception as e:
+                    logger.debug(f"Failed to parse as dict: {e}, trying CSV fallback")
+                
+                # Fallback: CSV format (comma or pipe separated)
+                if ',' in clean_response:
+                    parts = [p.strip() for p in clean_response.split(',')]
+                elif '|' in clean_response:
+                    parts = [p.strip() for p in clean_response.split('|')]
+                else:
+                    parts = []
+                
+                if len(parts) >= 3:
                     price = self._extract_number(parts[1])
                     if price and price > 0:
-                        return {'date': result_date, 'price': price, 'sector': 'Other Stocks'}
+                        return {'date': parts[0], 'price': price, 'sector': parts[2]}
+                elif len(parts) >= 2:
+                    price = self._extract_number(parts[1])
+                    if price and price > 0:
+                        return {'date': parts[0], 'price': price, 'sector': 'Other Stocks'}
                 else:
-                    # Fallback if only price returned
-                    price = self._extract_number(response)
+                    # Last resort: just extract number
+                    price = self._extract_number(clean_response)
                     if price and price > 0:
                         return {'date': date or 'LATEST', 'price': price, 'sector': 'Other Stocks'}
             
@@ -298,14 +389,29 @@ Sector options: Banking, Technology, Pharmaceuticals, Automobile, Metals & Minin
         if not self.is_available():
             return {}
         
-        # UPDATED prompt for weekly prices with DATE, PRICE, and SECTOR
-        prompt = f"""Get weekly closing prices for '{name}' ({ticker}) from {start_date} to {end_date}. 
-Provide one price per week (Monday or first trading day).
-Reply in format: DATE|PRICE|SECTOR (one per line)
+        # Python list of dictionaries format - easiest to parse!
+        prompt = f"""Get weekly price data for Python:
+
+Asset: {name}
+Ticker: {ticker}
+Type: {asset_type}
+Period: {start_date} to {end_date}
+Frequency: WEEKLY (one price per week - Monday or first trading day)
+
+Return ONLY a Python list of dictionaries in this exact format (no extra text):
+[
+  {{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'string'}},
+  {{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'string'}}
+]
+
 Example:
-2024-01-08|2500.50|Banking
-2024-01-15|2550.00|Banking
-For {asset_type}, use appropriate sector/category."""
+[
+  {{'date': '2024-01-08', 'price': 2500.50, 'sector': 'Banking'}},
+  {{'date': '2024-01-15', 'price': 2550.00, 'sector': 'Banking'}},
+  {{'date': '2024-01-22', 'price': 2575.25, 'sector': 'Banking'}}
+]
+
+Your output:"""
         
         # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
         print(f"\n{'='*60}")
@@ -325,52 +431,76 @@ For {asset_type}, use appropriate sector/category."""
             if not response:
                 return {}
             
-            # Parse response into dict (robust parsing for DATE|PRICE|SECTOR format)
+            # Parse response into dict (Python list format first, then CSV fallback)
             results = {}
+            clean_response = response.strip()
+            
+            # Try parsing as Python list of dictionaries first (cleanest)
+            try:
+                import ast
+                # Extract list from response (handle markdown code blocks)
+                if '```' in clean_response:
+                    clean_response = clean_response.split('```')[1]
+                    if clean_response.startswith('python'):
+                        clean_response = clean_response[6:]
+                
+                # Find list in response
+                list_start = clean_response.find('[')
+                list_end = clean_response.rfind(']') + 1
+                if list_start >= 0 and list_end > list_start:
+                    list_str = clean_response[list_start:list_end]
+                    price_list = ast.literal_eval(list_str)
+                    
+                    if isinstance(price_list, list):
+                        for item in price_list:
+                            if isinstance(item, dict) and 'date' in item and 'price' in item:
+                                date = item.get('date')
+                                price = float(item.get('price', 0))
+                                sector = item.get('sector', 'Other')
+                                
+                                if price > 0 and price < 1000000000:
+                                    results[date] = {
+                                        'price': price,
+                                        'sector': sector
+                                    }
+                        
+                        if results:
+                            logger.info(f"✅ AI weekly range (Python list): {ticker} - {len(results)} weekly prices")
+                            return results
+            except Exception as e:
+                logger.debug(f"Failed to parse as Python list: {e}, trying CSV fallback")
+            
+            # Fallback: CSV format (comma or pipe separated, line by line)
             for line in response.strip().split('\n'):
                 line = line.strip()
                 
                 # Skip empty lines or headers
-                if not line or line.lower().startswith(('date', 'ticker', 'week', 'note', 'source', 'example')):
+                if not line or line.lower().startswith(('date', 'ticker', 'week', 'note', 'source', 'example', 'your output', '[', ']')):
                     continue
                 
-                # Handle different separators: | or : or tab or multiple spaces
-                if '|' in line:
-                    parts = line.split('|')
+                # Handle different separators: comma (CSV) first, then pipe, colon, tab
+                if ',' in line:
+                    parts = [p.strip() for p in line.split(',')]
+                elif '|' in line:
+                    parts = [p.strip() for p in line.split('|')]
                 elif ':' in line and line.count(':') == 1:
-                    parts = line.split(':')
+                    parts = [p.strip() for p in line.split(':')]
                 elif '\t' in line:
-                    parts = line.split('\t')
-                elif '  ' in line:  # Multiple spaces
-                    parts = line.split()
+                    parts = [p.strip() for p in line.split('\t')]
                 else:
                     continue
                 
                 if len(parts) >= 2:
                     try:
-                        # Extract date (first part)
-                        date = parts[0].strip()
+                        date = parts[0]
+                        price = self._extract_number(parts[1])
+                        sector = parts[2] if len(parts) >= 3 else 'Other'
                         
-                        # Extract price (second part, remove currency symbols and commas)
-                        price_str = parts[1].strip()
-                        # Remove common prefixes/symbols
-                        for symbol in ['₹', '$', 'Rs', 'INR', 'Rs.', '₹.']:
-                            price_str = price_str.replace(symbol, '')
-                        price_str = price_str.replace(',', '').strip()
-                        
-                        price = float(price_str)
-                        
-                        # Extract sector (third part, if available)
-                        sector = parts[2].strip() if len(parts) >= 3 else 'Other'
-                        
-                        # Validate: price should be positive and reasonable
-                        if price > 0 and price < 1000000000:  # Less than 1 billion (sanity check)
+                        if price and price > 0 and price < 1000000000:
                             results[date] = {
                                 'price': price,
                                 'sector': sector
                             }
-                        else:
-                            logger.warning(f"Skipping invalid price for {date}: {price}")
                     except (ValueError, IndexError) as e:
                         logger.debug(f"Failed to parse line '{line}': {e}")
                         continue
@@ -476,17 +606,35 @@ For {asset_type}, use appropriate sector/category."""
         if not self.is_available():
             return None
         
-        # UPDATED prompt - request DATE, NAV, and CATEGORY
+        # Python dictionary format - easiest to parse!
         if date:
-            prompt = f"""Get NAV for PMS/AIF '{fund_name}' (SEBI: {ticker}) on or nearest to {date}.
-Reply in format: DATE|NAV|CATEGORY
-Example: 2024-10-14|150.50|PMS Equity
-Category options: PMS Equity, PMS Debt, PMS Hybrid, AIF Cat I, AIF Cat II, AIF Cat III, Other"""
+            prompt = f"""Get PMS/AIF NAV data for Python:
+
+Fund: {fund_name}
+SEBI Code: {ticker}
+Date: {date} (or nearest available date)
+
+Return ONLY a Python dictionary in this exact format (no extra text):
+{{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'category'}}
+
+Example:
+{{'date': '2024-10-14', 'price': 1250.50, 'sector': 'PMS Equity'}}
+
+Your output:"""
         else:
-            prompt = f"""Get the most recent NAV for PMS/AIF '{fund_name}' (SEBI: {ticker}). If today's NAV is not available, provide the latest available NAV (yesterday or most recent).
-Reply in format: DATE|NAV|CATEGORY
-Example: 2024-10-13|150.50|PMS Equity
-Category options: PMS Equity, PMS Debt, PMS Hybrid, AIF Cat I, AIF Cat II, AIF Cat III, Other"""
+            prompt = f"""Get PMS/AIF NAV data for Python:
+
+Fund: {fund_name}
+SEBI Code: {ticker}
+Date: LATEST (most recent NAV available)
+
+Return ONLY a Python dictionary in this exact format (no extra text):
+{{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'category'}}
+
+Example:
+{{'date': '2024-10-13', 'price': 1250.50, 'sector': 'PMS Equity'}}
+
+Your output:"""
         
         # LOG PROMPT FOR DEBUGGING
         logger.info(f"📤 PMS/AIF PROMPT for {ticker}:\n{prompt}\n{'='*50}")
@@ -495,29 +643,55 @@ Category options: PMS Equity, PMS Debt, PMS Hybrid, AIF Cat I, AIF Cat II, AIF C
             response = self._call_ai(prompt)
             logger.info(f"📥 PMS/AIF RESPONSE for {ticker}: {response}")
             if response and response != "NOT_FOUND":
-                # Parse DATE|NAV|CATEGORY format
-                parts = response.strip().split('|')
-                if len(parts) >= 3:
-                    result_date = parts[0].strip()
-                    nav = self._extract_number(parts[1])
-                    category = parts[2].strip()
+                clean_response = response.strip()
+                
+                # Try parsing as Python dictionary first (safest and cleanest)
+                try:
+                    import ast
+                    # Extract dictionary from response (handle markdown code blocks)
+                    if '```' in clean_response:
+                        clean_response = clean_response.split('```')[1]
+                        if clean_response.startswith('python'):
+                            clean_response = clean_response[6:]
                     
-                    if nav and nav > 0:
-                        logger.info(f"✅ AI found PMS/AIF NAV for {ticker}: ₹{nav} on {result_date}, category: {category}")
-                        return {
-                            'date': result_date,
-                            'price': nav,
-                            'sector': category
-                        }
-                elif len(parts) >= 2:
-                    # Fallback if category missing
-                    result_date = parts[0].strip()
+                    # Find dictionary in response
+                    dict_start = clean_response.find('{')
+                    dict_end = clean_response.rfind('}') + 1
+                    if dict_start >= 0 and dict_end > dict_start:
+                        dict_str = clean_response[dict_start:dict_end]
+                        result = ast.literal_eval(dict_str)
+                        
+                        if isinstance(result, dict) and 'price' in result:
+                            nav = float(result.get('price', 0))
+                            if nav > 0:
+                                logger.info(f"✅ AI found PMS/AIF NAV for {ticker}: ₹{nav} on {result.get('date')}, category: {result.get('sector')}")
+                                return {
+                                    'date': result.get('date', date or 'LATEST'),
+                                    'price': nav,
+                                    'sector': result.get('sector', 'PMS/AIF')
+                                }
+                except Exception as e:
+                    logger.debug(f"Failed to parse as dict: {e}, trying CSV fallback")
+                
+                # Fallback: CSV format (comma or pipe separated)
+                if ',' in clean_response:
+                    parts = [p.strip() for p in clean_response.split(',')]
+                elif '|' in clean_response:
+                    parts = [p.strip() for p in clean_response.split('|')]
+                else:
+                    parts = []
+                
+                if len(parts) >= 3:
                     nav = self._extract_number(parts[1])
                     if nav and nav > 0:
-                        return {'date': result_date, 'price': nav, 'sector': 'PMS/AIF'}
+                        return {'date': parts[0], 'price': nav, 'sector': parts[2]}
+                elif len(parts) >= 2:
+                    nav = self._extract_number(parts[1])
+                    if nav and nav > 0:
+                        return {'date': parts[0], 'price': nav, 'sector': 'PMS/AIF'}
                 else:
-                    # Fallback if only NAV returned
-                    nav = self._extract_number(response)
+                    # Last resort: just extract number
+                    nav = self._extract_number(clean_response)
                     if nav and nav > 0:
                         return {'date': date or 'LATEST', 'price': nav, 'sector': 'PMS/AIF'}
             
