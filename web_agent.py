@@ -774,6 +774,8 @@ class PortfolioAnalytics:
             show_ui: If True, show UI messages. If False, run silently (for auto-fetch)
         """
         try:
+            from datetime import datetime, timedelta
+            
             if show_ui:
                 st.info("🤖 Using AI to fetch ALL prices in batch (historical + weekly + live)...")
             
@@ -957,7 +959,6 @@ class PortfolioAnalytics:
                         
                         try:
                             import yfinance as yf
-                            from datetime import datetime
                             
                             # Add NSE suffix
                             yf_ticker = ticker if any(suffix in ticker.upper() for suffix in ['.NS', '.BO', '.BSE']) else f"{ticker}.NS"

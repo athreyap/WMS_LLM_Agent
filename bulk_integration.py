@@ -113,53 +113,56 @@ def fetch_historical_prices_bulk(
         all_prices.update(stock_hist)
         logger.info(f"✅ Stocks: {len(stock_hist)}/{len(stock_tickers)} fetched via yfinance")
         
-        # Check for failed tickers (no data returned or empty data)
-        failed_tickers = []
-        for ticker in stock_tickers:
-            # Only consider it failed if:
-            # 1. Ticker not in results, OR
-            # 2. Ticker has no data at all (empty dict)
-            if ticker not in stock_hist or not stock_hist[ticker] or len(stock_hist[ticker]) == 0:
-                failed_tickers.append(ticker)
-                logger.debug(f"   ❌ {ticker} failed yfinance (no data)")
-            else:
-                logger.debug(f"   ✅ {ticker} succeeded with {len(stock_hist[ticker])} prices")
+        # Check for failed tickers (no data or partial data with NaN)
+        failed_ticker_dates = {}  # {ticker: [missing_dates]}
         
-        # Use AI for failed tickers
-        if failed_tickers:
-            logger.info(f"⚠️ {len(failed_tickers)} stocks failed yfinance, trying AI fallback...")
+        for ticker in stock_tickers:
+            # Get expected dates for this ticker
+            ticker_trans = df[df['ticker'] == ticker]
+            expected_dates = [pd.to_datetime(d).strftime('%Y-%m-%d') for d in ticker_trans['date'].unique()]
+            
+            # Check what's missing
+            if ticker not in stock_hist or not stock_hist[ticker]:
+                # Completely failed - all dates missing
+                failed_ticker_dates[ticker] = expected_dates
+                logger.debug(f"   ❌ {ticker}: ALL dates failed (0/{len(expected_dates)})")
+            else:
+                # Partial data - check for missing dates (NaN values)
+                missing_dates = [d for d in expected_dates if d not in stock_hist[ticker]]
+                if missing_dates:
+                    failed_ticker_dates[ticker] = missing_dates
+                    logger.debug(f"   ⚠️ {ticker}: {len(missing_dates)}/{len(expected_dates)} dates have NaN")
+                else:
+                    logger.debug(f"   ✅ {ticker}: All {len(expected_dates)} dates have valid prices")
+        
+        # Use AI for failed/partial tickers
+        if failed_ticker_dates:
+            total_missing = sum(len(dates) for dates in failed_ticker_dates.values())
+            logger.info(f"⚠️ {len(failed_ticker_dates)} stocks have {total_missing} missing prices (NaN), trying AI fallback...")
             if progress_callback:
-                progress_callback(f"🤖 Using AI fallback for {len(failed_tickers)} stocks...")
+                progress_callback(f"🤖 Using AI fallback for {total_missing} missing prices...")
             
             try:
                 from bulk_price_fetcher import get_historical_prices_with_ai
                 
-                # Build ticker types dict
-                ticker_types = {t: 'Stock' for t in failed_tickers}
-                
-                # Get dates for each ticker
-                ticker_dates = {}
-                for ticker in failed_tickers:
-                    ticker_trans = df[df['ticker'] == ticker]
-                    ticker_dates[ticker] = [pd.to_datetime(d).strftime('%Y-%m-%d') for d in ticker_trans['date'].unique()]
-                
-                # Flatten for AI call
-                all_dates = sorted(set([d for dates in ticker_dates.values() for d in dates]))
+                # Build ticker types dict and dates
+                ticker_types = {t: 'Stock' for t in failed_ticker_dates.keys()}
+                all_missing_dates = sorted(set([d for dates in failed_ticker_dates.values() for d in dates]))
                 
                 ai_results = get_historical_prices_with_ai(
-                    failed_tickers,
-                    all_dates,
+                    list(failed_ticker_dates.keys()),
+                    all_missing_dates,
                     ticker_names,
                     ticker_types
                 )
                 
-                # Merge AI results
+                # Merge AI results (only for missing dates)
                 for ticker, dates_dict in ai_results.items():
                     if ticker not in all_prices:
                         all_prices[ticker] = {}
                     all_prices[ticker].update(dates_dict)
                 
-                logger.info(f"✅ AI fallback: {len(ai_results)} stocks recovered")
+                logger.info(f"✅ AI fallback: Recovered {sum(len(d) for d in ai_results.values())} prices")
             except Exception as e:
                 logger.warning(f"⚠️ AI fallback failed: {e}")
     
@@ -198,20 +201,31 @@ def fetch_historical_prices_bulk(
         progress_callback(f"💾 Saving {len(all_prices)} historical prices to database...")
     
     save_count = 0
+    skip_count = 0
     price_data_list = []
+    
+    import math
     
     for ticker, dates_dict in all_prices.items():
         for date_str, price in dates_dict.items():
+            # ✅ VALIDATE: Skip NaN, inf, and invalid prices
+            if not isinstance(price, (int, float)) or math.isnan(price) or math.isinf(price) or price <= 0:
+                logger.debug(f"⚠️ Skipping invalid price for {ticker} on {date_str}: {price}")
+                skip_count += 1
+                continue
+            
             price_data_list.append({
                 'ticker': ticker,
                 'date': date_str,
-                'price': price
+                'price': float(price)  # Ensure it's a standard float
             })
             save_count += 1
     
     if price_data_list:
         bulk_save_historical_prices(price_data_list)
     
+    if skip_count > 0:
+        logger.warning(f"⚠️ Skipped {skip_count} invalid prices (NaN/inf)")
     logger.info(f"✅ Historical prices saved: {save_count} records")
     
     return all_prices

@@ -445,10 +445,76 @@ Rules:
             logger.error(f"❌ Bulk AI fetch failed: {e}")
             return {}
     
+    def _find_nearest_trading_day_price(self, data, ticker_with_suffix, target_date, is_single_ticker=False, max_days=7):
+        """
+        Find the nearest trading day price for holidays/weekends
+        
+        Args:
+            data: yfinance DataFrame
+            ticker_with_suffix: Ticker symbol with exchange suffix (e.g., RELIANCE.NS)
+            target_date: Target date string (YYYY-MM-DD)
+            is_single_ticker: True if only one ticker in data
+            max_days: Maximum days to look before/after (default: 7 for holiday weeks)
+        
+        Returns:
+            (price, actual_date, days_diff) or (None, None, None) if not found
+        """
+        from datetime import datetime, timedelta
+        import math
+        
+        target_dt = pd.to_datetime(target_date)
+        
+        # Try exact date first
+        if target_date in data.index:
+            if is_single_ticker:
+                price = float(data.loc[target_date, 'Close'])
+            else:
+                price = float(data['Close'][ticker_with_suffix].loc[target_date])
+            
+            if pd.notna(price) and not math.isinf(price) and price > 0:
+                return price, target_date, 0
+        
+        # Search nearby dates (prefer previous days for historical accuracy)
+        for days_back in range(1, max_days + 1):
+            # Try previous day first (more accurate for historical transactions)
+            prev_date = (target_dt - timedelta(days=days_back)).strftime('%Y-%m-%d')
+            if prev_date in data.index:
+                try:
+                    if is_single_ticker:
+                        price = float(data.loc[prev_date, 'Close'])
+                    else:
+                        price = float(data['Close'][ticker_with_suffix].loc[prev_date])
+                    
+                    if pd.notna(price) and not math.isinf(price) and price > 0:
+                        return price, prev_date, -days_back
+                except:
+                    pass
+            
+            # Try next day (in case transaction was pre-dated)
+            next_date = (target_dt + timedelta(days=days_back)).strftime('%Y-%m-%d')
+            if next_date in data.index:
+                try:
+                    if is_single_ticker:
+                        price = float(data.loc[next_date, 'Close'])
+                    else:
+                        price = float(data['Close'][ticker_with_suffix].loc[next_date])
+                    
+                    if pd.notna(price) and not math.isinf(price) and price > 0:
+                        return price, next_date, days_back
+                except:
+                    pass
+        
+        return None, None, None
+    
     def get_stocks_historical_bulk(self, tickers: List[str], dates: List[str]) -> Dict[str, Dict[str, float]]:
         """
         Get historical prices for stocks in bulk for specific dates
         Returns: {ticker: {date: price}}
+        
+        Features:
+        - Finds nearest trading day for holidays/weekends (±7 days)
+        - Skips NaN/inf values
+        - Only returns valid prices
         """
         if not tickers or not dates:
             return {}
@@ -460,8 +526,8 @@ Rules:
             
             # Convert dates to datetime
             dates_dt = [pd.to_datetime(d) for d in dates]
-            start_date = min(dates_dt)
-            end_date = max(dates_dt)
+            start_date = min(dates_dt) - pd.Timedelta(days=7)  # Extra buffer for holidays
+            end_date = max(dates_dt) + pd.Timedelta(days=7)
             
             # Add correct suffix (.NS for NSE, .BO for BSE)
             ticker_list = []
@@ -486,6 +552,10 @@ Rules:
             )
             
             results = {}
+            nearest_count = 0
+            nan_count = 0
+            
+            is_single = len(tickers) == 1
             
             # Parse results for each ticker and date
             for ticker in tickers:
@@ -495,20 +565,25 @@ Rules:
                 
                 for date in dates:
                     date_str = pd.to_datetime(date).strftime('%Y-%m-%d')
-                    try:
-                        if len(tickers) == 1:
-                            # Single ticker
-                            if date_str in data.index:
-                                price = float(data.loc[date_str, 'Close'])
-                                results[ticker][date_str] = price
-                        else:
-                            # Multiple tickers
-                            if ticker_with_suffix in data['Close'].columns and date_str in data.index:
-                                price = float(data['Close'][ticker_with_suffix].loc[date_str])
-                                results[ticker][date_str] = price
-                    except:
-                        continue
+                    
+                    # Try to find nearest trading day price
+                    price, actual_date, days_diff = self._find_nearest_trading_day_price(
+                        data, ticker_with_suffix, date_str, is_single_ticker=is_single
+                    )
+                    
+                    if price is not None:
+                        results[ticker][date_str] = price
+                        if days_diff != 0:
+                            nearest_count += 1
+                            logger.debug(f"   📅 {ticker} @ {date_str}: Used {actual_date} ({abs(days_diff)} days {'before' if days_diff < 0 else 'after'})")
+                    else:
+                        nan_count += 1
+                        logger.debug(f"   ⚠️ {ticker} @ {date_str}: No nearby data (will use AI)")
             
+            if nearest_count > 0:
+                logger.info(f"📅 Found {nearest_count} prices from nearby trading days (holidays/weekends)")
+            if nan_count > 0:
+                logger.info(f"⚠️ {nan_count} prices unavailable (AI fallback will handle)")
             logger.info(f"✅ Historical bulk download complete")
             return results
             

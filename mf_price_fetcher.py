@@ -104,23 +104,42 @@ class MFToolClient:
                                 logger.info(f"✅ Historical NAV found for {scheme_code}: ₹{nav_data['nav']} on {nav_data['date']}")
                                 return nav_data
                             else:
-                                # Find closest date within 30 days (more flexible for mutual funds)
-                                date_diff = abs(hist_df['date'] - target_date)
-                                closest_idx = date_diff.idxmin()
-                                if date_diff[closest_idx] <= pd.Timedelta(days=30):
-                                    date_value = hist_df.iloc[closest_idx]['date']
+                                # Find closest date within 7 days (holidays/weekends)
+                                # Prioritize previous days (NAVs published after market close)
+                                hist_df['date_diff'] = hist_df['date'] - target_date
+                                hist_df['days_away'] = hist_df['date_diff'].dt.days
+                                
+                                # Filter to ±7 days
+                                nearby = hist_df[abs(hist_df['days_away']) <= 7].copy()
+                                
+                                if not nearby.empty:
+                                    # Sort: prefer previous days, then by closeness
+                                    nearby['sort_key'] = nearby['days_away'].apply(
+                                        lambda x: (x > 0, abs(x))  # (is_future, distance)
+                                    )
+                                    nearby = nearby.sort_values('sort_key')
+                                    
+                                    best_match = nearby.iloc[0]
+                                    date_value = best_match['date']
                                     date_str = date_value.strftime('%Y-%m-%d') if hasattr(date_value, 'strftime') else str(date_value)
+                                    days_diff = int(best_match['days_away'])
+                                    
                                     nav_data = {
                                         'scheme_code': scheme_code,
                                         'scheme_name': 'Unknown',  # Historical data doesn't include scheme name
-                                        'nav': float(hist_df.iloc[closest_idx]['nav']),
+                                        'nav': float(best_match['nav']),
                                         'date': date_str,
                                         'source': 'mftool_historical'
                                     }
-                                    logger.info(f"✅ Closest historical NAV found for {scheme_code}: ₹{nav_data['nav']} on {nav_data['date']}")
+                                    
+                                    if days_diff != 0:
+                                        direction = "before" if days_diff < 0 else "after"
+                                        logger.info(f"📅 NAV for {scheme_code}: ₹{nav_data['nav']} on {date_str} ({abs(days_diff)} days {direction} {date})")
+                                    else:
+                                        logger.info(f"✅ Closest historical NAV found for {scheme_code}: ₹{nav_data['nav']} on {nav_data['date']}")
                                     return nav_data
                                 else:
-                                    logger.warning(f"⚠️ No historical NAV found within 30 days for {scheme_code} on {date}")
+                                    logger.warning(f"⚠️ No historical NAV found within 7 days for {scheme_code} on {date}")
                         else:
                             logger.warning(f"⚠️ No valid dates found in historical data for scheme {scheme_code}")
                     else:
