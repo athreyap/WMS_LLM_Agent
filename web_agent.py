@@ -693,10 +693,9 @@ class PortfolioAnalytics:
             # Add user_id to the dataframe
             df['user_id'] = user_id
             
-            # Fetch historical prices for missing price values
-            if 'price' not in df.columns or df['price'].isna().any():
-                st.info(f"🔍 Fetching historical prices for {uploaded_file.name}...")
-                df = self.fetch_historical_prices_for_transactions(df)
+            # ✅ ALWAYS fetch prices (ignore CSV price column)
+            st.info(f"🔍 Fetching prices for ALL transactions in {uploaded_file.name}...")
+            df = self.fetch_historical_prices_for_transactions(df)
             
             # Save transactions to database
             st.info(f"💾 Saving {len(df)} transactions to database...")
@@ -724,7 +723,12 @@ class PortfolioAnalytics:
             return False
     
     def fetch_historical_prices_for_transactions(self, df):
-        """Fetch historical prices for transactions"""
+        """
+        ✅ ENHANCED: Fetch historical prices for transactions with AI fallback
+        - Tries API first (yfinance/mftool) - FREE
+        - Falls back to AI if API fails
+        - Updates DataFrame AND stores in transactions table
+        """
         try:
             # Count transactions that need historical prices
             transactions_needing_prices = 0
@@ -733,7 +737,10 @@ class PortfolioAnalytics:
                     transactions_needing_prices += 1
             
             if transactions_needing_prices == 0:
+                st.info("✅ All transactions already have prices")
                 return df
+            
+            st.info(f"🔍 Found {transactions_needing_prices} transactions with missing prices - fetching now...")
             
             # Create progress bar
             progress_bar = st.progress(0)
@@ -741,76 +748,204 @@ class PortfolioAnalytics:
             status_text.text(f"🔍 Fetching historical prices for {transactions_needing_prices} transactions...")
             
             processed_count = 0
+            api_success = 0
+            ai_success = 0
+            failed_count = 0
+            
+            # Initialize AI fetcher
+            try:
+                from ai_price_fetcher import AIPriceFetcher
+                ai_fetcher = AIPriceFetcher()
+                ai_available = ai_fetcher.is_available()
+            except Exception as e:
+                print(f"⚠️ AI fetcher not available: {e}")
+                ai_available = False
             
             for idx, row in df.iterrows():
                 ticker = row['ticker']
                 transaction_date = row['date']
+                date_str = transaction_date.strftime('%Y-%m-%d')
                 
                 # Skip if already has price
                 if 'price' in df.columns and pd.notna(df.at[idx, 'price']) and df.at[idx, 'price'] > 0:
                     continue
                 
-                # Detect if this is a mutual fund (ISIN code or numeric scheme code)
+                # Get stock/fund name if available
+                stock_name = row.get('stock_name', ticker)
+                
+                # Detect asset type
                 ticker_str = str(ticker).strip()
-                # More accurate MF detection - only numeric scheme codes or MF_ prefix
-                # Exclude BSE codes (6 digits starting with 5, e.g., 500414)
                 is_bse_code = (ticker_str.isdigit() and len(ticker_str) == 6 and ticker_str.startswith('5'))
                 is_mutual_fund = (
                     (ticker_str.isdigit() and len(ticker_str) >= 5 and len(ticker_str) <= 6 and not is_bse_code) or
                     ticker_str.startswith('MF_')
                 )
+                is_pms_aif = ticker_str.startswith('INP') or ticker_str.startswith('INA') or 'PMS' in ticker_str.upper() or 'AIF' in ticker_str.upper()
                 
-                # Fetch historical price
+                historical_price = None
+                fetch_method = None
+                
+                # ✅ STEP 1: Try API first (FREE)
                 if is_mutual_fund:
-                    # Mutual fund
-                    historical_price = get_mutual_fund_price(
-                        ticker, 
-                        ticker, 
-                        row['user_id'], 
-                        transaction_date.strftime('%Y-%m-%d')
-                    )
-                else:
-                    # Stock - validate ticker format
-                    if '/' in ticker_str or 'E+' in ticker_str.upper():
-                        # Invalid ticker format (scientific notation or fractions)
-                        st.warning(f"⚠️ Invalid ticker format: {ticker_str}")
-                        df.at[idx, 'price'] = 0.0
-                        continue
-                    
-                    historical_price = get_stock_price(
-                        ticker, 
-                        ticker, 
-                        transaction_date.strftime('%Y-%m-%d')
-                    )
+                    # Mutual fund - try mftool API
+                    try:
+                        historical_price = get_mutual_fund_price(
+                            ticker, 
+                            stock_name, 
+                            row['user_id'], 
+                            date_str
+                        )
+                        if historical_price and historical_price > 0:
+                            fetch_method = 'mftool_api'
+                            api_success += 1
+                    except Exception as e:
+                        print(f"⚠️ mftool failed for {ticker}: {e}")
                 
+                elif is_pms_aif:
+                    # ✅ PMS/AIF: Use invested amount and calculate using CAGR
+                    print(f"📊 {ticker}: PMS/AIF detected, calculating from invested amount")
+                    
+                    # Get invested amount from CSV
+                    invested_amount = row.get('invested_amount', 0) or row.get('amount', 0)
+                    if not invested_amount or invested_amount <= 0:
+                        # Fallback: price * quantity
+                        csv_price = row.get('price', 0)
+                        quantity = row.get('quantity', 1)
+                        if csv_price and csv_price > 0:
+                            invested_amount = csv_price * quantity
+                    
+                    quantity = row.get('quantity', 1)
+                    if quantity <= 0:
+                        quantity = 1
+                    
+                    # Calculate per-unit price from invested amount
+                    transaction_price = invested_amount / quantity
+                    
+                    # Try to get CURRENT NAV from AI
+                    try:
+                        if ai_available:
+                            print(f"🤖 Fetching current NAV for {ticker} to calculate CAGR")
+                            current_nav_result = ai_fetcher.get_pms_aif_nav(ticker, stock_name)  # No date = current
+                            
+                            if current_nav_result and isinstance(current_nav_result, dict) and current_nav_result.get('price', 0) > 0:
+                                current_nav = current_nav_result['price']
+                                
+                                # Calculate CAGR from transaction date to today
+                                from datetime import datetime
+                                today = datetime.now()
+                                days_elapsed = (today - transaction_date).days
+                                years_elapsed = days_elapsed / 365.25
+                                
+                                if years_elapsed > 0.01:  # At least a few days
+                                    # CAGR formula: ((Current/Initial)^(1/years)) - 1
+                                    cagr = ((current_nav / transaction_price) ** (1 / years_elapsed)) - 1
+                                    print(f"✅ PMS/AIF CAGR: {cagr*100:.2f}% per year for {ticker}")
+                                    
+                                    # Use transaction price (this will be stored in DB)
+                                    historical_price = transaction_price
+                                    fetch_method = 'pms_aif_amount'
+                                    ai_success += 1
+                                    
+                                    # Store CAGR for future calculations (we'll add this to the row)
+                                    df.at[idx, 'cagr'] = cagr
+                                    df.at[idx, 'current_nav'] = current_nav
+                                else:
+                                    # Recent transaction, use current NAV
+                                    historical_price = current_nav
+                                    fetch_method = 'pms_aif_current'
+                                    ai_success += 1
+                            else:
+                                # AI failed, use transaction price as-is
+                                historical_price = transaction_price
+                                fetch_method = 'pms_aif_amount_only'
+                                print(f"⚠️ Could not fetch current NAV for {ticker}, using transaction price")
+                        else:
+                            # AI not available, use transaction price
+                            historical_price = transaction_price
+                            fetch_method = 'pms_aif_amount_only'
+                            print(f"⚠️ AI not available for {ticker}, using transaction price")
+                    except Exception as e:
+                        print(f"⚠️ Error calculating PMS/AIF price for {ticker}: {e}")
+                        historical_price = transaction_price
+                        fetch_method = 'pms_aif_amount_only'
+                
+                else:
+                    # Stock - try yfinance API
+                    try:
+                        # Validate ticker format first
+                        if '/' in ticker_str or 'E+' in ticker_str.upper():
+                            st.warning(f"⚠️ Invalid ticker format: {ticker_str}")
+                            df.at[idx, 'price'] = 0.0
+                            failed_count += 1
+                            continue
+                        
+                        historical_price = get_stock_price(
+                            ticker, 
+                            stock_name, 
+                            date_str
+                        )
+                        if historical_price and historical_price > 0:
+                            fetch_method = 'yfinance_api'
+                            api_success += 1
+                    except Exception as e:
+                        print(f"⚠️ yfinance failed for {ticker}: {e}")
+                
+                # ✅ STEP 2: If API failed, try AI
+                if not historical_price or historical_price <= 0:
+                    if ai_available:
+                        try:
+                            print(f"🤖 AI fallback for {ticker} ({stock_name}) on {date_str}")
+                            
+                            if is_mutual_fund:
+                                result = ai_fetcher.get_mutual_fund_nav(ticker, stock_name, date_str)
+                            elif is_pms_aif:
+                                result = ai_fetcher.get_pms_aif_nav(ticker, stock_name, date_str)
+                            else:
+                                result = ai_fetcher.get_stock_price(ticker, stock_name, date_str)
+                            
+                            if result and isinstance(result, dict) and result.get('price', 0) > 0:
+                                historical_price = result['price']
+                                fetch_method = 'ai_fallback'
+                                ai_success += 1
+                                print(f"✅ AI found price: ₹{historical_price} for {ticker}")
+                        except Exception as ai_error:
+                            print(f"⚠️ AI also failed for {ticker}: {ai_error}")
+                
+                # ✅ STEP 3: Update DataFrame with fetched price
                 if historical_price and historical_price > 0:
                     df.at[idx, 'price'] = historical_price
+                    print(f"✅ [{fetch_method}] {ticker}: ₹{historical_price} on {date_str}")
                 else:
-                    # Use default price if historical price not available
-                    if is_mutual_fund:
-                        df.at[idx, 'price'] = 100.0  # Default MF price
-                    else:
-                        df.at[idx, 'price'] = 1000.0  # Default stock price
+                    # If all methods failed, set to 0 (will be filtered by validation)
+                    df.at[idx, 'price'] = 0.0
+                    failed_count += 1
+                    st.warning(f"⚠️ Could not fetch price for {ticker} ({stock_name}) on {date_str}")
                 
                 processed_count += 1
                 progress = processed_count / transactions_needing_prices
                 progress_bar.progress(progress)
-                status_text.text(f"🔍 Processing {processed_count}/{transactions_needing_prices} transactions...")
+                status_text.text(f"🔍 Processing {processed_count}/{transactions_needing_prices}: {ticker}")
             
             # Complete progress bar
             progress_bar.progress(1.0)
-            status_text.text("✅ Historical prices fetched successfully!")
+            
+            # Summary
+            summary_msg = f"✅ Price fetch complete: {api_success} via API (FREE), {ai_success} via AI, {failed_count} failed"
+            status_text.text(summary_msg)
+            st.success(summary_msg)
             
             # Clear progress elements after a short delay
             import time
-            time.sleep(1)
-            progress_bar.progress(1.0)
+            time.sleep(2)
+            progress_bar.empty()
             status_text.empty()
             
             return df
                     
         except Exception as e:
             st.error(f"Error fetching historical prices: {e}")
+            import traceback
+            st.error(f"Traceback: {traceback.format_exc()}")
             return df
     
     def bulk_fetch_and_cache_all_prices(self, user_id, show_ui=True):
@@ -1276,11 +1411,10 @@ class PortfolioAnalytics:
             )
             
             if is_pms_aif:
-                # For PMS/AIF, we use the TRANSACTION PRICE as historical price
-                # The actual NAV calculation happens at portfolio level using CAGR
-                print(f"🔍 {ticker}: Detected as PMS/AIF - using transaction price")
+                # ✅ For PMS/AIF, calculate NAV using CAGR if available
+                print(f"🔍 {ticker}: Detected as PMS/AIF - calculating NAV using CAGR")
                 
-                # Get transaction price from database
+                # Get transaction data from database
                 from database_config_supabase import get_transactions_supabase
                 transactions = get_transactions_supabase(user_id=None)  # Get all transactions
                 
@@ -1298,9 +1432,28 @@ class PortfolioAnalytics:
                     if not ticker_txns.empty:
                         # Use the most recent transaction price before target date
                         latest_txn = ticker_txns.sort_values('date', ascending=False).iloc[0]
-                        price = float(latest_txn['price'])
-                        price_source = 'pms_transaction_price'
-                        print(f"✅ {ticker}: Using transaction price - ₹{price}")
+                        transaction_price = float(latest_txn['price'])
+                        transaction_date = pd.to_datetime(latest_txn['date'])
+                        
+                        # Check if we have CAGR data stored
+                        cagr = latest_txn.get('cagr', None)
+                        
+                        if cagr and pd.notna(cagr):
+                            # ✅ Calculate NAV using CAGR
+                            from datetime import datetime
+                            days_diff = (target_date - transaction_date).days
+                            years_diff = days_diff / 365.25
+                            
+                            # NAV at target date = Transaction NAV × (1 + CAGR)^years
+                            calculated_nav = transaction_price * ((1 + float(cagr)) ** years_diff)
+                            price = calculated_nav
+                            price_source = 'pms_cagr_calculated'
+                            print(f"✅ {ticker}: Calculated NAV using CAGR ({float(cagr)*100:.2f}%) = ₹{price:.2f}")
+                        else:
+                            # No CAGR, use transaction price
+                            price = transaction_price
+                            price_source = 'pms_transaction_price'
+                            print(f"✅ {ticker}: Using transaction price (no CAGR) - ₹{price}")
                         
                         # Save to cache
                         try:
@@ -1615,6 +1768,52 @@ class PortfolioAnalytics:
                 st.warning(f"⚠️ File {filename} was already processed with {len(existing_transactions)} transactions")
                 st.info("Skipping duplicate processing to avoid data duplication")
                 return True  # Return success since the file is already processed
+            
+            # ✅ VALIDATE DATA BEFORE SAVING: Remove NaN, inf, and out-of-range values
+            st.info(f"🔍 Validating {len(df)} transactions before saving...")
+            
+            import math
+            import numpy as np
+            
+            # Store original count
+            original_count = len(df)
+            
+            # 1. Replace NaN with safe defaults
+            df['price'] = df['price'].replace([np.inf, -np.inf], np.nan)  # Convert inf to NaN first
+            df['quantity'] = df['quantity'].replace([np.inf, -np.inf], np.nan)
+            
+            # 2. Drop rows with NaN in critical columns
+            critical_columns = ['ticker', 'quantity', 'price', 'date']
+            before_drop = len(df)
+            df = df.dropna(subset=critical_columns)
+            after_drop = len(df)
+            
+            if before_drop > after_drop:
+                st.warning(f"⚠️ Removed {before_drop - after_drop} rows with missing/invalid data (NaN/inf)")
+            
+            # 3. Validate numeric ranges
+            # Remove rows with zero or negative quantities
+            df = df[df['quantity'] > 0]
+            
+            # Remove rows with zero or negative prices
+            df = df[df['price'] > 0]
+            
+            # Remove rows with unreasonably large values (overflow protection)
+            MAX_PRICE = 1_000_000  # Max price: 10 lakhs
+            MAX_QUANTITY = 10_000_000  # Max quantity: 1 crore units
+            
+            df = df[df['price'] <= MAX_PRICE]
+            df = df[df['quantity'] <= MAX_QUANTITY]
+            
+            final_count = len(df)
+            
+            if original_count > final_count:
+                st.warning(f"⚠️ Data cleaned: {original_count} → {final_count} valid transactions")
+                st.caption(f"Removed {original_count - final_count} rows with invalid values")
+            
+            if final_count == 0:
+                st.error("❌ No valid transactions remaining after validation")
+                return False
             
             # Save transactions in bulk
             st.info(f"💾 Saving {len(df)} transactions to database...")
