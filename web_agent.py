@@ -1766,20 +1766,29 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             # Step 2.5: 🆕 AI BATCH FETCH - Get ALL prices at once (only if some files succeeded)
             if processed_count > 0:
                 st.markdown("---")
-                st.info("🤖 Using AI to fetch ALL prices (historical + weekly + live) in one batch...")
-                st.caption("⏳ This may take several minutes. Progress shown below...")
                 
-                try:
-                    # ✅ NO SPINNER - Let the function show its own progress!
-                    # The bulk_fetch function has st.progress() internally
-                    self.bulk_fetch_and_cache_all_prices(user_id, show_ui=True)
-                    st.success("✅ All prices cached successfully!")
-                except Exception as cache_error:
-                    st.error(f"❌ AI batch fetch error: {cache_error}")
-                    st.warning("⚠️ Some tickers may not have been processed. You can retry from Settings.")
-                    import traceback
-                    st.error(f"Error details: {traceback.format_exc()}")
-                    # Don't fallback - let user see the error and retry manually
+                # ✅ CHECK: Is bulk fetch already complete for this user?
+                bulk_fetch_key = f"bulk_fetch_done_{user_id}"
+                if st.session_state.get(bulk_fetch_key, False):
+                    st.success("✅ Prices already fetched and cached for this account!")
+                else:
+                    st.info("🤖 Using AI to fetch ALL prices (historical + weekly + live) in one batch...")
+                    st.caption("⏳ This may take 15-30 minutes for 62 tickers. Progress shown below...")
+                    st.warning("⚠️ **IMPORTANT:** Do NOT close this page!")
+                    st.caption("💡 If interrupted, the system will resume from where it stopped on your next login.")
+                    st.caption("📊 Your progress is being saved to the database after each ticker.")
+                    
+                    try:
+                        # ✅ Run bulk fetch with progress tracking
+                        self.bulk_fetch_and_cache_all_prices(user_id, show_ui=True)
+                        st.success("✅ All prices cached successfully!")
+                    except Exception as cache_error:
+                        st.error(f"❌ AI batch fetch error: {cache_error}")
+                        st.warning("⚠️ Some tickers may not have been processed.")
+                        st.info("💡 Your progress has been saved. Click the login button below, then go to Settings → Update Price Cache to resume.")
+                        import traceback
+                        st.error(f"Error details: {traceback.format_exc()}")
+                        # Don't fallback - let user see the error and retry manually
             
             # Step 3: Show summary
             st.markdown("---")
