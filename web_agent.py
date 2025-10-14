@@ -558,7 +558,7 @@ class PortfolioAnalytics:
                 st.error(f"❌ Missing required columns in {uploaded_file.name}: {missing_columns}")
                 st.info("Required columns: ticker, quantity")
                 st.info("Optional columns: date, transaction_type, price, stock_name, sector")
-                return False
+                return (False, [])
             
             # Clean and validate data
             st.info(f"🔍 Initial data: {len(df)} rows")
@@ -689,7 +689,7 @@ class PortfolioAnalytics:
             
             if df.empty:
                 st.warning(f"⚠️ No valid transactions found in {uploaded_file.name}")
-                return False
+                return (False, [])
             
             # Add user_id to the dataframe
             df['user_id'] = user_id
@@ -710,10 +710,11 @@ class PortfolioAnalytics:
             
             if success:
                 st.success(f"✅ Successfully processed {uploaded_file.name}")
-                return True
+                # ✅ Return both success status AND the DataFrame with tickers
+                return (True, df['ticker'].unique().tolist())
             else:
                 st.error(f"❌ Failed to process {uploaded_file.name}")
-                return False
+                return (False, [])
                 
         except Exception as e:
             st.error(f"❌ Error processing {uploaded_file.name}: {e}")
@@ -721,7 +722,7 @@ class PortfolioAnalytics:
             st.error(f"Error details: {str(e)}")
             import traceback
             st.error(f"Traceback: {traceback.format_exc()}")
-            return False
+            return (False, [])
     
     def fetch_historical_prices_for_transactions(self, df):
         """
@@ -2066,107 +2067,120 @@ class PortfolioAnalytics:
                     # ✅ NEW: Fetch weekly prices IMMEDIATELY after each file
                     # This ensures data is complete right away, no need to re-read DB later
                     try:
-                        # Step 1: Process transactions from CSV
-                        success = self.process_csv_file(
+                        # Step 1: Process transactions from CSV and GET TICKERS DIRECTLY
+                        success, file_tickers = self.process_csv_file(
                             uploaded_file, 
                             user_id, 
                             skip_weekly_cache=True,  # We'll do it manually below
                             skip_live_prices=True     # Live prices at login only
                         )
                         
-                        if success:
+                        if success and file_tickers:
                             st.success(f"✅ {uploaded_file.name} - Transactions saved")
                             
                             # Step 2: Immediately fetch weekly prices for THIS file's tickers
+                            # ✅ NO DB READ NEEDED - we already have tickers from the file!
                             try:
-                                st.info(f"🔄 Fetching weekly prices for {uploaded_file.name}...")
+                                st.info(f"🔄 Fetching weekly prices for {len(file_tickers)} tickers from {uploaded_file.name}...")
                                 
-                                # Get transactions from this file to know which tickers to fetch
-                                from database_config_supabase import get_transactions_supabase
-                                all_transactions = get_transactions_supabase(user_id=user_id)
+                                # ✅ API-first, AI-fallback strategy for weekly prices
+                                from datetime import datetime, timedelta
+                                import yfinance as yf
+                                from database_config_supabase import save_stock_price_supabase
                                 
-                                if all_transactions:
-                                    df_all = pd.DataFrame(all_transactions)
-                                    # Get only tickers from this file (most recent transactions)
-                                    file_tickers = df_all['ticker'].unique()[-15:]  # Assume last 15 are from this file
-                                    
-                                    # ✅ API-first, AI-fallback strategy for weekly prices
-                                    from datetime import datetime, timedelta
-                                    import yfinance as yf
-                                    from database_config_supabase import save_stock_price_supabase
-                                    
-                                    stocks_cached = 0
-                                    mf_cached = 0
-                                    pms_skipped = 0
-                                    ai_fallback_count = 0
-                                    
-                                    for ticker in file_tickers:
-                                        try:
-                                            ticker_str = str(ticker).strip()
-                                            weekly_prices = []  # Store fetched prices
-                                            source = None
+                                stocks_cached = 0
+                                mf_cached = 0
+                                pms_skipped = 0
+                                ai_fallback_count = 0
+                                
+                                # ✅ BULK STORAGE: Collect all prices then save in ONE batch
+                                all_weekly_prices_to_save = []
+                                
+                                for ticker in file_tickers:
+                                    try:
+                                        ticker_str = str(ticker).strip()
+                                        weekly_prices = []  # Store fetched prices
+                                        source = None
+                                        
+                                        # Detect asset type
+                                        is_pms_aif = (
+                                            ticker_str.startswith('INP') or 
+                                            ticker_str.startswith('INA') or 
+                                            'PMS' in ticker_str.upper() or 
+                                            'AIF' in ticker_str.upper()
+                                        )
+                                        
+                                        # BSE codes are 6 digits starting with 5 (e.g., 500414)
+                                        is_bse_code = (ticker_str.isdigit() and len(ticker_str) == 6 and ticker_str.startswith('5'))
+                                        
+                                        # MF scheme codes are 5-6 digits (but not BSE codes)
+                                        is_mutual_fund = (
+                                            (ticker_str.isdigit() and len(ticker_str) >= 5 and len(ticker_str) <= 6 and not is_bse_code) or
+                                            ticker_str.startswith('MF_')
+                                        )
+                                        
+                                        if is_pms_aif:
+                                            # PMS/AIF: Skip weekly cache (uses CAGR on-demand)
+                                            print(f"⏩ {ticker}: PMS/AIF - skipping weekly cache (uses CAGR)")
+                                            pms_skipped += 1
+                                            continue
+                                        
+                                        elif is_mutual_fund:
+                                            # MUTUAL FUND: Try mftool first, then AI
+                                            print(f"🔍 {ticker}: Mutual Fund detected")
                                             
-                                            # Detect asset type
-                                            is_pms_aif = (
-                                                ticker_str.startswith('INP') or 
-                                                ticker_str.startswith('INA') or 
-                                                'PMS' in ticker_str.upper() or 
-                                                'AIF' in ticker_str.upper()
-                                            )
-                                            
-                                            # BSE codes are 6 digits starting with 5 (e.g., 500414)
-                                            is_bse_code = (ticker_str.isdigit() and len(ticker_str) == 6 and ticker_str.startswith('5'))
-                                            
-                                            # MF scheme codes are 5-6 digits (but not BSE codes)
-                                            is_mutual_fund = (
-                                                (ticker_str.isdigit() and len(ticker_str) >= 5 and len(ticker_str) <= 6 and not is_bse_code) or
-                                                ticker_str.startswith('MF_')
-                                            )
-                                            
-                                            if is_pms_aif:
-                                                # PMS/AIF: Skip weekly cache (uses CAGR on-demand)
-                                                print(f"⏩ {ticker}: PMS/AIF - skipping weekly cache (uses CAGR)")
-                                                pms_skipped += 1
-                                                continue
-                                            
-                                            elif is_mutual_fund:
-                                                # MUTUAL FUND: Try mftool first, then AI
-                                                print(f"🔍 {ticker}: Mutual Fund detected")
+                                            # Step 1: Try mftool (FREE API)
+                                            try:
+                                                from mf_price_fetcher import MFPriceFetcher
+                                                mf_fetcher = MFPriceFetcher()
+                                                scheme_code = ticker_str.replace('MF_', '')
                                                 
-                                                # Step 1: Try mftool (FREE API)
+                                                # Get current NAV
+                                                nav_data = mf_fetcher.get_current_nav(scheme_code)
+                                                if nav_data and nav_data > 0:
+                                                    today_str = datetime.now().strftime('%Y-%m-%d')
+                                                    weekly_prices.append({'date': today_str, 'price': float(nav_data)})
+                                                    source = 'mftool_current'
+                                                    print(f"✅ {ticker}: mftool returned NAV ₹{nav_data}")
+                                            except Exception as mf_err:
+                                                print(f"⚠️ {ticker}: mftool failed - {mf_err}")
+                                            
+                                            # Step 2: If mftool failed, try AI (fallback)
+                                            if not weekly_prices:
+                                                print(f"🤖 {ticker}: Trying AI for weekly NAV...")
+                                                # AI fallback will be handled at login for weekly data
+                                                # Just log that we need AI
+                                                print(f"⚠️ {ticker}: MF will use AI at login for weekly data")
+                                            
+                                            if weekly_prices:
+                                                mf_cached += 1
+                                        
+                                        else:
+                                            # STOCK/ETF: Try yfinance first, then indstocks, then AI
+                                            print(f"🔍 {ticker}: Stock/ETF detected")
+                                            one_year_ago = datetime.now() - timedelta(days=365)
+                                            
+                                            # Step 1: Try yfinance (FREE API) - NSE first
+                                            try:
+                                                yf_ticker = f"{ticker}.NS"
+                                                stock = yf.Ticker(yf_ticker)
+                                                hist = stock.history(start=one_year_ago, end=datetime.now(), interval='1wk')
+                                                
+                                                if not hist.empty:
+                                                    for date_idx, price in zip(hist.index, hist['Close']):
+                                                        weekly_prices.append({
+                                                            'date': date_idx.strftime('%Y-%m-%d'),
+                                                            'price': float(price)
+                                                        })
+                                                    source = 'yfinance_weekly_nse'
+                                                    print(f"✅ {ticker}: yfinance (NSE) returned {len(hist)} prices")
+                                            except Exception as yf_err:
+                                                print(f"⚠️ {ticker}: yfinance NSE failed - {yf_err}")
+                                            
+                                            # Step 2: If NSE failed, try BSE
+                                            if not weekly_prices:
                                                 try:
-                                                    from mf_price_fetcher import MFPriceFetcher
-                                                    mf_fetcher = MFPriceFetcher()
-                                                    scheme_code = ticker_str.replace('MF_', '')
-                                                    
-                                                    # Get current NAV
-                                                    nav_data = mf_fetcher.get_current_nav(scheme_code)
-                                                    if nav_data and nav_data > 0:
-                                                        today_str = datetime.now().strftime('%Y-%m-%d')
-                                                        weekly_prices.append({'date': today_str, 'price': float(nav_data)})
-                                                        source = 'mftool_current'
-                                                        print(f"✅ {ticker}: mftool returned NAV ₹{nav_data}")
-                                                except Exception as mf_err:
-                                                    print(f"⚠️ {ticker}: mftool failed - {mf_err}")
-                                                
-                                                # Step 2: If mftool failed, try AI (fallback)
-                                                if not weekly_prices:
-                                                    print(f"🤖 {ticker}: Trying AI for weekly NAV...")
-                                                    # AI fallback will be handled at login for weekly data
-                                                    # Just log that we need AI
-                                                    print(f"⚠️ {ticker}: MF will use AI at login for weekly data")
-                                                
-                                                if weekly_prices:
-                                                    mf_cached += 1
-                                            
-                                            else:
-                                                # STOCK/ETF: Try yfinance first, then indstocks, then AI
-                                                print(f"🔍 {ticker}: Stock/ETF detected")
-                                                one_year_ago = datetime.now() - timedelta(days=365)
-                                                
-                                                # Step 1: Try yfinance (FREE API) - NSE first
-                                                try:
-                                                    yf_ticker = f"{ticker}.NS"
+                                                    yf_ticker = f"{ticker}.BO"
                                                     stock = yf.Ticker(yf_ticker)
                                                     hist = stock.history(start=one_year_ago, end=datetime.now(), interval='1wk')
                                                     
@@ -2176,75 +2190,64 @@ class PortfolioAnalytics:
                                                                 'date': date_idx.strftime('%Y-%m-%d'),
                                                                 'price': float(price)
                                                             })
-                                                        source = 'yfinance_weekly_nse'
-                                                        print(f"✅ {ticker}: yfinance (NSE) returned {len(hist)} prices")
-                                                except Exception as yf_err:
-                                                    print(f"⚠️ {ticker}: yfinance NSE failed - {yf_err}")
-                                                
-                                                # Step 2: If NSE failed, try BSE
-                                                if not weekly_prices:
-                                                    try:
-                                                        yf_ticker = f"{ticker}.BO"
-                                                        stock = yf.Ticker(yf_ticker)
-                                                        hist = stock.history(start=one_year_ago, end=datetime.now(), interval='1wk')
-                                                        
-                                                        if not hist.empty:
-                                                            for date_idx, price in zip(hist.index, hist['Close']):
-                                                                weekly_prices.append({
-                                                                    'date': date_idx.strftime('%Y-%m-%d'),
-                                                                    'price': float(price)
-                                                                })
-                                                            source = 'yfinance_weekly_bse'
-                                                            print(f"✅ {ticker}: yfinance (BSE) returned {len(hist)} prices")
-                                                    except Exception as yf_bse_err:
-                                                        print(f"⚠️ {ticker}: yfinance BSE failed - {yf_bse_err}")
-                                                
-                                                # Step 3: If yfinance failed, try indstocks
-                                                if not weekly_prices:
-                                                    try:
-                                                        from indstocks_api import get_stock_price_indstocks
-                                                        # indstocks doesn't have bulk weekly, so get current
-                                                        price = get_stock_price_indstocks(ticker)
-                                                        if price and price > 0:
-                                                            today_str = datetime.now().strftime('%Y-%m-%d')
-                                                            weekly_prices.append({'date': today_str, 'price': float(price)})
-                                                            source = 'indstocks_current'
-                                                            print(f"✅ {ticker}: indstocks returned ₹{price}")
-                                                    except Exception as ind_err:
-                                                        print(f"⚠️ {ticker}: indstocks failed - {ind_err}")
-                                                
-                                                # Step 4: If all APIs failed, mark for AI fallback at login
-                                                if not weekly_prices:
-                                                    print(f"⚠️ {ticker}: All APIs failed, will use AI at login")
-                                                    ai_fallback_count += 1
-                                                else:
-                                                    stocks_cached += 1
+                                                        source = 'yfinance_weekly_bse'
+                                                        print(f"✅ {ticker}: yfinance (BSE) returned {len(hist)} prices")
+                                                except Exception as yf_bse_err:
+                                                    print(f"⚠️ {ticker}: yfinance BSE failed - {yf_bse_err}")
                                             
-                                            # Save fetched prices to DB
-                                            if weekly_prices and source:
-                                                for price_data in weekly_prices:
-                                                    try:
-                                                        save_stock_price_supabase(
-                                                            ticker, 
-                                                            price_data['date'], 
-                                                            price_data['price'], 
-                                                            source
-                                                        )
-                                                    except Exception as save_err:
-                                                        print(f"⚠️ {ticker}: Failed to save {price_data['date']} - {save_err}")
+                                            # Step 3: If yfinance failed, try indstocks
+                                            if not weekly_prices:
+                                                try:
+                                                    from indstocks_api import get_stock_price_indstocks
+                                                    # indstocks doesn't have bulk weekly, so get current
+                                                    price = get_stock_price_indstocks(ticker)
+                                                    if price and price > 0:
+                                                        today_str = datetime.now().strftime('%Y-%m-%d')
+                                                        weekly_prices.append({'date': today_str, 'price': float(price)})
+                                                        source = 'indstocks_current'
+                                                        print(f"✅ {ticker}: indstocks returned ₹{price}")
+                                                except Exception as ind_err:
+                                                    print(f"⚠️ {ticker}: indstocks failed - {ind_err}")
                                             
-                                        except Exception as ticker_err:
-                                            print(f"❌ {ticker}: Error during weekly fetch - {ticker_err}")
-                                    
-                                    # Show summary
-                                    if stocks_cached > 0:
-                                        st.success(f"✅ {uploaded_file.name} - {stocks_cached} stock(s) weekly prices cached via API!")
-                                    if mf_cached > 0:
-                                        st.success(f"✅ {uploaded_file.name} - {mf_cached} MF(s) NAV cached via API!")
-                                    if pms_skipped > 0:
-                                        st.info(f"💼 {pms_skipped} PMS/AIF(s) - using CAGR calculation")
-                                    if ai_fallback_count > 0:
-                                        st.warning(f"⚠️ {ai_fallback_count} ticker(s) need AI fallback at login (APIs failed)")
+                                            # Step 4: If all APIs failed, mark for AI fallback at login
+                                            if not weekly_prices:
+                                                print(f"⚠️ {ticker}: All APIs failed, will use AI at login")
+                                                ai_fallback_count += 1
+                                            else:
+                                                stocks_cached += 1
+                                        
+                                        # ✅ BULK: Add to batch instead of saving individually
+                                        if weekly_prices and source:
+                                            for price_data in weekly_prices:
+                                                all_weekly_prices_to_save.append({
+                                                    'ticker': ticker,
+                                                    'date': price_data['date'],
+                                                    'price': price_data['price'],
+                                                    'source': source
+                                                })
+                                        
+                                    except Exception as ticker_err:
+                                        print(f"❌ {ticker}: Error during weekly fetch - {ticker_err}")
+                                
+                                # ✅ BULK SAVE: Save all weekly prices in ONE batch operation
+                                if all_weekly_prices_to_save:
+                                    try:
+                                        from database_config_supabase import bulk_save_historical_prices
+                                        print(f"💾 Bulk saving {len(all_weekly_prices_to_save)} weekly prices...")
+                                        bulk_save_historical_prices(all_weekly_prices_to_save)
+                                        print(f"✅ Bulk save complete: {len(all_weekly_prices_to_save)} weekly prices stored!")
+                                    except Exception as bulk_err:
+                                        print(f"❌ Bulk save failed: {bulk_err}")
+                                
+                                # Show summary
+                                if stocks_cached > 0:
+                                    st.success(f"✅ {uploaded_file.name} - {stocks_cached} stock(s) weekly prices cached via API!")
+                                if mf_cached > 0:
+                                    st.success(f"✅ {uploaded_file.name} - {mf_cached} MF(s) NAV cached via API!")
+                                if pms_skipped > 0:
+                                    st.info(f"💼 {pms_skipped} PMS/AIF(s) - using CAGR calculation")
+                                if ai_fallback_count > 0:
+                                    st.warning(f"⚠️ {ai_fallback_count} ticker(s) need AI fallback at login (APIs failed)")
                             except Exception as weekly_err:
                                 print(f"⚠️ Weekly cache error for {uploaded_file.name}: {weekly_err}")
                                 # Continue anyway - weekly prices can be fetched at login

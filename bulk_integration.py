@@ -217,7 +217,8 @@ def fetch_historical_prices_bulk(
             price_data_list.append({
                 'ticker': ticker,
                 'date': date_str,
-                'price': float(price)  # Ensure it's a standard float
+                'price': float(price),  # Ensure it's a standard float
+                'source': 'bulk_historical'  # Add source field for database storage
             })
             save_count += 1
     
