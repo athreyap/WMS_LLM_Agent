@@ -2206,9 +2206,12 @@ class PortfolioAnalytics:
                                             # Step 3: If yfinance failed, try indstocks
                                             if not weekly_prices:
                                                 try:
-                                                    from indstocks_api import get_stock_price_indstocks
+                                                    from indstocks_api import INDstocksClient
+                                                    indstocks = INDstocksClient()
                                                     # indstocks doesn't have bulk weekly, so get current
-                                                    price = get_stock_price_indstocks(ticker)
+                                                    result = indstocks.get_stock_price(ticker)
+                                                    if result and isinstance(result, dict):
+                                                        price = result.get('price', 0)
                                                     if price and price > 0:
                                                         today_str = datetime.now().strftime('%Y-%m-%d')
                                                         weekly_prices.append({'date': today_str, 'price': float(price)})
