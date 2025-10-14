@@ -374,25 +374,35 @@ def fetch_weekly_prices_bulk(
         else:
             logger.warning(f"⚠️ PMS/AIF weekly: AI not available, skipping {len(pms_tickers)} tickers")
     
-    # Save to database in bulk
+    # Save to database in BULK (much faster!)
     if progress_callback:
         progress_callback(f"💾 Saving weekly prices to database...")
     
-    save_count = 0
+    # Collect all weekly prices for bulk save
+    price_data_list = []
     for ticker, weekly_df in all_weekly.items():
         for date, row in weekly_df.iterrows():
             try:
-                save_weekly_stock_prices_supabase(
-                    ticker=ticker,
-                    week_start=date.strftime('%Y-%m-%d'),
-                    price=float(row['price'])
-                )
-                save_count += 1
+                price_data_list.append({
+                    'ticker': ticker,
+                    'date': date.strftime('%Y-%m-%d') if hasattr(date, 'strftime') else str(date),
+                    'price': float(row['price']),
+                    'source': 'weekly_bulk'
+                })
             except Exception as e:
-                logger.warning(f"Failed to save weekly price for {ticker}: {e}")
+                logger.warning(f"Failed to prepare weekly price for {ticker}: {e}")
                 continue
     
-    logger.info(f"✅ Weekly prices saved: {save_count} records")
+    # Bulk save all weekly prices at once
+    if price_data_list:
+        from database_config_supabase import bulk_save_historical_prices
+        success = bulk_save_historical_prices(price_data_list)
+        if success:
+            logger.info(f"✅ Weekly prices saved: {len(price_data_list)} records")
+        else:
+            logger.warning(f"⚠️ Bulk save returned False for {len(price_data_list)} weekly prices")
+    else:
+        logger.info(f"✅ Weekly prices saved: 0 records")
     
     return all_weekly
 

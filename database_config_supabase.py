@@ -1705,43 +1705,95 @@ def get_stock_prices_bulk_supabase(tickers: List[str], price_date: str) -> Dict[
             return {}
 
 def get_stock_prices_range_supabase(ticker: str, start_date: str, end_date: str) -> List[Dict]:
-    """Get stock prices for a date range using Supabase"""
+    """
+    Get stock prices for a date range using Supabase
+    
+    Note: This function is used for charts. It queries historical_prices table
+    which contains all weekly, historical, and live prices.
+    """
     try:
-        # Try the new unified stock_prices table first
-        result = supabase.table('stock_prices').select('*').eq('ticker', ticker).gte('price_date', start_date).lte('price_date', end_date).order('price_date').execute()
+        # Query historical_prices table directly (stock_prices table doesn't exist)
+        result = supabase.table('historical_prices')\
+            .select('ticker,transaction_date,historical_price,price_source')\
+            .eq('ticker', ticker)\
+            .gte('transaction_date', start_date)\
+            .lte('transaction_date', end_date)\
+            .order('transaction_date')\
+            .execute()
         
-        return result.data if result.data else []
+        # Map the results to match the expected structure
+        if result.data:
+            mapped_data = []
+            for row in result.data:
+                mapped_data.append({
+                    'ticker': row['ticker'],
+                    'price_date': row['transaction_date'],
+                    'price': row['historical_price'],
+                    'price_source': row.get('price_source', 'unknown')
+                })
+            return mapped_data
+        
+        return []
         
     except Exception as e:
-        error_msg = str(e)
+        print(f"❌ Error getting stock prices range for {ticker}: {e}")
+        return []
+
+
+def get_all_weekly_prices_for_user(user_id: int) -> Dict[str, List[Dict]]:
+    """
+    Get ALL weekly prices for all tickers belonging to a user
+    Uses JOIN between investment_transactions and historical_prices
+    No date filtering - returns all available weekly data
+    
+    Args:
+        user_id: User ID
+    
+    Returns:
+        Dict of {ticker: [{'date': str, 'price': float, 'source': str}]}
+    """
+    try:
+        # Step 1: Get all unique tickers for the user
+        trans_result = supabase.table('investment_transactions')\
+            .select('ticker')\
+            .eq('user_id', user_id)\
+            .execute()
         
-        # If stock_prices table doesn't exist, try using historical_prices table as fallback
-        # Check for PGRST205 error code (table not found) or any error mentioning stock_prices
-        if ("pgrst205" in error_msg.lower() or "stock_pric" in error_msg.lower()):
-            try:
-                # Map to historical_prices table structure
-                result = supabase.table('historical_prices').select('ticker,transaction_date,historical_price,price_source').eq('ticker', ticker).gte('transaction_date', start_date).lte('transaction_date', end_date).order('transaction_date').execute()
-                
-                # Map the results to match the expected structure
-                if result.data:
-                    mapped_data = []
-                    for row in result.data:
-                        mapped_data.append({
-                            'ticker': row['ticker'],
-                            'price_date': row['transaction_date'],
-                            'price': row['historical_price'],
-                            'price_source': row['price_source']
-                        })
-                    return mapped_data
-                
-                return []
-                
-            except Exception as fallback_error:
-                print(f"❌ Error getting range from historical_prices fallback: {fallback_error}")
-                return []
-        else:
-            print(f"❌ Error getting stock prices range for {ticker}: {e}")
-            return []
+        if not trans_result.data:
+            return {}
+        
+        # Get unique tickers
+        tickers = list(set([row['ticker'] for row in trans_result.data]))
+        
+        # Step 2: Get ALL historical prices for these tickers (no date filter)
+        prices_result = supabase.table('historical_prices')\
+            .select('ticker,transaction_date,historical_price,price_source')\
+            .in_('ticker', tickers)\
+            .order('ticker,transaction_date')\
+            .execute()
+        
+        if not prices_result.data:
+            return {}
+        
+        # Step 3: Group by ticker
+        ticker_prices = {}
+        for row in prices_result.data:
+            ticker = row['ticker']
+            if ticker not in ticker_prices:
+                ticker_prices[ticker] = []
+            
+            ticker_prices[ticker].append({
+                'date': row['transaction_date'],
+                'price': row['historical_price'],
+                'source': row.get('price_source', 'unknown')
+            })
+        
+        print(f"✅ Fetched weekly prices for {len(ticker_prices)} tickers (total: {len(prices_result.data)} records)")
+        return ticker_prices
+        
+    except Exception as e:
+        print(f"❌ Error fetching weekly prices for user {user_id}: {e}")
+        return {}
 
 def get_all_stock_prices_supabase() -> List[Dict]:
     """Get all stock prices using Supabase"""
