@@ -910,20 +910,42 @@ class PortfolioAnalytics:
                 print("❌ No AI available")
                 return
             
-            results = {}
-            
-            # ✅ PHASE 1: FETCH ALL PRICES (historical + weekly together)
-            print(f"🤖 Phase 1: Fetching ALL prices from AI...")
+            # ✅ INCREMENTAL FETCH & SAVE: Fetch one ticker, save immediately, repeat
+            print(f"🤖 Incremental AI fetch: Fetching and saving prices one ticker at a time...")
             all_tickers = list(dates_needed.keys())
+            
+            saved_count = 0
+            skipped_count = 0
+            total_tickers_processed = 0
+            tickers_already_cached = 0
             
             for idx, ticker in enumerate(all_tickers):
                 name = tickers_with_names[ticker]
                 
                 if show_ui:
                     progress = (idx + 1) / len(all_tickers)
-                    # This loader fetches HISTORICAL/WEEKLY prices (long date ranges)
-                    # Separate from live prices which are fetched via bulk_price_fetcher
-                    st.progress(progress, text=f"🤖 Fetching {idx + 1}/{len(all_tickers)}: {name}")
+                    st.progress(progress, text=f"🤖 [{idx + 1}/{len(all_tickers)}] Fetching & Saving: {name}")
+                
+                # ✅ RESUMPTION LOGIC: Check if this ticker already has sufficient data in DB
+                # This allows resuming from interruptions without re-fetching already processed tickers
+                try:
+                    # Check if we have recent data for this ticker (within last week)
+                    recent_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+                    recent_cached = get_stock_price_supabase(ticker, recent_date)
+                    
+                    # Also check if we have live/latest data
+                    latest_date = datetime.now().strftime('%Y-%m-%d')
+                    latest_cached = get_stock_price_supabase(ticker, latest_date)
+                    
+                    if recent_cached and recent_cached > 0 and latest_cached and latest_cached > 0:
+                        # This ticker already has recent data, skip it (likely processed in previous session)
+                        print(f"✅ [{idx + 1}/{len(all_tickers)}] {ticker}: Already cached (recent & latest data found), skipping")
+                        tickers_already_cached += 1
+                        total_tickers_processed += 1
+                        continue
+                except Exception as check_error:
+                    # If check fails, proceed with fetch to be safe
+                    pass
                 
                 # Calculate date range: if historical is older than 1 year, use historical date; else use 1 year ago
                 ticker_transactions = df[df['ticker'] == ticker]['date']
@@ -955,7 +977,7 @@ class PortfolioAnalytics:
                 try:
                     weekly_prices = {}
                     
-                    # Strategy: Try FREE API first, use AI only for missing data or PMS/AIF
+                    # Strategy: Use AI for all asset types
                     if is_pms_aif:
                         # PMS/AIF: No free API available, use AI
                         print(f"🤖 AI [{idx + 1}/{len(all_tickers)}] {ticker} (PMS/AIF): {start_date} to {end_date}")
@@ -969,10 +991,8 @@ class PortfolioAnalytics:
                     
                     elif is_mutual_fund:
                         # Mutual Fund: Use AI for weekly historical data
-                        # (mftool doesn't provide easy weekly range queries)
                         print(f"📊 AI [{idx + 1}/{len(all_tickers)}] {ticker} (MF): {start_date} to {end_date}")
                         
-                        # Use AI to get weekly MF NAVs (now returns clean data, not code!)
                         weekly_prices = ai_fetcher.get_weekly_prices_in_range(
                             ticker=ticker,
                             name=name,
@@ -982,10 +1002,9 @@ class PortfolioAnalytics:
                         )
                     
                     else:
-                        # Stock/ETF/Bond: Use AI ONLY (to test full AI cost)
+                        # Stock/ETF/Bond: Use AI
                         print(f"🤖 AI [{idx + 1}/{len(all_tickers)}] {ticker} (Stock): {start_date} to {end_date}")
                         
-                        # Use AI directly for stocks (now returns clean data, not code!)
                         weekly_prices = ai_fetcher.get_weekly_prices_in_range(
                             ticker=ticker,
                             name=name,
@@ -994,95 +1013,89 @@ class PortfolioAnalytics:
                             asset_type='Stock'
                         )
                     
+                    # ✅ IMMEDIATELY SAVE THIS TICKER'S PRICES TO DATABASE
                     if weekly_prices:
-                        results[ticker] = weekly_prices
                         print(f"✅ [{idx + 1}/{len(all_tickers)}] {ticker}: {len(weekly_prices)} prices fetched")
+                        print(f"   💾 Saving {len(weekly_prices)} prices to database...")
+                        
+                        ticker_saved = 0
+                        ticker_skipped = 0
+                        
+                        for date, price_data in weekly_prices.items():
+                            try:
+                                # Handle dict format: {'price': float, 'sector': str}
+                                if isinstance(price_data, dict):
+                                    price = price_data.get('price')
+                                    sector = price_data.get('sector', 'Unknown')
+                                else:
+                                    # Fallback for old format (just float)
+                                    price = price_data
+                                    sector = 'Unknown'
+                                
+                                # Convert LATEST to today's date for storage
+                                if date == 'LATEST':
+                                    date_str = datetime.now().strftime('%Y-%m-%d')
+                                else:
+                                    date_str = date
+                                
+                                # ✅ VALIDATE: Skip NaN, inf, and invalid prices
+                                import math
+                                if not isinstance(price, (int, float)) or math.isnan(price) or math.isinf(price) or price <= 0:
+                                    print(f"   ⚠️ Skipping invalid price for {ticker} on {date}: {price}")
+                                    ticker_skipped += 1
+                                    continue
+                                
+                                # Save to cache immediately
+                                save_stock_price_supabase(ticker, date_str, price, 'ai_bulk_fetch')
+                                ticker_saved += 1
+                                
+                            except Exception as save_error:
+                                print(f"   ⚠️ Failed to save {ticker} on {date}: {save_error}")
+                                ticker_skipped += 1
+                        
+                        saved_count += ticker_saved
+                        skipped_count += ticker_skipped
+                        total_tickers_processed += 1
+                        
+                        print(f"   ✅ Saved {ticker_saved} prices for {ticker} (skipped {ticker_skipped})")
+                        print(f"   📊 Progress: {total_tickers_processed}/{len(all_tickers)} tickers, {saved_count} total prices saved")
+                        
                     else:
-                        print(f"⚠️ [{idx + 1}/{len(all_tickers)}] {ticker}: No data returned")
+                        print(f"⚠️ [{idx + 1}/{len(all_tickers)}] {ticker}: No data returned, skipping")
                     
                 except Exception as e:
                     print(f"⚠️ [{idx + 1}/{len(all_tickers)}] {ticker}: Fetch failed - {e}")
                     # Continue with next ticker even if one fails
             
-            # ✅ PHASE 1 COMPLETE - Check results
-            if not results:
+            # ✅ INCREMENTAL FETCH COMPLETE - Show summary
+            print(f"✅ Incremental fetch complete: {total_tickers_processed} tickers processed")
+            print(f"   ✅ Already cached: {tickers_already_cached} tickers (skipped)")
+            print(f"   💾 Total saved: {saved_count} prices")
+            print(f"   ⚠️ Total skipped: {skipped_count} prices")
+            
+            if total_tickers_processed == 0:
                 if show_ui:
-                    st.warning("⚠️ Phase 1: AI returned no results")
-                print("⚠️ Phase 1 failed: AI returned no results")
+                    st.warning("⚠️ No tickers were successfully processed")
+                print("⚠️ Fetch failed: No tickers processed")
                 return
             
-            total_fetched = sum(len(date_prices) for date_prices in results.values())
-            print(f"✅ Phase 1 complete: Fetched {total_fetched} prices for {len(results)} tickers")
-            
             if show_ui:
-                st.success(f"✅ Phase 1 complete: Fetched {total_fetched} prices from AI")
-            
-            # ✅ PHASE 2: STORE ALL PRICES TO DATABASE
-            print(f"💾 Phase 2: Storing ALL {total_fetched} prices to database...")
-            
-            if show_ui:
-                st.info(f"💾 Phase 2: Storing {total_fetched} prices to database...")
-            
-            saved_count = 0
-            skipped_count = 0
-            
-            if show_ui:
-                progress_bar = st.progress(0)
-            current_item = 0
-            
-            for ticker, date_prices in results.items():
-                for date, price_data in date_prices.items():
-                    try:
-                        # Handle new dict format: {'price': float, 'sector': str}
-                        if isinstance(price_data, dict):
-                            price = price_data.get('price')
-                            sector = price_data.get('sector', 'Unknown')
-                        else:
-                            # Fallback for old format (just float)
-                            price = price_data
-                            sector = 'Unknown'
-                        
-                        # Convert LATEST to today's date for storage
-                        if date == 'LATEST':
-                            date_str = datetime.now().strftime('%Y-%m-%d')
-                        else:
-                            date_str = date
-                        
-                        # ✅ VALIDATE: Skip NaN, inf, and invalid prices
-                        import math
-                        if not isinstance(price, (int, float)) or math.isnan(price) or math.isinf(price) or price <= 0:
-                            print(f"⚠️ Skipping invalid price for {ticker} on {date}: {price}")
-                            skipped_count += 1
-                            continue
-                        
-                        # Save to cache
-                        save_stock_price_supabase(ticker, date_str, price, 'ai_bulk_fetch')
-                        saved_count += 1
-                        
-                    except Exception as e:
-                        print(f"Failed to save {ticker} on {date}: {e}")
-                        skipped_count += 1
-                    
-                    # Update progress
-                    current_item += 1
-                    if show_ui:
-                        progress_bar.progress(current_item / total_fetched, 
-                                            text=f"💾 Storing {current_item}/{total_fetched} prices...")
-            
-            print(f"✅ Phase 2 complete: Stored {saved_count} prices, skipped {skipped_count}")
-            
-            if show_ui:
-                progress_bar.empty()
-                
                 # Success message
-                st.success(f"✅✅ Both phases complete!")
+                st.success(f"✅ Incremental fetch & save complete!")
                 st.info(f"📊 Summary:")
-                st.caption(f"   • Phase 1 (AI Fetch): {total_fetched} prices from {len(results)} tickers")
-                st.caption(f"   • Phase 2 (DB Store): {saved_count} saved, {skipped_count} skipped")
-                st.caption(f"   • Avg prices per ticker: {saved_count / len(results):.1f}")
+                st.caption(f"   • Total tickers: {len(all_tickers)}")
+                st.caption(f"   • Already cached (resumed): {tickers_already_cached}")
+                st.caption(f"   • Newly fetched: {total_tickers_processed - tickers_already_cached}")
+                st.caption(f"   • Prices saved to DB: {saved_count}")
+                st.caption(f"   • Prices skipped (invalid): {skipped_count}")
+                if (total_tickers_processed - tickers_already_cached) > 0:
+                    st.caption(f"   • Avg prices per new ticker: {saved_count / (total_tickers_processed - tickers_already_cached):.1f}")
                 st.success("💾 All prices cached! Future fetches will be instant from database.")
+                
+                if tickers_already_cached > 0:
+                    st.info(f"🔄 Resumed from previous session: {tickers_already_cached} tickers were already processed and skipped.")
             else:
-                print(f"✅ Bulk fetch complete: {saved_count} saved, {skipped_count} skipped")
+                print(f"✅ Incremental fetch complete: {saved_count} saved, {skipped_count} skipped, {tickers_already_cached} already cached")
             
             # ✅ Mark bulk fetch as complete for this session
             st.session_state[f"bulk_fetch_done_{user_id}"] = True
@@ -1754,18 +1767,19 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             if processed_count > 0:
                 st.markdown("---")
                 st.info("🤖 Using AI to fetch ALL prices (historical + weekly + live) in one batch...")
+                st.caption("⏳ This may take several minutes. Progress shown below...")
+                
                 try:
-                    with st.spinner("⏳ AI is fetching and caching all prices... Please wait..."):
-                        self.bulk_fetch_and_cache_all_prices(user_id)
+                    # ✅ NO SPINNER - Let the function show its own progress!
+                    # The bulk_fetch function has st.progress() internally
+                    self.bulk_fetch_and_cache_all_prices(user_id, show_ui=True)
                     st.success("✅ All prices cached successfully!")
                 except Exception as cache_error:
-                    st.warning(f"⚠️ AI batch fetch had warnings: {cache_error}")
-                    st.info("💡 Falling back to standard cache method...")
-                    try:
-                        self.populate_weekly_and_monthly_cache(user_id)
-                        st.success("✅ Standard cache populated!")
-                    except:
-                        st.info("💡 Some data may be limited. You can refresh from Settings.")
+                    st.error(f"❌ AI batch fetch error: {cache_error}")
+                    st.warning("⚠️ Some tickers may not have been processed. You can retry from Settings.")
+                    import traceback
+                    st.error(f"Error details: {traceback.format_exc()}")
+                    # Don't fallback - let user see the error and retry manually
             
             # Step 3: Show summary
             st.markdown("---")
@@ -1773,7 +1787,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("✅ Successful", processed_count)
+                st.metric("✅ Files Processed", processed_count)
             with col2:
                 st.metric("❌ Failed", failed_count)
             with col3:
@@ -1786,7 +1800,16 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             
             if processed_count > 0:
                 st.success(f"🎉 Registration complete! {processed_count} file(s) processed successfully!")
-                st.info("👉 Click below to log in to your account")
+                
+                # ✅ Check if bulk fetch completed successfully
+                bulk_fetch_done = st.session_state.get(f"bulk_fetch_done_{user_id}", False)
+                
+                if bulk_fetch_done:
+                    st.success("✅ All prices have been cached successfully!")
+                    st.info("👉 Click below to log in to your account")
+                else:
+                    st.warning("⚠️ Price caching is in progress or incomplete.")
+                    st.info("💡 You can login now and the system will continue fetching prices in the background, or wait for completion.")
                 
                 if st.button("🚀 Log In to Your Account", type="primary", use_container_width=True):
                     # Complete login
