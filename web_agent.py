@@ -791,20 +791,31 @@ class PortfolioAnalytics:
                     # Mutual fund - try mftool API
                     try:
                         historical_price = get_mutual_fund_price(
-                        ticker, 
-                            stock_name, 
-                        row['user_id'], 
+                            ticker, 
+                            ticker,  # Use ticker, not stock_name!
+                            row['user_id'], 
                             date_str
                         )
                         if historical_price and historical_price > 0:
                             fetch_method = 'mftool_api'
                             api_success += 1
+                            # Set sector for MF
+                            if 'sector' not in df.columns or pd.isna(row.get('sector')) or row.get('sector') == '':
+                                df.at[idx, 'sector'] = 'Mutual Fund'
                     except Exception as e:
                         print(f"⚠️ mftool failed for {ticker}: {e}")
                 
                 elif is_pms_aif:
                     # ✅ PMS/AIF: Calculate prices based on CAGR (don't store CAGR, store calculated prices)
                     print(f"📊 {ticker}: PMS/AIF detected, calculating prices using CAGR")
+                    
+                    # Set sector for PMS/AIF
+                    if 'sector' not in df.columns or pd.isna(row.get('sector')) or row.get('sector') == '':
+                        # Detect if it's PMS or AIF based on ticker
+                        if ticker.startswith('INA') or 'AIF' in ticker.upper():
+                            df.at[idx, 'sector'] = 'AIF'
+                        else:
+                            df.at[idx, 'sector'] = 'PMS'
                     
                     # Get invested amount from CSV
                     invested_amount = row.get('invested_amount', 0) or row.get('amount', 0)
@@ -911,7 +922,7 @@ class PortfolioAnalytics:
                         fetch_method = 'pms_aif_amount_only'
                 
                 else:
-                    # Stock - try yfinance API
+                    # Stock - try yfinance API (and fetch sector)
                     try:
                         # Validate ticker format first
                         if '/' in ticker_str or 'E+' in ticker_str.upper():
@@ -920,14 +931,22 @@ class PortfolioAnalytics:
                             failed_count += 1
                             continue
                     
-                        historical_price = get_stock_price(
-                        ticker, 
-                            stock_name, 
+                        # Use get_stock_price_and_sector to also get sector data
+                        price_result, sector_result, _ = get_stock_price_and_sector(
+                            ticker, 
+                            ticker,  # Use ticker, not stock_name!
                             date_str
                         )
-                        if historical_price and historical_price > 0:
+                        
+                        if price_result and price_result > 0:
+                            historical_price = price_result
                             fetch_method = 'yfinance_api'
                             api_success += 1
+                            
+                            # Set sector from API if available
+                            if sector_result and ('sector' not in df.columns or pd.isna(row.get('sector')) or row.get('sector') == ''):
+                                df.at[idx, 'sector'] = sector_result
+                                print(f"✅ {ticker}: Sector set to '{sector_result}'")
                     except Exception as e:
                         print(f"⚠️ yfinance failed for {ticker}: {e}")
                 
