@@ -2471,33 +2471,19 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                 sector = "PMS"
                     
                     elif str(ticker).isdigit() or ticker.startswith('MF_'):
-                        # 📊 Mutual fund - USE FREE API (mftool) FIRST, AI fallback
-                        print(f"📊 {ticker}: Mutual Fund detected, using mftool API")
-                        live_price = None
-                        sector = "Mutual Fund"
-                        
-                        # Get fund name from transactions
-                        mf_trans = df[df['ticker'] == ticker].iloc[0] if not df[df['ticker'] == ticker].empty else None
-                        fund_name = mf_trans.get('stock_name', ticker) if mf_trans is not None else ticker
+                        try:# 📊 Mutual fund - USE AI FIRST, mftool fallback
+                            print(f"📊 {ticker}: Mutual Fund detected, using mftool API")
+                            live_price = None
+                            sector = "Mutual Fund"
+                            
+                            # Get fund name from transactions
+                            mf_trans = df[df['ticker'] == ticker].iloc[0] if not df[df['ticker'] == ticker].empty else None
+                            fund_name = mf_trans.get('stock_name', ticker) if mf_trans is not None else ticker
                         
                         # Try mftool FREE API first
-                        try:
-                            from mf_price_fetcher import MFPriceFetcher
-                            mf_fetcher = MFPriceFetcher()
-                            
-                            # Get current NAV using mftool
-                            scheme_code = str(ticker).replace('MF_', '')
-                            nav_data = mf_fetcher.get_current_nav(scheme_code)
-                            
-                            if nav_data and nav_data > 0:
-                                live_price = nav_data
-                                print(f"✅ mftool (FREE): ₹{live_price} for {fund_name}")
-                            else:
-                                raise Exception("mftool returned no NAV")
-                                
-                        except Exception as api_error:
-                            # Fallback to AI if mftool fails
-                            print(f"⚠️ mftool failed ({api_error}), trying AI...")
+                        except Exception as ai_error:
+                            # Try AI FIRST
+                            print(f"⚠️ AI fetch attempt ({api_error}), trying AI...")
                             try:
                                 from ai_price_fetcher import AIPriceFetcher
                                 ai_fetcher = AIPriceFetcher()
@@ -2524,9 +2510,9 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                 else:
                                     live_price = None
                                     print(f"   ❌ No price available for {ticker}")
-
+                    
                     else:
-                        # 📊 Stock, ETF, Bonds - USE FREE API (yfinance) FIRST, AI fallback
+                        # 📊 Stock, ETF, Bonds - USE AI FIRST, yfinance fallback
                         is_etf = ticker_upper.endswith('BEES') or ticker_upper.endswith('ETF')
                         is_bond = 'BOND' in ticker_upper or 'GILT' in ticker_upper or 'GSEC' in ticker_upper
                         
@@ -3481,35 +3467,10 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
         st.sidebar.markdown(f"**Role:** {self.session_state.user_role}")
         st.sidebar.markdown(f"**Login:** {self.session_state.login_time.strftime('%Y-%m-%d %H:%M')}")
         
-        # Background cache population (runs once per session, non-blocking)
-        user_id = self.session_state.user_id
-        cache_key = f'cache_populated_{user_id}'
-        cache_trigger_key = f'cache_trigger_{user_id}'
-        
-        if cache_trigger_key in st.session_state and st.session_state[cache_trigger_key]:
-            if cache_key not in st.session_state or not st.session_state[cache_key]:
-                # ✅ CHECK: Skip if bulk fetch was already done this session
-                bulk_fetch_key = f"bulk_fetch_done_{user_id}"
-                if bulk_fetch_key in st.session_state and st.session_state[bulk_fetch_key]:
-                    # Bulk fetch already ran, no need for incremental weekly cache
-                    st.session_state[cache_key] = True
-                    st.session_state[cache_trigger_key] = False
-                    print("✅ Skipping weekly cache - bulk fetch already completed this session")
-                else:
-                    # Show small status in sidebar
-                    with st.sidebar:
-                        with st.status("🔄 Building weekly price cache...", expanded=False) as status:
-                            st.caption("📊 Caching weekly data for charts...")
-                            st.caption("⏱️ Incremental - only new weeks fetched")
-                            try:
-                                self.populate_monthly_prices_cache(user_id)
-                                st.session_state[cache_key] = True
-                                st.session_state[cache_trigger_key] = False
-                                status.update(label="✅ Weekly & monthly cache ready!", state="complete")
-                            except Exception as e:
-                                st.write(f"⚠️ Cache error: {e}")
-                                st.caption("Charts will fetch data on-demand")
-                                status.update(label="⚠️ Cache update failed", state="error")
+        # ✅ NEW STRATEGY: Weekly/Historical cache ONLY during file upload
+        # - At login: ONLY live prices are fetched (in initialize_portfolio_data)
+        # - At file upload: bulk_fetch_and_cache_all_prices handles historical + weekly
+        # This prevents duplicate fetches and speeds up login
         
         # File upload in sidebar
         st.sidebar.markdown("---")

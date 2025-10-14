@@ -146,8 +146,14 @@ class MFToolClient:
                         logger.warning(f"⚠️ No historical data available for scheme {scheme_code}")
                 except Exception as e:
                     logger.warning(f"Could not fetch historical NAV for {scheme_code} on {date}: {str(e)}")
+                
+                # ✅ FIX: If specific date was requested but not found, return None
+                # Don't fall back to current NAV for historical requests
+                if date:
+                    logger.warning(f"❌ Historical NAV not available for {scheme_code} on {date}, returning None")
+                    return None
             
-            # If no date specified or historical fetch failed, get current NAV
+            # If no date specified, get current NAV
             logger.info(f"🔍 Fetching current NAV for scheme {scheme_code}")
             quote = self.mf.get_scheme_quote(scheme_code)
             

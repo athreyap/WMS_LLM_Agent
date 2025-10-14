@@ -330,7 +330,7 @@ RESPOND WITH ONLY THE DICTIONARY:"""
                 else:
                     # Last resort: just extract number
                     nav = self._extract_number(clean_response)
-                    if nav and nav > 0:
+                if nav and nav > 0:
                         return {'date': date or 'LATEST', 'price': nav, 'sector': 'Mutual Fund'}
             
             logger.warning(f"⚠️ AI could not find NAV for {ticker}")
@@ -506,7 +506,7 @@ RESPOND WITH ONLY THE DICTIONARY:"""
                 else:
                     # Last resort: just extract number
                     price = self._extract_number(clean_response)
-                    if price and price > 0:
+                if price and price > 0:
                         return {'date': date or 'LATEST', 'price': price, 'sector': 'Other Stocks'}
             
             logger.warning(f"⚠️ AI could not find price for {ticker}")
@@ -1046,18 +1046,18 @@ Your response (actual data only, no code):"""
                     
                     print(f"🤖 Calling Gemini FREE (call {self._call_count + 1}/9)...")
                     response = self.gemini_client.generate_content(prompt)
-                    
+                            
                     if response and response.text:
                         self._call_count += 1
                         print(f"✅ Gemini successful ({self._call_count}/9 used)")
                         return response.text.strip()
                 except Exception as e:
-                    logger.error(f"❌ Gemini call failed: {e}")
-                    # If rate limit, switch to OpenAI
-                    if "429" in str(e) or "quota" in str(e).lower():
-                        print(f"⚠️ Gemini rate limit hit! Switching to OpenAI...")
-                        self._call_count = 9  # Mark as exhausted
-                    # Fall through to OpenAI
+                        logger.error(f"❌ Gemini call failed: {e}")
+                        # If rate limit, switch to OpenAI
+                        if "429" in str(e) or "quota" in str(e).lower():
+                            print(f"⚠️ Gemini rate limit hit! Switching to OpenAI...")
+                            self._call_count = 9  # Mark as exhausted
+                        # Fall through to OpenAI
         
         # Try OpenAI as BACKUP (PAID - when Gemini fails or hits limit)
         if self.openai_client:
