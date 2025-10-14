@@ -203,6 +203,9 @@ Your response (actual data only, no code):"""
                 # Try parsing as Python dictionary first (safest and cleanest)
                 try:
                     import ast
+                    from datetime import datetime as dt
+                    today_dt = dt.now()
+                    
                     # Extract dictionary from response (handle markdown code blocks)
                     if '```' in clean_response:
                         clean_response = clean_response.split('```')[1]
@@ -218,10 +221,23 @@ Your response (actual data only, no code):"""
                         
                         if isinstance(result, dict) and 'price' in result:
                             nav = float(result.get('price', 0))
+                            result_date = result.get('date', date or 'LATEST')
+                            
+                            # 🚨 VALIDATE: Reject future dates
+                            if result_date != 'LATEST':
+                                try:
+                                    date_dt = dt.strptime(result_date, '%Y-%m-%d')
+                                    if date_dt > today_dt:
+                                        logger.warning(f"⚠️ AI returned FUTURE date {result_date} for MF {ticker} - rejecting")
+                                        return None
+                                except ValueError:
+                                    logger.warning(f"⚠️ Invalid date format: {result_date}")
+                                    return None
+                            
                             if nav > 0:
-                                logger.info(f"✅ AI found NAV for {ticker}: ₹{nav} on {result.get('date')}, category: {result.get('sector')}")
+                                logger.info(f"✅ AI found NAV for {ticker}: ₹{nav} on {result_date}, category: {result.get('sector')}")
                                 return {
-                                    'date': result.get('date', date or 'LATEST'),
+                                    'date': result_date,
                                     'price': nav,
                                     'sector': result.get('sector', 'Mutual Fund')
                                 }
@@ -229,6 +245,9 @@ Your response (actual data only, no code):"""
                     logger.debug(f"Failed to parse as dict: {e}, trying CSV fallback")
                 
                 # Fallback: CSV format (comma or pipe separated)
+                from datetime import datetime as dt
+                today_dt = dt.now()
+                
                 if ',' in clean_response:
                     parts = [p.strip() for p in clean_response.split(',')]
                 elif '|' in clean_response:
@@ -238,12 +257,36 @@ Your response (actual data only, no code):"""
                 
                 if len(parts) >= 3:
                     nav = self._extract_number(parts[1])
+                    result_date = parts[0]
+                    
+                    # 🚨 VALIDATE: Reject future dates
+                    if result_date != 'LATEST':
+                        try:
+                            date_dt = dt.strptime(result_date, '%Y-%m-%d')
+                            if date_dt > today_dt:
+                                logger.warning(f"⚠️ AI returned FUTURE date {result_date} for MF {ticker} - rejecting")
+                                return None
+                        except ValueError:
+                            pass  # Allow processing to continue
+                    
                     if nav and nav > 0:
-                        return {'date': parts[0], 'price': nav, 'sector': parts[2]}
+                        return {'date': result_date, 'price': nav, 'sector': parts[2]}
                 elif len(parts) >= 2:
                     nav = self._extract_number(parts[1])
+                    result_date = parts[0]
+                    
+                    # 🚨 VALIDATE: Reject future dates
+                    if result_date != 'LATEST':
+                        try:
+                            date_dt = dt.strptime(result_date, '%Y-%m-%d')
+                            if date_dt > today_dt:
+                                logger.warning(f"⚠️ AI returned FUTURE date {result_date} for MF {ticker} - rejecting")
+                                return None
+                        except ValueError:
+                            pass  # Allow processing to continue
+                    
                     if nav and nav > 0:
-                        return {'date': parts[0], 'price': nav, 'sector': 'Mutual Fund'}
+                        return {'date': result_date, 'price': nav, 'sector': 'Mutual Fund'}
                 else:
                     # Last resort: just extract number
                     nav = self._extract_number(clean_response)
@@ -345,6 +388,9 @@ Your response (actual data only, no code):"""
                 # Try parsing as Python dictionary first (safest and cleanest)
                 try:
                     import ast
+                    from datetime import datetime as dt
+                    today_dt = dt.now()
+                    
                     # Extract dictionary from response (handle markdown code blocks)
                     if '```' in clean_response:
                         # Extract content between code blocks
@@ -361,10 +407,23 @@ Your response (actual data only, no code):"""
                         
                         if isinstance(result, dict) and 'price' in result:
                             price = float(result.get('price', 0))
+                            result_date = result.get('date', date or 'LATEST')
+                            
+                            # 🚨 VALIDATE: Reject future dates
+                            if result_date != 'LATEST':
+                                try:
+                                    date_dt = dt.strptime(result_date, '%Y-%m-%d')
+                                    if date_dt > today_dt:
+                                        logger.warning(f"⚠️ AI returned FUTURE date {result_date} for {ticker} - rejecting")
+                                        return None
+                                except ValueError:
+                                    logger.warning(f"⚠️ Invalid date format: {result_date}")
+                                    return None
+                            
                             if price > 0:
-                                logger.info(f"✅ AI found price for {ticker}: ₹{price} on {result.get('date')}, sector: {result.get('sector')}")
+                                logger.info(f"✅ AI found price for {ticker}: ₹{price} on {result_date}, sector: {result.get('sector')}")
                                 return {
-                                    'date': result.get('date', date or 'LATEST'),
+                                    'date': result_date,
                                     'price': price,
                                     'sector': result.get('sector', 'Other Stocks')
                                 }
@@ -372,6 +431,9 @@ Your response (actual data only, no code):"""
                     logger.debug(f"Failed to parse as dict: {e}, trying CSV fallback")
                 
                 # Fallback: CSV format (comma or pipe separated)
+                from datetime import datetime as dt
+                today_dt = dt.now()
+                
                 if ',' in clean_response:
                     parts = [p.strip() for p in clean_response.split(',')]
                 elif '|' in clean_response:
@@ -381,12 +443,36 @@ Your response (actual data only, no code):"""
                 
                 if len(parts) >= 3:
                     price = self._extract_number(parts[1])
+                    result_date = parts[0]
+                    
+                    # 🚨 VALIDATE: Reject future dates
+                    if result_date != 'LATEST':
+                        try:
+                            date_dt = dt.strptime(result_date, '%Y-%m-%d')
+                            if date_dt > today_dt:
+                                logger.warning(f"⚠️ AI returned FUTURE date {result_date} for {ticker} - rejecting")
+                                return None
+                        except ValueError:
+                            pass  # Allow processing to continue
+                    
                     if price and price > 0:
-                        return {'date': parts[0], 'price': price, 'sector': parts[2]}
+                        return {'date': result_date, 'price': price, 'sector': parts[2]}
                 elif len(parts) >= 2:
                     price = self._extract_number(parts[1])
+                    result_date = parts[0]
+                    
+                    # 🚨 VALIDATE: Reject future dates
+                    if result_date != 'LATEST':
+                        try:
+                            date_dt = dt.strptime(result_date, '%Y-%m-%d')
+                            if date_dt > today_dt:
+                                logger.warning(f"⚠️ AI returned FUTURE date {result_date} for {ticker} - rejecting")
+                                return None
+                        except ValueError:
+                            pass  # Allow processing to continue
+                    
                     if price and price > 0:
-                        return {'date': parts[0], 'price': price, 'sector': 'Other Stocks'}
+                        return {'date': result_date, 'price': price, 'sector': 'Other Stocks'}
                 else:
                     # Last resort: just extract number
                     price = self._extract_number(clean_response)
@@ -425,38 +511,48 @@ Your response (actual data only, no code):"""
         if not self.is_available():
             return {}
         
-        # CRITICAL: Be explicit to prevent code generation
-        prompt = f"""You are a financial data API. Provide ACTUAL weekly price data.
+        # CRITICAL: Be explicit to prevent code generation AND future data
+        from datetime import datetime
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        prompt = f"""You are a financial data API. Provide ACTUAL HISTORICAL weekly price data.
 
 🚫 DO NOT write Python code
 🚫 DO NOT use any libraries (requests, pandas, yfinance, etc.)
 🚫 DO NOT write functions, imports, or loops
-✅ ONLY return the actual weekly price data in the format below
+🚫 DO NOT generate future/predicted data - ONLY REAL HISTORICAL DATA
+🚫 DO NOT include dates beyond TODAY ({today})
+✅ ONLY return ACTUAL historical weekly price data in the format below
 
 Asset: {name}
 Ticker: {ticker}
 Type: {asset_type}
 Period: {start_date} to {end_date}
+Today's Date: {today}
 Frequency: WEEKLY (one price per week - Monday or first trading day)
 
-IMPORTANT: Return ALL weekly prices for the entire period (approximately 52-115 weeks).
+⚠️ CRITICAL RULES:
+1. Return ONLY REAL historical data (data that has already happened)
+2. DO NOT include any dates after {today}
+3. DO NOT predict or estimate future prices
+4. Return ALL weekly prices from {start_date} to {end_date} (or {today}, whichever is earlier)
 
-Return ONLY a list in this exact text format (replace with actual values):
+Return ONLY a list in this exact text format (replace with actual HISTORICAL values):
 [
   {{'date': '2024-01-08', 'price': 2500.50, 'sector': 'Banking'}},
   {{'date': '2024-01-15', 'price': 2550.00, 'sector': 'Banking'}},
   {{'date': '2024-01-22', 'price': 2575.25, 'sector': 'Banking'}},
-  ... (continue for ALL weeks in the date range)
+  ... (continue for ALL weeks up to {today})
 ]
 
-Example response (you must provide ALL weeks, not just 3):
+Example response (HISTORICAL data only, NO future dates):
 [
   {{'date': '2024-01-08', 'price': 2500.50, 'sector': 'Banking'}},
   {{'date': '2024-01-15', 'price': 2550.00, 'sector': 'Banking'}},
   {{'date': '2024-01-22', 'price': 2575.25, 'sector': 'Banking'}}
 ]
 
-Your response (actual data for ALL weeks, no code):"""
+Your response (ACTUAL HISTORICAL data for ALL weeks, NO FUTURE DATES, no code):"""
         
         # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
         print(f"\n{'='*60}")
@@ -492,6 +588,9 @@ Your response (actual data for ALL weeks, no code):"""
             # Try parsing as Python list of dictionaries first (cleanest)
             try:
                 import ast
+                from datetime import datetime as dt
+                today_dt = dt.now()
+                
                 # Extract list from response (handle markdown code blocks)
                 if '```' in clean_response:
                     clean_response = clean_response.split('```')[1]
@@ -505,6 +604,7 @@ Your response (actual data for ALL weeks, no code):"""
                     list_str = clean_response[list_start:list_end]
                     price_list = ast.literal_eval(list_str)
                     
+                    future_dates_skipped = 0
                     if isinstance(price_list, list):
                         for item in price_list:
                             if isinstance(item, dict) and 'date' in item and 'price' in item:
@@ -512,11 +612,25 @@ Your response (actual data for ALL weeks, no code):"""
                                 price = float(item.get('price', 0))
                                 sector = item.get('sector', 'Other')
                                 
+                                # 🚨 VALIDATE: Reject future dates
+                                try:
+                                    date_dt = dt.strptime(date, '%Y-%m-%d')
+                                    if date_dt > today_dt:
+                                        future_dates_skipped += 1
+                                        logger.warning(f"⚠️ Skipping FUTURE date {date} for {ticker} (today: {today})")
+                                        continue
+                                except ValueError:
+                                    logger.warning(f"⚠️ Invalid date format: {date}")
+                                    continue
+                                
                                 if price > 0 and price < 1000000000:
                                     results[date] = {
                                         'price': price,
                                         'sector': sector
                                     }
+                        
+                        if future_dates_skipped > 0:
+                            logger.warning(f"⚠️ Rejected {future_dates_skipped} FUTURE dates from AI response for {ticker}")
                         
                         if results:
                             logger.info(f"✅ AI weekly range (Python list): {ticker} - {len(results)} weekly prices")
@@ -525,6 +639,10 @@ Your response (actual data for ALL weeks, no code):"""
                 logger.debug(f"Failed to parse as Python list: {e}, trying CSV fallback")
             
             # Fallback: CSV format (comma or pipe separated, line by line)
+            from datetime import datetime as dt
+            today_dt = dt.now()
+            future_dates_skipped_csv = 0
+            
             for line in response.strip().split('\n'):
                 line = line.strip()
                 
@@ -550,6 +668,17 @@ Your response (actual data for ALL weeks, no code):"""
                         price = self._extract_number(parts[1])
                         sector = parts[2] if len(parts) >= 3 else 'Other'
                         
+                        # 🚨 VALIDATE: Reject future dates
+                        try:
+                            date_dt = dt.strptime(date, '%Y-%m-%d')
+                            if date_dt > today_dt:
+                                future_dates_skipped_csv += 1
+                                logger.warning(f"⚠️ Skipping FUTURE date {date} for {ticker} (today: {today})")
+                                continue
+                        except ValueError:
+                            # Date format issue, skip
+                            continue
+                        
                         if price and price > 0 and price < 1000000000:
                             results[date] = {
                                 'price': price,
@@ -558,6 +687,9 @@ Your response (actual data for ALL weeks, no code):"""
                     except (ValueError, IndexError) as e:
                         logger.debug(f"Failed to parse line '{line}': {e}")
                         continue
+            
+            if future_dates_skipped_csv > 0:
+                logger.warning(f"⚠️ Rejected {future_dates_skipped_csv} FUTURE dates from CSV fallback for {ticker}")
             
             if results:
                 logger.info(f"✅ AI weekly range: {ticker} - {len(results)} weekly prices")
