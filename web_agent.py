@@ -918,77 +918,31 @@ class PortfolioAnalytics:
                         )
                     
                     elif is_mutual_fund:
-                        # Mutual Fund: Try mftool API first, AI for missing
-                        print(f"📊 API+AI [{idx + 1}/{len(all_tickers)}] {ticker} (MF): {start_date} to {end_date}")
+                        # Mutual Fund: Use AI for weekly historical data
+                        # (mftool doesn't provide easy weekly range queries)
+                        print(f"📊 AI [{idx + 1}/{len(all_tickers)}] {ticker} (MF): {start_date} to {end_date}")
                         
-                        # Try mftool for historical data
-                        try:
-                            from mf_price_fetcher import MFPriceFetcher
-                            mf_fetcher = MFPriceFetcher()
-                            scheme_code = str(ticker).replace('MF_', '')
-                            
-                            # Get historical NAVs from mftool
-                            historical_data = mf_fetcher.get_historical_nav(scheme_code, start_date, datetime.now().strftime('%Y-%m-%d'))
-                            
-                            if historical_data and len(historical_data) > 0:
-                                # Convert to weekly prices
-                                for nav_entry in historical_data:
-                                    date_str = nav_entry.get('date')
-                                    nav = nav_entry.get('nav')
-                                    if date_str and nav:
-                                        weekly_prices[date_str] = {'price': float(nav), 'sector': 'Mutual Fund'}
-                                
-                                print(f"✅ mftool (FREE): {len(weekly_prices)} prices for {ticker}")
-                            else:
-                                raise Exception("mftool returned no historical data")
-                                
-                        except Exception as api_error:
-                            # Fallback to AI for missing MF data
-                            print(f"⚠️ mftool failed, using AI: {api_error}")
-                            weekly_prices = ai_fetcher.get_weekly_prices_in_range(
-                                ticker=ticker,
-                                name=name,
-                                start_date=start_date,
-                                end_date=end_date,
-                                asset_type='Mutual Fund'
-                            )
+                        # Use AI to get weekly MF NAVs (now returns clean data, not code!)
+                        weekly_prices = ai_fetcher.get_weekly_prices_in_range(
+                            ticker=ticker,
+                            name=name,
+                            start_date=start_date,
+                            end_date=end_date,
+                            asset_type='Mutual Fund'
+                        )
                     
                     else:
-                        # Stock/ETF/Bond: Try yfinance API first, AI for missing
-                        print(f"📊 API+AI [{idx + 1}/{len(all_tickers)}] {ticker} (Stock): {start_date} to {end_date}")
+                        # Stock/ETF/Bond: Use AI ONLY (to test full AI cost)
+                        print(f"🤖 AI [{idx + 1}/{len(all_tickers)}] {ticker} (Stock): {start_date} to {end_date}")
                         
-                        try:
-                            import yfinance as yf
-                            
-                            # Add NSE suffix
-                            yf_ticker = ticker if any(suffix in ticker.upper() for suffix in ['.NS', '.BO', '.BSE']) else f"{ticker}.NS"
-                            
-                            stock = yf.Ticker(yf_ticker)
-                            hist = stock.history(start=start_date, end=datetime.now().strftime('%Y-%m-%d'), interval='1wk')
-                            
-                            if not hist.empty:
-                                sector = stock.info.get('sector', 'Other Stocks') if hasattr(stock, 'info') else 'Other Stocks'
-                                
-                                for date_idx, row in hist.iterrows():
-                                    date_str = date_idx.strftime('%Y-%m-%d')
-                                    price = row['Close']
-                                    if price and price > 0:
-                                        weekly_prices[date_str] = {'price': float(price), 'sector': sector}
-                                
-                                print(f"✅ yfinance (FREE): {len(weekly_prices)} prices for {ticker}")
-                            else:
-                                raise Exception("yfinance returned no historical data")
-                                
-                        except Exception as api_error:
-                            # Fallback to AI for missing stock data
-                            print(f"⚠️ yfinance failed, using AI: {api_error}")
-                            weekly_prices = ai_fetcher.get_weekly_prices_in_range(
-                                ticker=ticker,
-                                name=name,
-                                start_date=start_date,
-                                end_date=end_date,
-                                asset_type='Stock'
-                            )
+                        # Use AI directly for stocks (now returns clean data, not code!)
+                        weekly_prices = ai_fetcher.get_weekly_prices_in_range(
+                            ticker=ticker,
+                            name=name,
+                            start_date=start_date,
+                            end_date=end_date,
+                            asset_type='Stock'
+                        )
                     
                     if weekly_prices:
                         results[ticker] = weekly_prices
