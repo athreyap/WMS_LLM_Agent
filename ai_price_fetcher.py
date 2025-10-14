@@ -140,35 +140,45 @@ class AIPriceFetcher:
         if not self.is_available():
             return None
         
-        # Python dictionary format - easiest to parse!
+        # CRITICAL: Be explicit to prevent code generation
         if date:
-            prompt = f"""Get mutual fund NAV data for Python:
+            prompt = f"""You are a financial data API. Provide ACTUAL mutual fund NAV data.
+
+🚫 DO NOT write Python code
+🚫 DO NOT use import statements  
+🚫 DO NOT write functions
+✅ ONLY return the actual NAV data in the format below
 
 Fund: {fund_name}
 Scheme Code: {ticker}
 Date: {date} (or nearest available date)
 
-Return ONLY a Python dictionary in this exact format (no extra text):
-{{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'category'}}
+Return ONLY this exact text format (replace with actual values):
+{{'date': 'YYYY-MM-DD', 'price': 150.50, 'sector': 'Equity: Large Cap'}}
 
-Example:
+Example response:
 {{'date': '2024-10-14', 'price': 150.50, 'sector': 'Equity: Large Cap'}}
 
-Your output:"""
+Your response (actual data only, no code):"""
         else:
-            prompt = f"""Get mutual fund NAV data for Python:
+            prompt = f"""You are a financial data API. Provide ACTUAL mutual fund NAV data.
+
+🚫 DO NOT write Python code
+🚫 DO NOT use import statements
+🚫 DO NOT write functions
+✅ ONLY return the actual NAV data in the format below
 
 Fund: {fund_name}
 Scheme Code: {ticker}
 Date: LATEST (most recent NAV - if today's not published, use yesterday)
 
-Return ONLY a Python dictionary in this exact format (no extra text):
-{{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'category'}}
+Return ONLY this exact text format (replace with actual values):
+{{'date': 'YYYY-MM-DD', 'price': 150.50, 'sector': 'Equity: Large Cap'}}
 
-Example:
+Example response:
 {{'date': '2024-10-13', 'price': 150.50, 'sector': 'Equity: Large Cap'}}
 
-Your output:"""
+Your response (actual data only, no code):"""
         
         # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
         print(f"\n{'='*60}")
@@ -181,6 +191,14 @@ Your output:"""
             print(f"📥 MF RESPONSE for {ticker}: {response}\n")
             if response and response != "NOT_FOUND":
                 clean_response = response.strip()
+                
+                # 🚨 DETECT IF AI RETURNED CODE INSTEAD OF DATA
+                code_indicators = ['import ', 'def ', 'class ', 'for ', 'while ', 'if __name__', 'requests.', 'yfinance', 'pandas', 'datetime.']
+                if any(indicator in clean_response for indicator in code_indicators):
+                    logger.error(f"❌ AI returned CODE instead of DATA for {ticker}!")
+                    logger.error(f"Response preview: {clean_response[:200]}...")
+                    logger.warning("⚠️ Skipping this response - will use fallback")
+                    return None
                 
                 # Try parsing as Python dictionary first (safest and cleanest)
                 try:
@@ -262,37 +280,47 @@ Your output:"""
         if not self.is_available():
             return None
         
-        # Python dictionary format - easiest to parse!
+        # CRITICAL: Be explicit to prevent code generation
         if date:
-            prompt = f"""Get stock price data for Python:
+            prompt = f"""You are a financial data API. Provide ACTUAL stock price data.
+
+🚫 DO NOT write Python code
+🚫 DO NOT use yfinance or any libraries
+🚫 DO NOT write functions or import statements
+✅ ONLY return the actual stock price data in the format below
 
 Stock: {stock_name}
 Ticker: {ticker}
 Exchange: NSE
 Date: {date} (or nearest trading day)
 
-Return ONLY a Python dictionary in this exact format (no extra text):
-{{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'string'}}
+Return ONLY this exact text format (replace with actual values):
+{{'date': 'YYYY-MM-DD', 'price': 2500.50, 'sector': 'Banking'}}
 
-Example:
+Example response:
 {{'date': '2024-10-14', 'price': 2500.50, 'sector': 'Banking'}}
 
-Your output:"""
+Your response (actual data only, no code):"""
         else:
-            prompt = f"""Get stock price data for Python:
+            prompt = f"""You are a financial data API. Provide ACTUAL stock price data.
+
+🚫 DO NOT write Python code
+🚫 DO NOT use yfinance or any libraries
+🚫 DO NOT write functions or import statements
+✅ ONLY return the actual stock price data in the format below
 
 Stock: {stock_name}
 Ticker: {ticker}
 Exchange: NSE
 Date: LATEST (most recent close - if market closed, use yesterday)
 
-Return ONLY a Python dictionary in this exact format (no extra text):
-{{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'string'}}
+Return ONLY this exact text format (replace with actual values):
+{{'date': 'YYYY-MM-DD', 'price': 2500.50, 'sector': 'Banking'}}
 
-Example:
+Example response:
 {{'date': '2024-10-13', 'price': 2500.50, 'sector': 'Banking'}}
 
-Your output:"""
+Your response (actual data only, no code):"""
         
         # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
         print(f"\n{'='*60}")
@@ -305,6 +333,14 @@ Your output:"""
             print(f"📥 STOCK RESPONSE for {ticker}: {response}\n")
             if response and response != "NOT_FOUND":
                 clean_response = response.strip()
+                
+                # 🚨 DETECT IF AI RETURNED CODE INSTEAD OF DATA
+                code_indicators = ['import ', 'def ', 'class ', 'for ', 'while ', 'if __name__', 'requests.', 'yfinance', 'pandas', 'datetime.']
+                if any(indicator in clean_response for indicator in code_indicators):
+                    logger.error(f"❌ AI returned CODE instead of DATA for {ticker}!")
+                    logger.error(f"Response preview: {clean_response[:200]}...")
+                    logger.warning("⚠️ Skipping this response - will use fallback")
+                    return None
                 
                 # Try parsing as Python dictionary first (safest and cleanest)
                 try:
@@ -389,8 +425,13 @@ Your output:"""
         if not self.is_available():
             return {}
         
-        # Python list of dictionaries format - easiest to parse!
-        prompt = f"""Get weekly price data for Python:
+        # CRITICAL: Be explicit to prevent code generation
+        prompt = f"""You are a financial data API. Provide ACTUAL weekly price data.
+
+🚫 DO NOT write Python code
+🚫 DO NOT use any libraries (requests, pandas, yfinance, etc.)
+🚫 DO NOT write functions, imports, or loops
+✅ ONLY return the actual weekly price data in the format below
 
 Asset: {name}
 Ticker: {ticker}
@@ -398,20 +439,24 @@ Type: {asset_type}
 Period: {start_date} to {end_date}
 Frequency: WEEKLY (one price per week - Monday or first trading day)
 
-Return ONLY a Python list of dictionaries in this exact format (no extra text):
+IMPORTANT: Return ALL weekly prices for the entire period (approximately 52-115 weeks).
+
+Return ONLY a list in this exact text format (replace with actual values):
 [
-  {{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'string'}},
-  {{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'string'}}
+  {{'date': '2024-01-08', 'price': 2500.50, 'sector': 'Banking'}},
+  {{'date': '2024-01-15', 'price': 2550.00, 'sector': 'Banking'}},
+  {{'date': '2024-01-22', 'price': 2575.25, 'sector': 'Banking'}},
+  ... (continue for ALL weeks in the date range)
 ]
 
-Example:
+Example response (you must provide ALL weeks, not just 3):
 [
   {{'date': '2024-01-08', 'price': 2500.50, 'sector': 'Banking'}},
   {{'date': '2024-01-15', 'price': 2550.00, 'sector': 'Banking'}},
   {{'date': '2024-01-22', 'price': 2575.25, 'sector': 'Banking'}}
 ]
 
-Your output:"""
+Your response (actual data for ALL weeks, no code):"""
         
         # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
         print(f"\n{'='*60}")
@@ -435,6 +480,14 @@ Your output:"""
             # Parse response into dict (Python list format first, then CSV fallback)
             results = {}
             clean_response = response.strip()
+            
+            # 🚨 DETECT IF AI RETURNED CODE INSTEAD OF DATA
+            code_indicators = ['import ', 'def ', 'class ', 'for ', 'while ', 'if __name__', 'requests.', 'yfinance', 'pandas', 'datetime.']
+            if any(indicator in clean_response for indicator in code_indicators):
+                logger.error(f"❌ AI returned CODE instead of DATA for weekly range {ticker}!")
+                logger.error(f"Response preview: {clean_response[:200]}...")
+                logger.warning("⚠️ Skipping this response - will use fallback")
+                return {}
             
             # Try parsing as Python list of dictionaries first (cleanest)
             try:
@@ -608,35 +661,45 @@ Your output:"""
         if not self.is_available():
             return None
         
-        # Python dictionary format - easiest to parse!
+        # CRITICAL: Be explicit to prevent code generation
         if date:
-            prompt = f"""Get PMS/AIF NAV data for Python:
+            prompt = f"""You are a financial data API. Provide ACTUAL PMS/AIF NAV data.
+
+🚫 DO NOT write Python code
+🚫 DO NOT use any libraries
+🚫 DO NOT write functions or import statements
+✅ ONLY return the actual NAV data in the format below
 
 Fund: {fund_name}
 SEBI Code: {ticker}
 Date: {date} (or nearest available date)
 
-Return ONLY a Python dictionary in this exact format (no extra text):
-{{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'category'}}
+Return ONLY this exact text format (replace with actual values):
+{{'date': 'YYYY-MM-DD', 'price': 1250.50, 'sector': 'PMS Equity'}}
 
-Example:
+Example response:
 {{'date': '2024-10-14', 'price': 1250.50, 'sector': 'PMS Equity'}}
 
-Your output:"""
+Your response (actual data only, no code):"""
         else:
-            prompt = f"""Get PMS/AIF NAV data for Python:
+            prompt = f"""You are a financial data API. Provide ACTUAL PMS/AIF NAV data.
+
+🚫 DO NOT write Python code
+🚫 DO NOT use any libraries
+🚫 DO NOT write functions or import statements
+✅ ONLY return the actual NAV data in the format below
 
 Fund: {fund_name}
 SEBI Code: {ticker}
 Date: LATEST (most recent NAV available)
 
-Return ONLY a Python dictionary in this exact format (no extra text):
-{{'date': 'YYYY-MM-DD', 'price': float, 'sector': 'category'}}
+Return ONLY this exact text format (replace with actual values):
+{{'date': 'YYYY-MM-DD', 'price': 1250.50, 'sector': 'PMS Equity'}}
 
-Example:
+Example response:
 {{'date': '2024-10-13', 'price': 1250.50, 'sector': 'PMS Equity'}}
 
-Your output:"""
+Your response (actual data only, no code):"""
         
         # LOG PROMPT FOR DEBUGGING
         logger.info(f"📤 PMS/AIF PROMPT for {ticker}:\n{prompt}\n{'='*50}")
@@ -646,6 +709,14 @@ Your output:"""
             logger.info(f"📥 PMS/AIF RESPONSE for {ticker}: {response}")
             if response and response != "NOT_FOUND":
                 clean_response = response.strip()
+                
+                # 🚨 DETECT IF AI RETURNED CODE INSTEAD OF DATA
+                code_indicators = ['import ', 'def ', 'class ', 'for ', 'while ', 'if __name__', 'requests.', 'yfinance', 'pandas', 'datetime.']
+                if any(indicator in clean_response for indicator in code_indicators):
+                    logger.error(f"❌ AI returned CODE instead of DATA for {ticker}!")
+                    logger.error(f"Response preview: {clean_response[:200]}...")
+                    logger.warning("⚠️ Skipping this response - will use fallback")
+                    return None
                 
                 # Try parsing as Python dictionary first (safest and cleanest)
                 try:

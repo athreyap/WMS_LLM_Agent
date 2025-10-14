@@ -437,3 +437,7 @@ def get_mftool_client() -> MFToolClient:
     if _mftool_client is None:
         _mftool_client = MFToolClient()
     return _mftool_client
+
+
+# Alias for backwards compatibility
+MFPriceFetcher = MFToolClient
