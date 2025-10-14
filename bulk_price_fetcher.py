@@ -689,7 +689,8 @@ Rules:
                         clean_code = code.replace('MF_', '')
                         
                         # Try getting current NAV
-                        nav = mf_fetcher.get_current_nav(clean_code)
+                        nav_result = mf_fetcher.get_mutual_fund_nav(clean_code)
+                        nav = nav_result.get('nav') if nav_result and isinstance(nav_result, dict) else None
                         
                         if nav and nav > 0:
                             mf_prices[code] = nav

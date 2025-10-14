@@ -2231,11 +2231,14 @@ def bulk_update_stock_data(stock_data_list: list) -> bool:
         True if successful
     """
     try:
+        import math
+        
         if not stock_data_list:
             return True
         
         # Prepare batch upsert data
         batch_data = []
+        filtered_count = 0
         for item in stock_data_list:
             data = {
                 "ticker": item.get('ticker'),
@@ -2246,11 +2249,19 @@ def bulk_update_stock_data(stock_data_list: list) -> bool:
             if item.get('sector'):
                 data["sector"] = item['sector']
             if item.get('live_price') is not None:
-                data["live_price"] = float(item['live_price'])
+                live_price = float(item['live_price'])
+                # Check for valid price (not NaN, inf, or negative)
+                if not (math.isnan(live_price) or math.isinf(live_price) or live_price <= 0):
+                    data["live_price"] = live_price
+                else:
+                    print(f"⚠️ Filtered out invalid price for {item.get('ticker')}: {live_price}")
+                    filtered_count += 1
             if item.get('market_cap'):
                 data["market_cap"] = float(item['market_cap'])
             
             batch_data.append(data)
+        
+        print(f"📊 Bulk update: {len(batch_data)} valid items, {filtered_count} filtered out")
         
         # Bulk upsert (update if exists, insert if not)
         result = supabase.table("stock_data").upsert(

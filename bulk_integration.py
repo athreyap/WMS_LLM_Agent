@@ -471,7 +471,7 @@ def fetch_live_prices_bulk(
     for ticker, price in mf_prices.items():
         all_prices[ticker] = (price, "Mutual Fund")
     
-    # PMS/AIF - calculate current value from CAGR
+    # PMS/AIF - calculate current price per unit from CAGR
     # Check if we have transaction data (date, price, quantity columns)
     has_trans_data = all(col in df.columns for col in ['date', 'price', 'quantity'])
     
@@ -480,28 +480,38 @@ def fetch_live_prices_bulk(
             # Get investment details from transaction data
             ticker_trans = df[df['ticker'] == ticker]
             if ticker_trans.empty:
+                print(f"⚠️ PMS/AIF {ticker}: No transaction data found")
                 continue
             
             first_trans = ticker_trans.iloc[0]
             investment_date = pd.to_datetime(first_trans['date'])
-            investment_amount = float(ticker_trans['quantity'].sum() * first_trans['price'])
+            original_price_per_unit = float(first_trans['price'])  # Price per unit at purchase
+            total_quantity = float(ticker_trans['quantity'].sum())  # Total units
             
-            # Calculate current value
+            # Calculate years elapsed since investment
             years_elapsed = (datetime.now() - investment_date).days / 365.25
             
-            current_value = investment_amount
+            # Calculate current price per unit using CAGR
+            current_price_per_unit = original_price_per_unit  # Default: no growth
+            
             if years_elapsed >= 5 and '5Y' in cagr_data:
                 cagr = cagr_data['5Y'] / 100
-                current_value = investment_amount * ((1 + cagr) ** years_elapsed)
+                current_price_per_unit = original_price_per_unit * ((1 + cagr) ** years_elapsed)
+                print(f"✅ PMS/AIF {ticker}: Using 5Y CAGR {cagr*100:.2f}% → ₹{original_price_per_unit:.2f} → ₹{current_price_per_unit:.2f} per unit")
             elif years_elapsed >= 3 and '3Y' in cagr_data:
                 cagr = cagr_data['3Y'] / 100
-                current_value = investment_amount * ((1 + cagr) ** years_elapsed)
+                current_price_per_unit = original_price_per_unit * ((1 + cagr) ** years_elapsed)
+                print(f"✅ PMS/AIF {ticker}: Using 3Y CAGR {cagr*100:.2f}% → ₹{original_price_per_unit:.2f} → ₹{current_price_per_unit:.2f} per unit")
             elif '1Y' in cagr_data:
                 annual_return = cagr_data['1Y'] / 100
-                current_value = investment_amount * ((1 + annual_return) ** years_elapsed)
+                current_price_per_unit = original_price_per_unit * ((1 + annual_return) ** years_elapsed)
+                print(f"✅ PMS/AIF {ticker}: Using 1Y return {annual_return*100:.2f}% → ₹{original_price_per_unit:.2f} → ₹{current_price_per_unit:.2f} per unit")
+            else:
+                print(f"⚠️ PMS/AIF {ticker}: No CAGR data available, using original price")
             
             sector = "Alternative Investments" if is_aif_code(ticker) else "PMS Equity"
-            all_prices[ticker] = (current_value, sector)
+            all_prices[ticker] = (current_price_per_unit, sector)
+            print(f"💰 PMS/AIF {ticker}: Quantity={total_quantity}, Current Price/Unit=₹{current_price_per_unit:.2f}, Total Value=₹{current_price_per_unit * total_quantity:.2f}")
         else:
             # No transaction data available - use CAGR info as a placeholder
             # This happens during login when only tickers are passed
@@ -510,6 +520,7 @@ def fetch_live_prices_bulk(
             # Store CAGR data as the "price" temporarily (will be handled by portfolio display)
             cagr_value = cagr_data.get('3Y', cagr_data.get('1Y', 0))
             all_prices[ticker] = (cagr_value, sector)
+            print(f"⚠️ PMS/AIF {ticker}: No transaction data, storing CAGR placeholder: {cagr_value}")
     
     # Bulk update database
     if progress_callback:
@@ -518,6 +529,7 @@ def fetch_live_prices_bulk(
     update_list = []
     for ticker, (price, sector) in all_prices.items():
         name = ticker_names.get(ticker, ticker)
+        print(f"🔍 DEBUG: {ticker} - live_price: {price}, sector: {sector}")
         update_list.append({
             'ticker': ticker,
             'stock_name': name,
@@ -525,8 +537,10 @@ def fetch_live_prices_bulk(
             'live_price': price
         })
     
+    print(f"📊 Total update_list items: {len(update_list)}")
     if update_list:
-        bulk_update_stock_data(update_list)
+        success = bulk_update_stock_data(update_list)
+        print(f"✅ Bulk update result: {success}")
     
     logger.info(f"✅ Live prices updated: {len(all_prices)} tickers")
     

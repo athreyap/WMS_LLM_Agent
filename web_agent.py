@@ -3025,11 +3025,14 @@ class PortfolioAnalytics:
                 print(f"📋 Tickers: {list(unique_tickers)[:10]}{'...' if len(unique_tickers) > 10 else ''}")
                 
                 try:
-                    # Create DataFrame for bulk fetch
+                    # Create DataFrame for bulk fetch with transaction data for PMS/AIF calculation
                     trans_map = {t: df[df['ticker']==t].iloc[0].to_dict() for t in unique_tickers if t in df['ticker'].values}
                     df_tickers = pd.DataFrame({
                         'ticker': list(unique_tickers),
-                        'stock_name': [trans_map.get(t, {}).get('stock_name', t) for t in unique_tickers]
+                        'stock_name': [trans_map.get(t, {}).get('stock_name', t) for t in unique_tickers],
+                        'date': [trans_map.get(t, {}).get('date', None) for t in unique_tickers],
+                        'price': [trans_map.get(t, {}).get('price', None) for t in unique_tickers],
+                        'quantity': [trans_map.get(t, {}).get('quantity', None) for t in unique_tickers]
                     })
                     
                     print(f"📊 DataFrame created with {len(df_tickers)} rows")
