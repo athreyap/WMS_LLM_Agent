@@ -166,11 +166,17 @@ class BulkPriceFetcher:
                 # Single ticker
                 if not data.empty and 'Close' in data.columns:
                     price = float(data['Close'].iloc[-1])
-                    results[tickers[0]] = price
-                    suffix = ticker_to_suffix[tickers[0]]
-                    logger.info(f"✅ {tickers[0]} ({suffix}): ₹{price}")
+                    # Filter out NaN/inf values
+                    import math
+                    if not math.isnan(price) and not math.isinf(price) and price > 0:
+                        results[tickers[0]] = price
+                        suffix = ticker_to_suffix[tickers[0]]
+                        logger.info(f"✅ {tickers[0]} ({suffix}): ₹{price}")
+                    else:
+                        logger.warning(f"⚠️ {tickers[0]}: Invalid price (NaN/inf), skipping")
             else:
                 # Multiple tickers
+                import math
                 for ticker in tickers:
                     suffix = ticker_to_suffix[ticker]
                     ticker_with_suffix = f"{ticker}{suffix}"
@@ -179,8 +185,12 @@ class BulkPriceFetcher:
                             ticker_data = data[ticker_with_suffix]
                             if not ticker_data.empty and 'Close' in ticker_data.columns:
                                 price = float(ticker_data['Close'].iloc[-1])
-                                results[ticker] = price
-                                logger.info(f"✅ {ticker} ({suffix}): ₹{price}")
+                                # Filter out NaN/inf values
+                                if not math.isnan(price) and not math.isinf(price) and price > 0:
+                                    results[ticker] = price
+                                    logger.info(f"✅ {ticker} ({suffix}): ₹{price}")
+                                else:
+                                    logger.warning(f"⚠️ {ticker} ({suffix}): Invalid price (NaN/inf), will try AI fallback")
                     except:
                         continue
             
@@ -241,8 +251,29 @@ Rules:
 - Skip if not found
 - Code must match exactly"""
                 
-                # Make AI call
-                response = ai.gemini_client.generate_content(prompt)
+                # Make AI call with automatic OpenAI fallback
+                try:
+                    response = ai.gemini_client.generate_content(prompt)
+                except Exception as gemini_error:
+                    logger.warning(f"⚠️ Gemini failed: {gemini_error}, trying OpenAI...")
+                    if ai.openai_client:
+                        try:
+                            response_obj = ai.openai_client.chat.completions.create(
+                                model="gpt-4o-mini",
+                                messages=[{"role": "user", "content": prompt}],
+                                max_tokens=500
+                            )
+                            # Create a mock response object with .text attribute
+                            class MockResponse:
+                                def __init__(self, text):
+                                    self.text = text
+                            response = MockResponse(response_obj.choices[0].message.content)
+                        except Exception as openai_error:
+                            logger.error(f"❌ OpenAI also failed: {openai_error}")
+                            continue
+                    else:
+                        logger.error("❌ No AI backup available")
+                        continue
                 
                 # Parse response
                 for line in response.text.strip().split('\n'):
@@ -310,8 +341,28 @@ Rules:
 - Format: FUND_NAME|NAV (numeric only, no currency symbols)
 - Skip if not found"""
                 
-                # Make AI call
-                response = ai.gemini_client.generate_content(prompt)
+                # Make AI call with automatic OpenAI fallback
+                try:
+                    response = ai.gemini_client.generate_content(prompt)
+                except Exception as gemini_error:
+                    logger.warning(f"⚠️ Gemini failed: {gemini_error}, trying OpenAI...")
+                    if ai.openai_client:
+                        try:
+                            response_obj = ai.openai_client.chat.completions.create(
+                                model="gpt-4o-mini",
+                                messages=[{"role": "user", "content": prompt}],
+                                max_tokens=500
+                            )
+                            class MockResponse:
+                                def __init__(self, text):
+                                    self.text = text
+                            response = MockResponse(response_obj.choices[0].message.content)
+                        except Exception as openai_error:
+                            logger.error(f"❌ OpenAI also failed: {openai_error}")
+                            continue
+                    else:
+                        logger.error("❌ No AI backup available")
+                        continue
                 
                 # Parse response - match by fund name similarity
                 for line in response.text.strip().split('\n'):
@@ -409,8 +460,28 @@ Rules:
             else:  # STOCK
                 return {}  # Use yfinance for stocks
             
-            # Make AI call
-            response = ai.gemini_client.generate_content(prompt)
+            # Make AI call with automatic OpenAI fallback
+            try:
+                response = ai.gemini_client.generate_content(prompt)
+            except Exception as gemini_error:
+                logger.warning(f"⚠️ Gemini failed: {gemini_error}, trying OpenAI...")
+                if ai.openai_client:
+                    try:
+                        response_obj = ai.openai_client.chat.completions.create(
+                            model="gpt-4o-mini",
+                            messages=[{"role": "user", "content": prompt}],
+                            max_tokens=500
+                        )
+                        class MockResponse:
+                            def __init__(self, text):
+                                self.text = text
+                        response = MockResponse(response_obj.choices[0].message.content)
+                    except Exception as openai_error:
+                        logger.error(f"❌ OpenAI also failed: {openai_error}")
+                        return {}
+                else:
+                    logger.error("❌ No AI backup available")
+                    return {}
             
             # Parse response
             results = {}
