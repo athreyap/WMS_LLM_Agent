@@ -117,6 +117,54 @@ class AIPriceFetcher:
         
         return has_clients
     
+    def _retry_with_alternate_provider(self, prompt: str, max_tokens: int, ticker: str) -> Optional[str]:
+        """
+        Retry AI call with alternate provider if first one fails
+        
+        Args:
+            prompt: The prompt to retry
+            max_tokens: Max tokens for response
+            ticker: Ticker being fetched (for logging)
+            
+        Returns:
+            Response from alternate provider, or None if retry fails
+        """
+        logger.warning(f"🔄 Retrying {ticker} with alternate AI provider...")
+        
+        # Save original clients
+        original_gemini = self.gemini_client
+        original_openai = self.openai_client
+        
+        try:
+            # If we used Gemini, try OpenAI (or vice versa)
+            if self._call_count > 0:  # Was using Gemini
+                logger.info(f"🔄 Switching from Gemini to OpenAI for retry...")
+                self.gemini_client = None  # Temporarily disable Gemini
+            else:  # Was using OpenAI
+                logger.info(f"🔄 Switching from OpenAI to Gemini for retry...")
+                self.openai_client = None  # Temporarily disable OpenAI
+            
+            # Retry the call
+            retry_response = self._call_ai(prompt, max_tokens=max_tokens)
+            
+            # Restore original clients
+            self.gemini_client = original_gemini
+            self.openai_client = original_openai
+            
+            if retry_response:
+                logger.info(f"✅ Retry successful for {ticker}")
+                return retry_response
+            else:
+                logger.warning(f"⚠️ Retry returned empty response for {ticker}")
+                return None
+                
+        except Exception as retry_error:
+            logger.error(f"❌ Retry failed for {ticker}: {retry_error}")
+            # Restore original clients
+            self.gemini_client = original_gemini
+            self.openai_client = original_openai
+            return None
+    
     def get_mutual_fund_nav(
         self, 
         ticker: str, 
@@ -170,13 +218,27 @@ RESPOND WITH ONLY THE DICTIONARY:"""
             if response and response != "NOT_FOUND":
                 clean_response = response.strip()
                 
-                # 🚨 DETECT IF AI RETURNED CODE INSTEAD OF DATA
+                # 🚨 DETECT IF AI RETURNED CODE OR EXPLANATION INSTEAD OF DATA
                 code_indicators = ['import ', 'def ', 'class ', 'for ', 'while ', 'if __name__', 'requests.', 'yfinance', 'pandas', 'datetime.']
-                if any(indicator in clean_response for indicator in code_indicators):
-                    logger.error(f"❌ AI returned CODE instead of DATA for {ticker}!")
+                explanation_indicators = ['I am sorry', 'I do not have', 'I cannot', 'As an AI', 'I must adhere', 'I apologize']
+                
+                is_code = any(indicator in clean_response for indicator in code_indicators)
+                is_explanation = any(indicator in clean_response for indicator in explanation_indicators)
+                
+                if is_code or is_explanation:
+                    error_type = "CODE" if is_code else "EXPLANATION"
+                    logger.error(f"❌ AI returned {error_type} instead of DATA for MF {ticker}!")
                     logger.error(f"Response preview: {clean_response[:200]}...")
-                    logger.warning("⚠️ Skipping this response - will use fallback")
-                    return None
+                    
+                    # 🔄 RETRY WITH ALTERNATE AI PROVIDER
+                    retry_response = self._retry_with_alternate_provider(prompt, max_tokens=300, ticker=ticker)
+                    if retry_response and retry_response != response:
+                        logger.info(f"✅ Retry successful for MF {ticker}, re-parsing...")
+                        clean_response = retry_response.strip()
+                        # Continue to parsing below
+                    else:
+                        logger.warning(f"⚠️ Retry failed for MF {ticker}, skipping")
+                        return None
                 
                 # Try parsing as Python dictionary first (safest and cleanest)
                 try:
@@ -331,13 +393,27 @@ RESPOND WITH ONLY THE DICTIONARY:"""
             if response and response != "NOT_FOUND":
                 clean_response = response.strip()
                 
-                # 🚨 DETECT IF AI RETURNED CODE INSTEAD OF DATA
+                # 🚨 DETECT IF AI RETURNED CODE OR EXPLANATION INSTEAD OF DATA
                 code_indicators = ['import ', 'def ', 'class ', 'for ', 'while ', 'if __name__', 'requests.', 'yfinance', 'pandas', 'datetime.']
-                if any(indicator in clean_response for indicator in code_indicators):
-                    logger.error(f"❌ AI returned CODE instead of DATA for {ticker}!")
+                explanation_indicators = ['I am sorry', 'I do not have', 'I cannot', 'As an AI', 'I must adhere', 'I apologize']
+                
+                is_code = any(indicator in clean_response for indicator in code_indicators)
+                is_explanation = any(indicator in clean_response for indicator in explanation_indicators)
+                
+                if is_code or is_explanation:
+                    error_type = "CODE" if is_code else "EXPLANATION"
+                    logger.error(f"❌ AI returned {error_type} instead of DATA for Stock {ticker}!")
                     logger.error(f"Response preview: {clean_response[:200]}...")
-                    logger.warning("⚠️ Skipping this response - will use fallback")
-                    return None
+                    
+                    # 🔄 RETRY WITH ALTERNATE AI PROVIDER
+                    retry_response = self._retry_with_alternate_provider(prompt, max_tokens=300, ticker=ticker)
+                    if retry_response and retry_response != response:
+                        logger.info(f"✅ Retry successful for Stock {ticker}, re-parsing...")
+                        clean_response = retry_response.strip()
+                        # Continue to parsing below
+                    else:
+                        logger.warning(f"⚠️ Retry failed for Stock {ticker}, skipping")
+                        return None
                 
                 # Try parsing as Python dictionary first (safest and cleanest)
                 try:
@@ -513,13 +589,27 @@ RESPOND WITH ONLY THE DATA LIST (start with [, end with ]):"""
             results = {}
             clean_response = response.strip()
             
-            # 🚨 DETECT IF AI RETURNED CODE INSTEAD OF DATA
+            # 🚨 DETECT IF AI RETURNED CODE OR EXPLANATION INSTEAD OF DATA
             code_indicators = ['import ', 'def ', 'class ', 'for ', 'while ', 'if __name__', 'requests.', 'yfinance', 'pandas', 'datetime.']
-            if any(indicator in clean_response for indicator in code_indicators):
-                logger.error(f"❌ AI returned CODE instead of DATA for weekly range {ticker}!")
+            explanation_indicators = ['I am sorry', 'I do not have', 'I cannot', 'As an AI', 'I must adhere', 'I apologize']
+            
+            is_code = any(indicator in clean_response for indicator in code_indicators)
+            is_explanation = any(indicator in clean_response for indicator in explanation_indicators)
+            
+            if is_code or is_explanation:
+                error_type = "CODE" if is_code else "EXPLANATION"
+                logger.error(f"❌ AI returned {error_type} instead of DATA for weekly range {ticker}!")
                 logger.error(f"Response preview: {clean_response[:200]}...")
-                logger.warning("⚠️ Skipping this response - will use fallback")
-                return {}
+                
+                # 🔄 RETRY WITH ALTERNATE AI PROVIDER
+                retry_response = self._retry_with_alternate_provider(prompt, max_tokens=1500, ticker=ticker)
+                if retry_response and retry_response != response:
+                    logger.info(f"✅ Retry successful for weekly range {ticker}, re-parsing...")
+                    clean_response = retry_response.strip()
+                    # Continue to parsing below
+                else:
+                    logger.warning(f"⚠️ Retry failed for weekly range {ticker}, skipping")
+                    return {}
             
             # Try parsing as Python list of dictionaries first (cleanest)
             try:
@@ -778,13 +868,27 @@ Your response (actual data only, no code):"""
             if response and response != "NOT_FOUND":
                 clean_response = response.strip()
                 
-                # 🚨 DETECT IF AI RETURNED CODE INSTEAD OF DATA
+                # 🚨 DETECT IF AI RETURNED CODE OR EXPLANATION INSTEAD OF DATA
                 code_indicators = ['import ', 'def ', 'class ', 'for ', 'while ', 'if __name__', 'requests.', 'yfinance', 'pandas', 'datetime.']
-                if any(indicator in clean_response for indicator in code_indicators):
-                    logger.error(f"❌ AI returned CODE instead of DATA for {ticker}!")
+                explanation_indicators = ['I am sorry', 'I do not have', 'I cannot', 'As an AI', 'I must adhere', 'I apologize']
+                
+                is_code = any(indicator in clean_response for indicator in code_indicators)
+                is_explanation = any(indicator in clean_response for indicator in explanation_indicators)
+                
+                if is_code or is_explanation:
+                    error_type = "CODE" if is_code else "EXPLANATION"
+                    logger.error(f"❌ AI returned {error_type} instead of DATA for PMS/AIF {ticker}!")
                     logger.error(f"Response preview: {clean_response[:200]}...")
-                    logger.warning("⚠️ Skipping this response - will use fallback")
-                    return None
+                    
+                    # 🔄 RETRY WITH ALTERNATE AI PROVIDER
+                    retry_response = self._retry_with_alternate_provider(prompt, max_tokens=300, ticker=ticker)
+                    if retry_response and retry_response != response:
+                        logger.info(f"✅ Retry successful for PMS/AIF {ticker}, re-parsing...")
+                        clean_response = retry_response.strip()
+                        # Continue to parsing below
+                    else:
+                        logger.warning(f"⚠️ Retry failed for PMS/AIF {ticker}, skipping")
+                        return None
                 
                 # Try parsing as Python dictionary first (safest and cleanest)
                 try:
