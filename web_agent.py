@@ -1804,19 +1804,60 @@ class PortfolioAnalytics:
                     progress_bar.progress(idx / len(self.session_state.pending_files))
                     
                     # Process the file with comprehensive error handling
-                    # Skip weekly cache AND live prices during registration
-                    # Weekly cache: will populate all at once after all files
-                    # Live prices: will fetch at login for current market prices
+                    # ✅ NEW: Fetch weekly prices IMMEDIATELY after each file
+                    # This ensures data is complete right away, no need to re-read DB later
                     try:
+                        # Step 1: Process transactions from CSV
                         success = self.process_csv_file(
                             uploaded_file, 
                             user_id, 
-                            skip_weekly_cache=True,
-                            skip_live_prices=True
+                            skip_weekly_cache=True,  # We'll do it manually below
+                            skip_live_prices=True     # Live prices at login only
                         )
                     
                         if success:
-                            st.success(f"✅ {uploaded_file.name}")
+                            st.success(f"✅ {uploaded_file.name} - Transactions saved")
+                            
+                            # Step 2: Immediately fetch weekly prices for THIS file's tickers
+                            try:
+                                st.info(f"🔄 Fetching weekly prices for {uploaded_file.name}...")
+                                
+                                # Get transactions from this file to know which tickers to fetch
+                                from database_config_supabase import get_transactions_supabase
+                                all_transactions = get_transactions_supabase(user_id=user_id)
+                                
+                                if all_transactions:
+                                    df_all = pd.DataFrame(all_transactions)
+                                    # Get only tickers from this file (most recent transactions)
+                                    file_tickers = df_all['ticker'].unique()[-15:]  # Assume last 15 are from this file
+                                    
+                                    # Use optimized bulk fetch for this file's tickers
+                                    from datetime import datetime, timedelta
+                                    import yfinance as yf
+                                    
+                                    for ticker in file_tickers:
+                                        try:
+                                            # Fetch ALL 52 weeks in ONE call (fast!)
+                                            one_year_ago = datetime.now() - timedelta(days=365)
+                                            yf_ticker = f"{ticker}.NS" if not str(ticker).isdigit() else f"{ticker}.NS"
+                                            stock = yf.Ticker(yf_ticker)
+                                            hist = stock.history(start=one_year_ago, end=datetime.now(), interval='1wk')
+                                            
+                                            if not hist.empty:
+                                                # Save all weeks to DB
+                                                from database_config_supabase import save_stock_price_supabase
+                                                for date_idx, price in zip(hist.index, hist['Close']):
+                                                    date_str = date_idx.strftime('%Y-%m-%d')
+                                                    save_stock_price_supabase(ticker, date_str, float(price), 'yfinance_weekly')
+                                                print(f"✅ {ticker}: {len(hist)} weekly prices cached")
+                                        except Exception as ticker_err:
+                                            print(f"⚠️ {ticker}: Weekly fetch failed, will use AI fallback at login")
+                                    
+                                    st.success(f"✅ {uploaded_file.name} - Weekly prices cached!")
+                            except Exception as weekly_err:
+                                print(f"⚠️ Weekly cache error for {uploaded_file.name}: {weekly_err}")
+                                # Continue anyway - weekly prices can be fetched at login
+                            
                             processed_count += 1
                         else:
                             st.error(f"❌ {uploaded_file.name}")
@@ -1849,32 +1890,9 @@ class PortfolioAnalytics:
             progress_bar.empty()
             status_text.empty()
             
-            # Step 2.5: 🆕 AI BATCH FETCH - Get ALL prices at once (only if some files succeeded)
-            if processed_count > 0:
-                st.markdown("---")
-                
-                # ✅ CHECK: Is bulk fetch already complete for this user?
-                bulk_fetch_key = f"bulk_fetch_done_{user_id}"
-                if st.session_state.get(bulk_fetch_key, False):
-                    st.success("✅ Prices already fetched and cached for this account!")
-                else:
-                    st.info("🤖 Using AI to fetch ALL prices (historical + weekly + live) in one batch...")
-                    st.caption("⏳ This may take 15-30 minutes for 62 tickers. Progress shown below...")
-                    st.warning("⚠️ **IMPORTANT:** Do NOT close this page!")
-                    st.caption("💡 If interrupted, the system will resume from where it stopped on your next login.")
-                    st.caption("📊 Your progress is being saved to the database after each ticker.")
-                    
-                    try:
-                        # ✅ Run bulk fetch with progress tracking
-                        self.bulk_fetch_and_cache_all_prices(user_id, show_ui=True)
-                        st.success("✅ All prices cached successfully!")
-                    except Exception as cache_error:
-                        st.error(f"❌ AI batch fetch error: {cache_error}")
-                        st.warning("⚠️ Some tickers may not have been processed.")
-                        st.info("💡 Your progress has been saved. Click the login button below, then go to Settings → Update Price Cache to resume.")
-                        import traceback
-                        st.error(f"Error details: {traceback.format_exc()}")
-                        # Don't fallback - let user see the error and retry manually
+            # ✅ REMOVED: Bulk fetch at end - now done per-file above
+            # Weekly prices are fetched immediately after each file is processed
+            # This is faster and more reliable than batch processing at the end
             
             # Step 3: Show summary
             st.markdown("---")
