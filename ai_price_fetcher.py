@@ -142,43 +142,21 @@ class AIPriceFetcher:
         
         # CRITICAL: Be explicit to prevent code generation
         if date:
-            prompt = f"""You are a financial data API. Provide ACTUAL mutual fund NAV data.
+            prompt = f"""Mutual Fund: {fund_name} (Code: {ticker})
+Date: {date} (or nearest available)
 
-🚫 DO NOT write Python code
-🚫 DO NOT use import statements  
-🚫 DO NOT write functions
-✅ ONLY return the actual NAV data in the format below
-
-Fund: {fund_name}
-Scheme Code: {ticker}
-Date: {date} (or nearest available date)
-
-Return ONLY this exact text format (replace with actual values):
+Return ONLY this Python dictionary (no explanations):
 {{'date': 'YYYY-MM-DD', 'price': 150.50, 'sector': 'Equity: Large Cap'}}
 
-Example response:
-{{'date': '2024-10-14', 'price': 150.50, 'sector': 'Equity: Large Cap'}}
-
-Your response (actual data only, no code):"""
+RESPOND WITH ONLY THE DICTIONARY:"""
         else:
-            prompt = f"""You are a financial data API. Provide ACTUAL mutual fund NAV data.
+            prompt = f"""Mutual Fund: {fund_name} (Code: {ticker})
+Date: Latest NAV (yesterday if today not published)
 
-🚫 DO NOT write Python code
-🚫 DO NOT use import statements
-🚫 DO NOT write functions
-✅ ONLY return the actual NAV data in the format below
-
-Fund: {fund_name}
-Scheme Code: {ticker}
-Date: LATEST (most recent NAV - if today's not published, use yesterday)
-
-Return ONLY this exact text format (replace with actual values):
+Return ONLY this Python dictionary (no explanations):
 {{'date': 'YYYY-MM-DD', 'price': 150.50, 'sector': 'Equity: Large Cap'}}
 
-Example response:
-{{'date': '2024-10-13', 'price': 150.50, 'sector': 'Equity: Large Cap'}}
-
-Your response (actual data only, no code):"""
+RESPOND WITH ONLY THE DICTIONARY:"""
         
         # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
         print(f"\n{'='*60}")
@@ -325,45 +303,21 @@ Your response (actual data only, no code):"""
         
         # CRITICAL: Be explicit to prevent code generation
         if date:
-            prompt = f"""You are a financial data API. Provide ACTUAL stock price data.
-
-🚫 DO NOT write Python code
-🚫 DO NOT use yfinance or any libraries
-🚫 DO NOT write functions or import statements
-✅ ONLY return the actual stock price data in the format below
-
-Stock: {stock_name}
-Ticker: {ticker}
-Exchange: NSE
+            prompt = f"""Stock: {stock_name} ({ticker})
 Date: {date} (or nearest trading day)
 
-Return ONLY this exact text format (replace with actual values):
+Return ONLY this Python dictionary (no explanations):
 {{'date': 'YYYY-MM-DD', 'price': 2500.50, 'sector': 'Banking'}}
 
-Example response:
-{{'date': '2024-10-14', 'price': 2500.50, 'sector': 'Banking'}}
-
-Your response (actual data only, no code):"""
+RESPOND WITH ONLY THE DICTIONARY:"""
         else:
-            prompt = f"""You are a financial data API. Provide ACTUAL stock price data.
+            prompt = f"""Stock: {stock_name} ({ticker})
+Date: Latest closing price (yesterday if market closed)
 
-🚫 DO NOT write Python code
-🚫 DO NOT use yfinance or any libraries
-🚫 DO NOT write functions or import statements
-✅ ONLY return the actual stock price data in the format below
-
-Stock: {stock_name}
-Ticker: {ticker}
-Exchange: NSE
-Date: LATEST (most recent close - if market closed, use yesterday)
-
-Return ONLY this exact text format (replace with actual values):
+Return ONLY this Python dictionary (no explanations):
 {{'date': 'YYYY-MM-DD', 'price': 2500.50, 'sector': 'Banking'}}
 
-Example response:
-{{'date': '2024-10-13', 'price': 2500.50, 'sector': 'Banking'}}
-
-Your response (actual data only, no code):"""
+RESPOND WITH ONLY THE DICTIONARY:"""
         
         # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
         print(f"\n{'='*60}")
@@ -515,44 +469,26 @@ Your response (actual data only, no code):"""
         from datetime import datetime
         today = datetime.now().strftime('%Y-%m-%d')
         
-        prompt = f"""You are a financial data API. Provide ACTUAL HISTORICAL weekly price data.
+        prompt = f"""IMPORTANT: Respond ONLY with the data list below. NO explanations, NO text, NO code.
 
-🚫 DO NOT write Python code
-🚫 DO NOT use any libraries (requests, pandas, yfinance, etc.)
-🚫 DO NOT write functions, imports, or loops
-🚫 DO NOT generate future/predicted data - ONLY REAL HISTORICAL DATA
-🚫 DO NOT include dates beyond TODAY ({today})
-✅ ONLY return ACTUAL historical weekly price data in the format below
+Asset: {name} ({ticker})
+Period: {start_date} to {end_date} (weekly prices)
+Today: {today}
 
-Asset: {name}
-Ticker: {ticker}
-Type: {asset_type}
-Period: {start_date} to {end_date}
-Today's Date: {today}
-Frequency: WEEKLY (one price per week - Monday or first trading day)
+RULES:
+- Return weekly historical prices ONLY (no dates after {today})
+- Format: Python list of dictionaries
+- NO code, NO explanations, NO extra text
+- Start your response with [ and end with ]
 
-⚠️ CRITICAL RULES:
-1. Return ONLY REAL historical data (data that has already happened)
-2. DO NOT include any dates after {today}
-3. DO NOT predict or estimate future prices
-4. Return ALL weekly prices from {start_date} to {end_date} (or {today}, whichever is earlier)
-
-Return ONLY a list in this exact text format (replace with actual HISTORICAL values):
+Required format (replace with ACTUAL data):
 [
   {{'date': '2024-01-08', 'price': 2500.50, 'sector': 'Banking'}},
   {{'date': '2024-01-15', 'price': 2550.00, 'sector': 'Banking'}},
-  {{'date': '2024-01-22', 'price': 2575.25, 'sector': 'Banking'}},
-  ... (continue for ALL weeks up to {today})
+  ... (ALL weeks from {start_date} to {end_date}, stopping at {today} if needed)
 ]
 
-Example response (HISTORICAL data only, NO future dates):
-[
-  {{'date': '2024-01-08', 'price': 2500.50, 'sector': 'Banking'}},
-  {{'date': '2024-01-15', 'price': 2550.00, 'sector': 'Banking'}},
-  {{'date': '2024-01-22', 'price': 2575.25, 'sector': 'Banking'}}
-]
-
-Your response (ACTUAL HISTORICAL data for ALL weeks, NO FUTURE DATES, no code):"""
+RESPOND WITH ONLY THE DATA LIST (start with [, end with ]):"""
         
         # LOG PROMPT FOR DEBUGGING (use print to bypass log filters)
         print(f"\n{'='*60}")
