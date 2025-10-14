@@ -137,15 +137,23 @@ streamlit run web_agent.py
 
 ## 📝 **Configuration Files**
 
-### **API Keys (.streamlit/secrets.toml)**
-```toml
-# Gemini (PRIMARY - FREE)
-gemini_api_key = "AIzaSyAnm...Tjs"
-google_api_key = "AIzaSyAnm...Tjs"
+### **API Keys (Streamlit Cloud Secrets)**
 
-# OpenAI (BACKUP - ₹300 available)
-open_ai = "sk-proj-DiJ_...224A"
+**⚠️ IMPORTANT: Do NOT store API keys in `.streamlit/secrets.toml` for production!**
+
+Configure API keys in **Streamlit Cloud App Settings → Secrets**:
+
+```toml
+# Gemini (PRIMARY - FREE - 250 requests/day)
+gemini_api_key = "YOUR_GEMINI_API_KEY"
+
+# OpenAI (BACKUP - PAID)
+open_ai = "YOUR_OPENAI_API_KEY"
 ```
+
+**How to get API keys:**
+- **Gemini**: https://ai.google.dev/gemini-api/docs/api-key
+- **OpenAI**: https://platform.openai.com/api-keys
 
 ### **Price Fetching (ai_price_fetcher.py)**
 - ✅ Hybrid Gemini+OpenAI strategy
@@ -278,7 +286,7 @@ Everything is configured, tested, and optimized.
 
 If you encounter issues:
 1. Check logs for detailed error messages
-2. Verify API keys in `.streamlit/secrets.toml`
+2. Verify API keys in **Streamlit Cloud App Settings → Secrets**
 3. Check Gemini daily quota (250/day)
 4. Check OpenAI balance (₹300 available)
 
