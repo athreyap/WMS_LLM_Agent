@@ -2081,11 +2081,11 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                     print(f"   - Investment Amount: ₹{investment_amount:,.0f}")
                                     pms_data = get_aif_nav(ticker, pms_name, investment_date, investment_amount)
                                 else:
-                                print(f"🔍 PMS FETCH: Calling get_pms_nav for {ticker}")
-                                print(f"   - PMS Name: {pms_name}")
-                                print(f"   - Investment Date: {investment_date}")
-                                print(f"   - Investment Amount: ₹{investment_amount:,.0f}")
-                                pms_data = get_pms_nav(ticker, pms_name, investment_date, investment_amount)
+                                    print(f"🔍 PMS FETCH: Calling get_pms_nav for {ticker}")
+                                    print(f"   - PMS Name: {pms_name}")
+                                    print(f"   - Investment Date: {investment_date}")
+                                    print(f"   - Investment Amount: ₹{investment_amount:,.0f}")
+                                    pms_data = get_pms_nav(ticker, pms_name, investment_date, investment_amount)
                                 
                                 print(f"🔍 PMS/AIF FETCH RESULT: {pms_data}")
 
@@ -2150,14 +2150,14 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                 print(f"✅ MF {ticker}: NAV ₹{live_price}, Category: '{sector}'")
                             else:
                                 print(f"✅ MF {ticker}: NAV ₹{live_price} (no category)")
-                except Exception as e:
+                        except Exception as e:
                             print(f"⚠️ MF {ticker}: mftool failed ({e}), using transaction price as fallback")
                             # Use transaction price as fallback (shows 0% return, better than fake data)
                             mf_trans = df[df['ticker'] == ticker].iloc[0] if not df[df['ticker'] == ticker].empty else None
                             if mf_trans is not None and 'price' in mf_trans:
                                 live_price = float(mf_trans['price'])
                                 print(f"   📊 Fallback: Using transaction price ₹{live_price} (MF data unavailable)")
-                    else:
+                            else:
                                 live_price = None  # No data available
                                 print(f"   ❌ Fallback: No transaction price available for {ticker}")
 
@@ -2181,7 +2181,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                             
                             if not live_price or live_price <= 0:
                                 # Priority 3: Try without suffix
-                            live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
+                                live_price, sector, market_cap = get_stock_price_and_sector(ticker, ticker, None)
 
                             print(f"🔍 DEBUG: {ticker} -> live_price={live_price}, sector={sector}, market_cap={market_cap}")
 
@@ -2265,8 +2265,8 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                     sector = 'Power & Energy'
                                 else:
                                     sector = 'Other Stocks'
-                    except Exception as e:
-                                print(f"⚠️ {ticker}: yfinance/stock fetch failed: {e}")
+                        except Exception as e:
+                            print(f"⚠️ {ticker}: yfinance/stock fetch failed: {e}")
                             live_price = None
                             sector = 'Unknown'
                 except Exception as e:
@@ -2277,9 +2277,9 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 print(f"🔍 DEBUG: {ticker} - live_price={live_price}, sector={sector}")
 
                 # Store successful fetch (MUST be inside the for loop)
-            if live_price and live_price > 0:
-                live_prices[ticker] = live_price
-                sectors[ticker] = sector
+                if live_price and live_price > 0:
+                    live_prices[ticker] = live_price
+                    sectors[ticker] = sector
                     successful_fetches += 1
                     consecutive_failures = 0
                     print(f"✅ STORED: {ticker} -> ₹{live_price}")
@@ -2389,7 +2389,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 max_retries = 5  # Increased from 3 to 5 for better reliability
                 for attempt in range(max_retries):
                     try:
-                portfolio_data = get_portfolio_fast(user_id, force_refresh=force_refresh)
+                        portfolio_data = get_portfolio_fast(user_id, force_refresh=force_refresh)
                         break  # Success, exit retry loop
                     except Exception as e:
                         error_type = type(e).__name__
@@ -3520,7 +3520,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 # Get top 5 performers
                 top_performers = performer_data.nlargest(5, 'pnl_percentage')
                 
-                    if not top_performers.empty:
+                if not top_performers.empty:
                     # Sort by pnl_percentage ascending for better visual (top at bottom)
                     top_performers = top_performers.sort_values('pnl_percentage', ascending=True)
                     
@@ -3577,7 +3577,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 # Get bottom 5 performers
                 underperformers = performer_data.nsmallest(5, 'pnl_percentage')
                 
-                    if not underperformers.empty:
+                if not underperformers.empty:
                     # Sort by pnl_percentage descending for better visual (worst at bottom)
                     underperformers = underperformers.sort_values('pnl_percentage', ascending=False)
                     
@@ -4343,7 +4343,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                         hide_index=True
                                     )
 
-            with col2:
+                                with col2:
                                     # Bar chart comparing sectors
                                     fig_sector_compare = px.bar(
                                         sector_breakdown,
@@ -4677,7 +4677,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 with col1:
                     st.metric("💰 Total Invested", f"₹{total_invested:,.0f}")
 
-            with col2:
+                with col2:
                     st.metric("📈 Current Value", f"₹{total_current:,.0f}")
                 
                 with col3:
@@ -4695,7 +4695,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 
                 col1, col2 = st.columns(2)
 
-            with col1:
+                with col1:
                     # Asset allocation by current value
                     if 'sector' in df.columns and not df['sector'].isna().all():
                         sector_allocation = df.groupby('sector').agg({
@@ -4713,7 +4713,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         )
                         st.plotly_chart(fig_allocation, use_container_width=True, key="overall_sector_allocation_pie")
 
-            with col2:
+                with col2:
                     # P&L Distribution
                     holdings_pnl = df.groupby('ticker').agg({
                         'unrealized_pnl': 'sum',
@@ -4759,7 +4759,7 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                     else:
                             st.info("No gainers yet")
 
-                    with col2:
+                with col2:
                     st.subheader("📉 Top 10 Losers")
                     losers = df.groupby('ticker').agg({
                         'stock_name': 'first',
@@ -4846,33 +4846,33 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                 # ===== Portfolio Statistics =====
                 st.subheader("📊 Portfolio Statistics")
                 
-            col1, col2, col3, col4 = st.columns(4)
+                col1, col2, col3, col4 = st.columns(4)
             
-            with col1:
+                with col1:
                     avg_pnl_pct = df.groupby('ticker')['pnl_percentage'].first().mean()
                     st.metric("📈 Avg Return per Holding", f"{avg_pnl_pct:.2f}%")
             
-            with col2:
+                with col2:
                     winning_holdings = len(df[df['unrealized_pnl'] > 0].groupby('ticker'))
                     total_holdings_count = len(df.groupby('ticker'))
                     win_rate = (winning_holdings / total_holdings_count * 100) if total_holdings_count > 0 else 0
                     st.metric("🎯 Win Rate", f"{win_rate:.1f}%", delta=f"{winning_holdings}/{total_holdings_count}")
             
-            with col3:
+                with col3:
                     if 'sector' in df.columns:
                         sector_count = len(df['sector'].dropna().unique())
                         st.metric("🏢 Sectors", f"{sector_count}")
                     else:
                         st.metric("🏢 Sectors", "N/A")
             
-            with col4:
+                with col4:
                     if 'channel' in df.columns:
                         channel_count = len(df['channel'].dropna().unique())
                         st.metric("📡 Channels", f"{channel_count}")
                     else:
                         st.metric("📡 Channels", "N/A")
             
-            st.markdown("---")
+                st.markdown("---")
             
                 # ===== Holdings Multi-Select with Weekly Values Comparison =====
                 st.subheader("📈 Compare Holdings - Weekly Price Charts")
@@ -4937,8 +4937,8 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                     height=400
                 )
             
-        except Exception as e:
-            st.error(f"Error in overall performance: {e}")
+            except Exception as e:
+                st.error(f"Error in overall performance: {e}")
                 import traceback
                 st.error(traceback.format_exc())   
     def render_sector_performance_analysis(self, df):
@@ -4949,11 +4949,11 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             tab1, tab2 = st.tabs(["🏢 By Sector", "📡 By Channel"])
             
             with tab1:
-        st.subheader("🏢 Sector-Wise Performance")
-        
-        try:
-            # Debug: Check what's in the sector column
-            print(f"🔍 DEBUG: df.columns = {df.columns.tolist()}")
+                st.subheader("🏢 Sector-Wise Performance")
+                
+                try:
+                    # Debug: Check what's in the sector column
+                    print(f"🔍 DEBUG: df.columns = {df.columns.tolist()}")
                     
                     # Check for sector column - try multiple variations
                     sector_col = None
@@ -4975,8 +4975,8 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         st.warning("⚠️ Sector information not available in portfolio data")
                         st.info("💡 Sectors are automatically fetched when prices are loaded. Reload data to populate sectors.")
                 # Show what we have for debugging
-                with st.expander("🔍 Debug: Show available columns"):
-                            st.json(df.columns.tolist())
+                    with st.expander("🔍 Debug: Show available columns"):
+                        st.json(df.columns.tolist())
                         return
                     
                     # Check if all sectors are Unknown
@@ -5005,44 +5005,44 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                             }),
                             use_container_width=True
                         )
-                return
+                    return
             
-            # Group by sector (exclude Unknown if there are other sectors)
-            sector_data = df.groupby('sector').agg({
-                'invested_amount': 'sum',
-                'current_value': 'sum',
-                'unrealized_pnl': 'sum'
-            }).reset_index()
-            
-            # Filter out 'Unknown' if we have other sectors
-            if len(sector_data) > 1 and 'Unknown' in sector_data['sector'].values:
-                print(f"🔍 DEBUG: Filtering out 'Unknown' sector, keeping {len(sector_data)-1} known sectors")
-                sector_data = sector_data[sector_data['sector'] != 'Unknown']
-            
-            sector_data['pnl_percentage'] = (sector_data['unrealized_pnl'] / sector_data['invested_amount'] * 100)
-            sector_data = sector_data.sort_values('pnl_percentage', ascending=False)
-            
-            print(f"🔍 DEBUG: Final sector_data:\n{sector_data}")
-            
-            # Display sector performance table
-            st.dataframe(
-                sector_data.style.format({
-                    'invested_amount': '₹{:,.0f}',
-                    'current_value': '₹{:,.0f}',
-                    'unrealized_pnl': '₹{:,.0f}',
-                    'pnl_percentage': '{:.2f}%'
-                }),
-                use_container_width=True
-            )
-            
-            # Sector pie chart
-            import plotly.express as px
-            fig = px.pie(
-                sector_data,
-                values='current_value',
-                names='sector',
-                title='Portfolio Allocation by Sector'
-            )
+                    # Group by sector (exclude Unknown if there are other sectors)
+                    sector_data = df.groupby('sector').agg({
+                        'invested_amount': 'sum',
+                        'current_value': 'sum',
+                        'unrealized_pnl': 'sum'
+                    }).reset_index()
+                    
+                    # Filter out 'Unknown' if we have other sectors
+                    if len(sector_data) > 1 and 'Unknown' in sector_data['sector'].values:
+                        print(f"🔍 DEBUG: Filtering out 'Unknown' sector, keeping {len(sector_data)-1} known sectors")
+                        sector_data = sector_data[sector_data['sector'] != 'Unknown']
+                    
+                    sector_data['pnl_percentage'] = (sector_data['unrealized_pnl'] / sector_data['invested_amount'] * 100)
+                    sector_data = sector_data.sort_values('pnl_percentage', ascending=False)
+                    
+                    print(f"🔍 DEBUG: Final sector_data:\n{sector_data}")
+                    
+                    # Display sector performance table
+                    st.dataframe(
+                        sector_data.style.format({
+                            'invested_amount': '₹{:,.0f}',
+                            'current_value': '₹{:,.0f}',
+                            'unrealized_pnl': '₹{:,.0f}',
+                            'pnl_percentage': '{:.2f}%'
+                        }),
+                        use_container_width=True
+                    )
+                    
+                    # Sector pie chart
+                    import plotly.express as px
+                    fig = px.pie(
+                        sector_data,
+                        values='current_value',
+                        names='sector',
+                        title='Portfolio Allocation by Sector'
+                    )
                     st.plotly_chart(fig, use_container_width=True, key="sector_analysis_pie")
                     
                     # ===== NEW: Sector Multi-Select Filter =====
@@ -5150,20 +5150,20 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                 if selected_stocks and len(selected_stocks) > 0:
                                     self.render_weekly_values_multi(selected_stocks, self.session_state.user_id, context="sector_analysis")
             
-        except Exception as e:
-            st.error(f"Error in sector analysis: {e}")
+                except Exception as e:
+                    st.error(f"Error in sector analysis: {e}")
     
             with tab2:
-        st.subheader("📡 Channel-Wise Performance")
-        
-        try:
-            if 'channel' not in df.columns or df['channel'].isna().all():
-                st.warning("Channel information not available")
-                return
+                st.subheader("📡 Channel-Wise Performance")
+                
+                try:
+                    if 'channel' not in df.columns or df['channel'].isna().all():
+                        st.warning("Channel information not available")
+                        return
                         
-                            # Check if all channels are Unknown or empty
-                            valid_channels = df[~df['channel'].isin(['Unknown', '', None])]['channel'].dropna()
-                            if len(valid_channels) == 0:
+                        # Check if all channels are Unknown or empty
+                        valid_channels = df[~df['channel'].isin(['Unknown', '', None])]['channel'].dropna()
+                        if len(valid_channels) == 0:
                                 st.warning("⚠️ No channel information available - all holdings show as 'Unknown'")
                                 st.info("💡 Channels are set from the CSV file's 'channel' column. Please ensure your CSV has channel information.")
                                 
@@ -5187,39 +5187,39 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                     }),
                                     use_container_width=True
                                 )
-                            return
+                        return
             
-            # Group by channel
-            channel_data = df.groupby('channel').agg({
-                'invested_amount': 'sum',
-                'current_value': 'sum',
-                'unrealized_pnl': 'sum'
-            }).reset_index()
-            
-            channel_data['pnl_percentage'] = (channel_data['unrealized_pnl'] / channel_data['invested_amount'] * 100)
-            channel_data = channel_data.sort_values('pnl_percentage', ascending=False)
-            
-            # Display channel performance table
-            st.dataframe(
-                channel_data.style.format({
-                    'invested_amount': '₹{:,.0f}',
-                    'current_value': '₹{:,.0f}',
-                    'unrealized_pnl': '₹{:,.0f}',
-                    'pnl_percentage': '{:.2f}%'
-                }),
-                use_container_width=True
-            )
-            
-            # Channel bar chart
-            import plotly.express as px
-            fig = px.bar(
-                channel_data,
-                x='channel',
-                y='pnl_percentage',
-                title='Performance by Channel (%)',
-                color='pnl_percentage',
-                color_continuous_scale=['red', 'yellow', 'green']
-            )
+                    # Group by channel
+                    channel_data = df.groupby('channel').agg({
+                        'invested_amount': 'sum',
+                        'current_value': 'sum',
+                        'unrealized_pnl': 'sum'
+                    }).reset_index()
+                    
+                    channel_data['pnl_percentage'] = (channel_data['unrealized_pnl'] / channel_data['invested_amount'] * 100)
+                    channel_data = channel_data.sort_values('pnl_percentage', ascending=False)
+                    
+                    # Display channel performance table
+                    st.dataframe(
+                        channel_data.style.format({
+                            'invested_amount': '₹{:,.0f}',
+                            'current_value': '₹{:,.0f}',
+                            'unrealized_pnl': '₹{:,.0f}',
+                            'pnl_percentage': '{:.2f}%'
+                        }),
+                        use_container_width=True
+                    )
+                    
+                    # Channel bar chart
+                    import plotly.express as px
+                    fig = px.bar(
+                        channel_data,
+                        x='channel',
+                        y='pnl_percentage',
+                        title='Performance by Channel (%)',
+                        color='pnl_percentage',
+                        color_continuous_scale=['red', 'yellow', 'green']
+                    )
                     st.plotly_chart(fig, use_container_width=True, key="channel_analysis_bar")
                     
                     # ===== NEW: Hierarchical Channel > Sector > Holding Multi-Select =====
@@ -5648,8 +5648,8 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                                     use_container_width=True
                                 )
             
-        except Exception as e:
-            st.error(f"Error in channel analysis: {e}")
+                except Exception as e:
+                    st.error(f"Error in channel analysis: {e}")
                     import traceback
                     st.error(f"Details: {traceback.format_exc()}")
     
@@ -5967,13 +5967,13 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                         status_text.text(f"Processing {idx+1}/{len(uploaded_files)}: {uploaded_file.name}")
                         progress_bar.progress((idx) / len(uploaded_files))
                         
-                    with st.spinner(f"Processing {uploaded_file.name}..."):
-                        success = self.process_csv_file(uploaded_file, self.session_state.user_id)
-                        if success:
-                            st.success(f"✅ {uploaded_file.name} processed successfully!")
+                        with st.spinner(f"Processing {uploaded_file.name}..."):
+                            success = self.process_csv_file(uploaded_file, self.session_state.user_id)
+                            if success:
+                                st.success(f"✅ {uploaded_file.name} processed successfully!")
                                 processed_count += 1
-                        else:
-                            st.error(f"❌ Failed to process {uploaded_file.name}")
+                            else:
+                                st.error(f"❌ Failed to process {uploaded_file.name}")
                                 failed_count += 1
                                 failed_files.append(uploaded_file.name)
                                 
