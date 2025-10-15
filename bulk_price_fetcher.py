@@ -207,21 +207,21 @@ class BulkPriceFetcher:
         Batches 20 codes per AI call
         Handles both ISIN (12 chars) and AMFI (5-6 digit) codes
         """
-        try:
-            from ai_price_fetcher import AIPriceFetcher
+        from ai_price_fetcher import AIPriceFetcher
+        
+        ai = AIPriceFetcher()
+        if not ai.is_available():
+            logger.warning("AI not available for MF NAV lookup")
+            return {}
+        
+        results = {}
+        
+        # Process in batches of 20
+        for i in range(0, len(codes), 20):
+            batch = codes[i:i+20]
+            logger.info(f"🤖 AI bulk fetch: Processing batch {i//20 + 1} ({len(batch)} MF codes)...")
             
-            ai = AIPriceFetcher()
-            if not ai.is_available():
-                logger.warning("AI not available for MF NAV lookup")
-                return {}
-            
-            results = {}
-            
-            # Process in batches of 20
-            for i in range(0, len(codes), 20):
-                batch = codes[i:i+20]
-                logger.info(f"🤖 AI bulk fetch: Processing batch {i//20 + 1} ({len(batch)} MF codes)...")
-                
+            try:
                 # Build prompt - adapt based on code type
                 fund_list = []
                 for idx, code in enumerate(batch):
@@ -252,10 +252,11 @@ Rules:
 - Code must match exactly"""
                 
                 # Make AI call with automatic OpenAI fallback
+                response = None
                 try:
                     response = ai.gemini_client.generate_content(prompt)
                 except Exception as gemini_error:
-                    logger.warning(f"⚠️ Gemini failed: {gemini_error}, trying OpenAI...")
+                    logger.warning(f"⚠️ Gemini failed (batch {i//20 + 1}): {str(gemini_error)[:100]}, trying OpenAI...")
                     if ai.openai_client:
                         try:
                             response_obj = ai.openai_client.chat.completions.create(
@@ -268,12 +269,17 @@ Rules:
                                 def __init__(self, text):
                                     self.text = text
                             response = MockResponse(response_obj.choices[0].message.content)
+                            logger.info(f"✅ OpenAI succeeded for batch {i//20 + 1}")
                         except Exception as openai_error:
-                            logger.error(f"❌ OpenAI also failed: {openai_error}")
+                            logger.error(f"❌ OpenAI also failed: {str(openai_error)[:100]}")
                             continue
                     else:
                         logger.error("❌ No AI backup available")
                         continue
+                
+                if response is None:
+                    logger.warning(f"⚠️ Skipping batch {i//20 + 1} - no response from any AI")
+                    continue
                 
                 # Parse response
                 for line in response.text.strip().split('\n'):
@@ -290,33 +296,33 @@ Rules:
                         except ValueError:
                             continue
             
-            logger.info(f"✅ AI bulk fetch complete: {len(results)}/{len(codes)} MF codes")
-            return results
-            
-        except Exception as e:
-            logger.error(f"❌ Bulk MF fetch failed: {e}")
-            return {}
+            except Exception as batch_error:
+                logger.error(f"❌ Batch {i//20 + 1} processing error: {batch_error}")
+                continue
+        
+        logger.info(f"✅ AI bulk fetch complete: {len(results)}/{len(codes)} MF codes")
+        return results
     
     def get_bulk_mf_nav_by_name(self, codes: List[str], names: Dict[str, str]) -> Dict[str, float]:
         """
         Get MF NAV by fund name (fallback when codes don't work)
         Uses AI to search by fund name instead of code
         """
-        try:
-            from ai_price_fetcher import AIPriceFetcher
+        from ai_price_fetcher import AIPriceFetcher
+        
+        ai = AIPriceFetcher()
+        if not ai.is_available():
+            logger.warning("AI not available for name-based MF lookup")
+            return {}
+        
+        results = {}
+        
+        # Process in batches of 15 (names are longer, so smaller batches)
+        for i in range(0, len(codes), 15):
+            batch = codes[i:i+15]
+            logger.info(f"🤖 AI name-based fetch: Processing batch {i//15 + 1} ({len(batch)} funds)...")
             
-            ai = AIPriceFetcher()
-            if not ai.is_available():
-                logger.warning("AI not available for name-based MF lookup")
-                return {}
-            
-            results = {}
-            
-            # Process in batches of 15 (names are longer, so smaller batches)
-            for i in range(0, len(codes), 15):
-                batch = codes[i:i+15]
-                logger.info(f"🤖 AI name-based fetch: Processing batch {i//15 + 1} ({len(batch)} funds)...")
-                
+            try:
                 # Build prompt using fund names
                 fund_list = []
                 for idx, code in enumerate(batch):
@@ -342,10 +348,11 @@ Rules:
 - Skip if not found"""
                 
                 # Make AI call with automatic OpenAI fallback
+                response = None
                 try:
                     response = ai.gemini_client.generate_content(prompt)
                 except Exception as gemini_error:
-                    logger.warning(f"⚠️ Gemini failed: {gemini_error}, trying OpenAI...")
+                    logger.warning(f"⚠️ Gemini failed (batch {i//15 + 1}): {str(gemini_error)[:100]}, trying OpenAI...")
                     if ai.openai_client:
                         try:
                             response_obj = ai.openai_client.chat.completions.create(
@@ -357,12 +364,17 @@ Rules:
                                 def __init__(self, text):
                                     self.text = text
                             response = MockResponse(response_obj.choices[0].message.content)
+                            logger.info(f"✅ OpenAI succeeded for batch {i//15 + 1}")
                         except Exception as openai_error:
-                            logger.error(f"❌ OpenAI also failed: {openai_error}")
+                            logger.error(f"❌ OpenAI also failed: {str(openai_error)[:100]}")
                             continue
                     else:
                         logger.error("❌ No AI backup available")
                         continue
+                
+                if response is None:
+                    logger.warning(f"⚠️ Skipping batch {i//15 + 1} - no response from any AI")
+                    continue
                 
                 # Parse response - match by fund name similarity
                 for line in response.text.strip().split('\n'):
@@ -386,12 +398,12 @@ Rules:
                         except ValueError:
                             continue
             
-            logger.info(f"✅ AI name-based fetch complete: {len(results)}/{len(codes)} funds")
-            return results
-            
-        except Exception as e:
-            logger.error(f"❌ Bulk name-based fetch failed: {e}")
-            return {}
+            except Exception as batch_error:
+                logger.error(f"❌ Batch {i//15 + 1} processing error: {batch_error}")
+                continue
+        
+        logger.info(f"✅ AI name-based fetch complete: {len(results)}/{len(codes)} funds")
+        return results
     
     def get_bulk_prices_with_ai(
         self, 
@@ -407,23 +419,22 @@ Rules:
             ticker_names: Dict mapping ticker to full name
             ticker_type: 'MF', 'PMS', or 'STOCK'
         """
-        try:
-            from ai_price_fetcher import AIPriceFetcher
-            import google.generativeai as genai
-            
-            ai = AIPriceFetcher()
-            if not ai.is_available():
-                logger.warning("AI not available")
-                return {}
-            
-            # Build bulk request
-            ticker_list = []
-            for ticker in tickers:
-                name = ticker_names.get(ticker, ticker)
-                ticker_list.append(f"{ticker}|{name}")
-            
-            if ticker_type == 'MF':
-                prompt = f"""Get the LATEST NAV for these Indian mutual funds:
+        from ai_price_fetcher import AIPriceFetcher
+        import google.generativeai as genai
+        
+        ai = AIPriceFetcher()
+        if not ai.is_available():
+            logger.warning("AI not available")
+            return {}
+        
+        # Build bulk request
+        ticker_list = []
+        for ticker in tickers:
+            name = ticker_names.get(ticker, ticker)
+            ticker_list.append(f"{ticker}|{name}")
+        
+        if ticker_type == 'MF':
+            prompt = f"""Get the LATEST NAV for these Indian mutual funds:
 
 {chr(10).join([f"{i+1}. Code: {t.split('|')[0]}, Fund: {t.split('|')[1]}" for i, t in enumerate(ticker_list)])}
 
@@ -439,9 +450,9 @@ Rules:
 - Format: CODE|NAV (numeric only)
 - No currency symbols
 - Skip if not found"""
-            
-            elif ticker_type == 'PMS':
-                prompt = f"""Get the LATEST performance for these PMS/AIF funds:
+        
+        elif ticker_type == 'PMS':
+            prompt = f"""Get the LATEST performance for these PMS/AIF funds:
 
 {chr(10).join([f"{i+1}. Code: {t.split('|')[0]}, Fund: {t.split('|')[1]}" for i, t in enumerate(ticker_list)])}
 
@@ -456,35 +467,43 @@ Rules:
 - One fund per line
 - Values in percentage
 - Skip periods if not available"""
-            
-            else:  # STOCK
-                return {}  # Use yfinance for stocks
-            
-            # Make AI call with automatic OpenAI fallback
-            try:
-                response = ai.gemini_client.generate_content(prompt)
-            except Exception as gemini_error:
-                logger.warning(f"⚠️ Gemini failed: {gemini_error}, trying OpenAI...")
-                if ai.openai_client:
-                    try:
-                        response_obj = ai.openai_client.chat.completions.create(
-                            model="gpt-4o-mini",
-                            messages=[{"role": "user", "content": prompt}],
-                            max_tokens=500
-                        )
-                        class MockResponse:
-                            def __init__(self, text):
-                                self.text = text
-                        response = MockResponse(response_obj.choices[0].message.content)
-                    except Exception as openai_error:
-                        logger.error(f"❌ OpenAI also failed: {openai_error}")
-                        return {}
-                else:
-                    logger.error("❌ No AI backup available")
+        
+        else:  # STOCK
+            return {}  # Use yfinance for stocks
+        
+        # Make AI call with automatic OpenAI fallback
+        response = None
+        try:
+            response = ai.gemini_client.generate_content(prompt)
+            logger.info(f"✅ Gemini succeeded for {ticker_type}")
+        except Exception as gemini_error:
+            logger.warning(f"⚠️ Gemini failed for {ticker_type}: {str(gemini_error)[:100]}, trying OpenAI...")
+            if ai.openai_client:
+                try:
+                    response_obj = ai.openai_client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=500
+                    )
+                    class MockResponse:
+                        def __init__(self, text):
+                            self.text = text
+                    response = MockResponse(response_obj.choices[0].message.content)
+                    logger.info(f"✅ OpenAI succeeded for {ticker_type}")
+                except Exception as openai_error:
+                    logger.error(f"❌ OpenAI also failed for {ticker_type}: {str(openai_error)[:100]}")
                     return {}
-            
-            # Parse response
-            results = {}
+            else:
+                logger.error("❌ No AI backup available")
+                return {}
+        
+        if response is None:
+            logger.warning(f"⚠️ No response from any AI for {ticker_type}")
+            return {}
+        
+        # Parse response
+        results = {}
+        try:
             for line in response.text.strip().split('\n'):
                 if '|' not in line:
                     continue
@@ -509,12 +528,10 @@ Rules:
                             returns[period] = float(value.strip())
                     results[code] = returns
                     logger.info(f"✅ AI: {code} = {returns}")
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"❌ Bulk AI fetch failed: {e}")
-            return {}
+        except Exception as parse_error:
+            logger.error(f"❌ Error parsing AI response for {ticker_type}: {parse_error}")
+        
+        return results
     
     def _find_nearest_trading_day_price(self, data, ticker_with_suffix, target_date, is_single_ticker=False, max_days=7):
         """

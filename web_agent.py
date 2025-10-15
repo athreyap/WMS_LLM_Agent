@@ -2668,8 +2668,8 @@ class PortfolioAnalytics:
                         ticker_date_ranges = {}
                         for ticker in tickers_to_fetch:
                             # Find min/max dates needed for this ticker
-                            ticker_weeks = [w for w in week_list if ticker in tickers_for_week]
-                            if ticker_weeks:
+                            if ticker in ticker_week_map and ticker_week_map[ticker]:
+                                ticker_weeks = ticker_week_map[ticker]
                                 ticker_date_ranges[ticker] = (min(ticker_weeks), max(ticker_weeks))
                         
                         api_failed_tickers = []
