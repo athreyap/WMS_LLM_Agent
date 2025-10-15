@@ -20,7 +20,7 @@ pdfplumber==0.11.7
 # Financial Data
 yfinance==0.2.33
 mftool==2.0
-indstocks==1.0.3
+indstocks==1.1.1
 
 # Visualization
 plotly==5.18.0
