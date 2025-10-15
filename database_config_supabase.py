@@ -2349,10 +2349,17 @@ def bulk_save_historical_prices(price_data_list: list) -> bool:
         # Prepare batch data for shared pool
         batch_data = []
         for item in price_data_list:
+            price = item.get('price')
+            # Skip None, NaN, or invalid prices
+            if price is None or (isinstance(price, float) and (pd.isna(price) or np.isinf(price))):
+                continue
+            if price <= 0:
+                continue
+                
             batch_data.append({
                 "ticker": item.get('ticker'),
                 "transaction_date": item.get('date'),
-                "historical_price": float(item.get('price')),
+                "historical_price": float(price),
                 "price_source": item.get('source', 'batch_update')
             })
         
