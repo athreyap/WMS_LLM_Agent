@@ -2325,14 +2325,36 @@ class PortfolioAnalytics:
                         st.write(f"- {failed_file}")
             
             if processed_count > 0:
-                # ✅ Mark weekly fetch as complete (per-file manual fetch completed)
+                # ✅ Mark weekly fetch as complete in BOTH session state AND database
+                # Session state for immediate use, DB for persistence across reloads
                 st.session_state[f"bulk_fetch_done_{user_id}"] = True
+                
+                # Also update in database (persists across Streamlit reloads)
+                try:
+                    from database_config_supabase import supabase
+                    supabase.table("users").update({
+                        "weekly_cache_completed": True
+                    }).eq("id", user_id).execute()
+                    print(f"✅ Set weekly_cache_completed in DB for user {user_id}")
+                except Exception as e:
+                    print(f"⚠️ Could not update DB flag: {e}")
+                
                 print(f"✅ Set bulk_fetch_done flag for user {user_id} after processing {processed_count} files")
                 
                 st.success(f"🎉 Registration complete! {processed_count} file(s) processed successfully!")
                 
-                # ✅ Check if bulk fetch completed successfully
+                # ✅ Check if bulk fetch completed successfully (check DB first, then session)
                 bulk_fetch_done = st.session_state.get(f"bulk_fetch_done_{user_id}", False)
+                
+                # Also check database
+                if not bulk_fetch_done:
+                    try:
+                        from database_config_supabase import supabase
+                        user_data = supabase.table("users").select("weekly_cache_completed").eq("id", user_id).execute()
+                        if user_data.data and user_data.data[0].get("weekly_cache_completed"):
+                            bulk_fetch_done = True
+                    except:
+                        pass
                 
                 if bulk_fetch_done:
                     st.success("✅ All prices have been cached successfully!")
