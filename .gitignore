@@ -22,10 +22,12 @@ wheels/
 
 # Virtual Environment
 venv/
-ENV/
 env/
+ENV/
+env.bak/
+venv.bak/
 
-# IDEs
+# IDE
 .vscode/
 .idea/
 *.swp
@@ -34,21 +36,21 @@ env/
 
 # Streamlit
 .streamlit/secrets.toml
-# Note: config.toml is NOT ignored - needed for Streamlit Cloud deployment
-
-# Environment variables
-.env
-.env.local
-
-# Logs
-*.log
+.streamlit/config.toml
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Testing
-test_*.py
-quick_test.py
-final_test.py
+# Logs
+*.log
 
+# Test files
+test_*.py
+*_test.py
+test_output.txt
+
+# Temporary files
+*.tmp
+*.bak
+*.csv

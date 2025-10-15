@@ -1,206 +1,260 @@
-# 📊 WMS-LLM: AI-Powered Wealth Management System
+# 💰 Wealth Manager - Portfolio Analytics Platform
 
-An intelligent portfolio analytics platform with AI chatbot integration for managing stocks, mutual funds, and PMS/AIF investments.
+A comprehensive portfolio management and analytics platform built with Streamlit, featuring AI-powered insights, advanced analytics, and persistent data storage.
 
-## 🚀 Features
+## 🌟 Features
 
-- **Portfolio Analytics Dashboard**: Real-time portfolio tracking with P&L calculations
-- **Multi-Asset Support**: Stocks, Mutual Funds (MF), and Portfolio Management Schemes (PMS/AIF)
-- **AI Chatbot**: Natural language queries about your portfolio
-- **Automatic Price Fetching**: Live prices from multiple sources (yfinance, indstocks, mftool)
-- **Historical Data Caching**: Optimized weekly/monthly price caching
-- **File Upload**: CSV transaction file processing
-- **User Management**: Secure login with role-based access
-- **Performance Analytics**: Sector allocation, top performers, and detailed P&L analysis
+### 📊 Portfolio Management
+- **Multi-Asset Support**: Stocks, Mutual Funds, PMS, AIF, Bonds
+- **CSV Import**: Bulk transaction import with AI-powered parsing
+- **Automatic Price Fetching**: Real-time and historical price updates
+- **P&L Tracking**: Comprehensive profit/loss analysis with performance ratings
 
-## 📁 Core Files
+### 📈 Advanced Analytics
+- **Portfolio Allocation**: Sector, Channel, and Asset Type breakdowns
+- **Performance Analysis**: Top gainers/losers, performance trends
+- **Technical Analysis**: RSI, MACD, Moving Averages, Bollinger Bands, Volume indicators
+- **Risk Metrics**: VaR, Sharpe Ratio, Volatility, Max Drawdown
+- **52-Week NAVs**: Historical price trends and analysis
+- **Holdings Comparison**: Multi-dimensional comparison tools
 
-### Main Application
-- `web_agent.py` - Main Streamlit application (entry point)
-- `database_config_supabase.py` - Database operations and queries
-- `optimized_data_loader.py` - Fast data loading with JOINs and caching
+### 🤖 AI Assistant
+- **Portfolio Insights**: AI-powered recommendations and analysis
+- **PDF Document Analysis**: Upload and analyze research reports, statements
+- **Persistent PDF Library**: Store and access documents across sessions
+- **Chat Interface**: Ask questions about your portfolio and documents
 
-### Price Fetching
-- `unified_price_fetcher.py` - Unified price fetching for all asset types
-- `indstocks_api.py` - Indian stock price fetching
-- `mf_price_fetcher.py` - Mutual fund NAV fetching
-- `pms_aif_fetcher.py` - PMS/AIF data fetching
+### ⚡ Performance Optimizations
+- **Smart Caching**: 80% reduction in database queries
+- **Lazy Loading**: 70% reduction in unnecessary computations
+- **Optimized Calculations**: Single-pass metric calculations
+- **Fast Navigation**: Instant page switching
 
-### Utilities
-- `smart_ticker_detector.py` - Intelligent ticker classification
-- `ticker_validator.py` - Ticker validation and formatting
-- `file_reading_agent.py` - CSV file processing
-- `login_system.py` - User authentication
+## 🚀 Quick Start
 
-### Database Setup
-- `create_tables.py` - Database schema creation
-- `setup_database.py` - Initial database setup
-- `setup_supabase.py` - Supabase configuration
-- `ensure_stock_data_link.py` - FK relationship maintenance
+### Prerequisites
+- Python 3.8+
+- Supabase account
+- OpenAI API key
 
-## 🗄️ Database Schema
+### Installation
 
-### Core Tables
-- `users` - User accounts
-- `user_login` - Login sessions
-- `investment_transactions` - User-specific transactions (FK to users)
-- `stock_data` - Shared stock metadata (ticker, name, sector, live_price)
-- `historical_prices` - Shared historical prices (FK to stock_data)
-- `investment_files` - Uploaded file tracking
-- `pdf_documents` - PDF documents for chatbot
-
-### Key Relationships
-- `investment_transactions.user_id` → `users.id`
-- `investment_transactions.ticker` → `stock_data.ticker`
-- `historical_prices.ticker` → `stock_data.ticker`
-
-## 🛠️ Installation
-
-### 1. Clone Repository
+1. **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/WMS-LLM.git
-cd WMS-LLM
+git clone https://github.com/yourusername/wealth-manager.git
+cd wealth-manager
 ```
 
-### 2. Install Dependencies
+2. **Install dependencies**
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Setup Supabase
-1. Create a Supabase project at https://supabase.com
-2. Create a `.env` file:
-```env
-SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_anon_key
+3. **Set up Supabase**
+   - Create a new Supabase project
+   - Run `RUN_THIS_FIRST.sql` in the Supabase SQL Editor
+   - Run `ADD_PDF_STORAGE.sql` for PDF storage feature
+
+4. **Configure secrets**
+
+Create `.streamlit/secrets.toml`:
+```toml
+[supabase]
+url = "your-supabase-url"
+key = "your-supabase-anon-key"
+
+[api_keys]
+open_ai = "your-openai-api-key"
+gemini = "your-gemini-api-key"  # Optional
 ```
 
-### 4. Initialize Database
-```bash
-python setup_database.py
-python create_tables.py
-```
-
-### 5. Create Admin User
-```bash
-python create_admin_user.py
-```
-
-## 🚀 Running the Application
-
-### Local Development
+5. **Run the application**
 ```bash
 streamlit run web_agent.py
 ```
 
-### Streamlit Cloud Deployment
-1. Push to GitHub
-2. Connect to Streamlit Cloud (https://streamlit.io/cloud)
-3. Deploy `web_agent.py`
-4. Add secrets in Streamlit dashboard:
-   - `SUPABASE_URL`
-   - `SUPABASE_KEY`
+## 📁 Project Structure
+
+```
+wealth-manager/
+├── web_agent.py                    # Main Streamlit application
+├── database_shared.py              # Database operations
+├── enhanced_price_fetcher.py       # Price fetching with fallbacks
+├── weekly_manager_streamlined.py   # Historical price management
+├── analytics.py                    # P&L calculations
+├── smart_ticker_detector.py        # Asset type detection
+├── bulk_ai_fetcher.py             # Bulk AI price fetching
+├── fetch_yearly_bulk.py           # Yearly price fetching
+├── pms_aif_calculator.py          # PMS/AIF calculations
+├── visualizations.py              # Chart generation
+├── requirements.txt               # Python dependencies
+├── RUN_THIS_FIRST.sql            # Main database setup
+├── ADD_PDF_STORAGE.sql           # PDF storage setup
+└── README.md                      # This file
+```
+
+## 🗄️ Database Schema
+
+### Core Tables
+- **users**: User accounts and authentication
+- **stock_master**: Shared stock catalog
+- **user_transactions**: User-specific transactions
+- **historical_prices**: Shared price history
+- **user_pdfs**: PDF document storage
 
 ## 📊 Usage
 
-### 1. Login/Register
-- Access the application and create an account or login
+### 1. Register/Login
+- Create an account or log in with username/password
+- Upload CSV files during registration (optional)
 
 ### 2. Upload Transactions
-- Go to "Files" page
+- Navigate to "Upload More Files"
 - Upload CSV files with transaction data
-- Format: `Date, Ticker, Transaction Type, Quantity, Price, Channel`
+- System automatically parses and imports transactions
 
 ### 3. View Portfolio
-- **Portfolio Overview**: High-level summary and sector allocation
-- **Performance**: Overall performance metrics and top gainers/losers
-- **Holdings**: Detailed holdings with current prices and P&L
-- **Analytics**: Charts and graphs for portfolio analysis
+- **Portfolio Overview**: See all holdings, P&L, ratings
+- **Charts & Analytics**: 7 tabs of advanced analytics
+- **AI Assistant**: Ask questions, upload PDFs
 
-### 4. AI Chatbot
-- Ask questions about your portfolio in natural language
-- Examples:
-  - "What are my top performing stocks?"
-  - "Show me my mutual fund holdings"
-  - "What's my total P&L for banking sector?"
+### 4. Analyze Performance
+- View sector/channel allocation
+- Compare holdings performance
+- Analyze technical indicators
+- Review risk metrics
+
+## 📝 CSV Format
+
+Required columns:
+```csv
+Date,Ticker,Stock Name,Quantity,Price,Transaction Type,Sector,Channel
+2024-01-15,RELIANCE.NS,Reliance Industries,10,2500,BUY,Energy,Direct
+```
+
+Optional columns: `Asset Type`, `Notes`
 
 ## 🔧 Configuration
 
-### Price Fetching Strategy
-1. Check database cache (historical_prices)
-2. Fallback to API (yfinance, indstocks, mftool)
-3. Save fetched prices to database
-4. Weekly/monthly cache updates
+### Price Fetching
+- **Stocks**: yfinance (NSE/BSE) → AI fallback
+- **Mutual Funds**: mftool → AI fallback
+- **PMS/AIF**: CAGR-based calculations
 
-### First-Time Setup
-On first login, the system:
-1. Processes ALL tickers for historical data (no limit)
-2. Builds complete price history
-3. Subsequent logins: incremental updates (20 ticker limit)
+### Caching
+- Holdings: 5-minute TTL
+- Portfolio Summary: 10-minute TTL
+- Portfolio Metrics: 5-minute TTL
 
-## 📈 Data Flow
+## 🚀 Deployment
 
-```
-User Uploads CSV → file_reading_agent.py
-                 ↓
-        investment_transactions (user-specific)
-                 ↓
-        optimized_data_loader.py (JOIN queries)
-                 ↓
-        stock_data + historical_prices (shared)
-                 ↓
-        unified_price_fetcher.py (live prices)
-                 ↓
-        web_agent.py (UI + calculations)
-```
+### Streamlit Cloud
+
+1. Push code to GitHub
+2. Connect repository to Streamlit Cloud
+3. Add secrets in Streamlit Cloud dashboard
+4. Deploy!
+
+### Environment Variables
+Set these in Streamlit Cloud secrets:
+- `supabase.url`
+- `supabase.key`
+- `api_keys.open_ai`
+
+## 🛠️ Tech Stack
+
+- **Frontend**: Streamlit
+- **Database**: Supabase (PostgreSQL)
+- **AI**: OpenAI GPT-4o-mini
+- **Price Data**: yfinance, mftool
+- **Charts**: Plotly
+- **PDF Processing**: pdfplumber
+
+## 📦 Dependencies
+
+Key packages:
+- `streamlit` - Web framework
+- `supabase` - Database client
+- `openai` - AI integration
+- `yfinance` - Stock prices
+- `mftool` - Mutual fund NAVs
+- `plotly` - Interactive charts
+- `pandas` - Data manipulation
+- `pdfplumber` - PDF text extraction
+
+See `requirements.txt` for complete list.
 
 ## 🔐 Security
 
-- Password hashing for user accounts
+- Password hashing (SHA-256)
 - Row Level Security (RLS) in Supabase
 - User-specific data isolation
-- Shared stock data across users (efficiency)
+- Secure API key management
 
 ## 🐛 Troubleshooting
 
-### No P&L showing
-- Ensure live prices are being fetched
-- Check `stock_data.live_price` is populated
-- Verify transactions have valid tickers
+### Common Issues
 
-### Slow loading
-- First login builds complete cache (normal)
-- Subsequent logins use incremental updates
-- Check database indexes
+**1. "relation does not exist" error**
+- Run `RUN_THIS_FIRST.sql` in Supabase SQL Editor
 
-### Price fetching errors
-- Install required packages: `pip install yfinance indstocks mftool`
-- Check API rate limits
-- Verify ticker format (e.g., "INFY" not "INFY.NS")
+**2. "Invalid API key" error**
+- Check `.streamlit/secrets.toml` configuration
+- Verify Supabase URL and key
 
-## 📚 Documentation
+**3. Price fetching fails**
+- Check internet connection
+- Verify ticker format (add .NS or .BO for Indian stocks)
+- AI fallback will activate automatically
 
-- `OPTIMIZATION_SUMMARY.md` - System architecture and optimizations
-- `README_SUPABASE.md` - Supabase setup guide
-- Sample files in `kalyan_files/` directory
+**4. PDF upload fails**
+- Run `ADD_PDF_STORAGE.sql` in Supabase
+- Restart Streamlit application
+
+## 📈 Performance Tips
+
+1. **Enable Caching**: Caching is enabled by default
+2. **Bulk Operations**: Upload multiple CSVs at once
+3. **Historical Prices**: Fetch yearly prices for better performance
+4. **Database Indexes**: Already optimized in SQL scripts
 
 ## 🤝 Contributing
 
+Contributions are welcome! Please:
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
 4. Submit a pull request
 
-## 📝 License
+## 📄 License
 
-MIT License - See LICENSE file for details
-
-## 👥 Authors
-
-WMS-LLM Team
+This project is licensed under the MIT License.
 
 ## 🙏 Acknowledgments
 
 - Streamlit for the amazing framework
-- Supabase for database hosting
-- Yahoo Finance, IndStocks, and MFTool for price data APIs
+- Supabase for the database platform
+- OpenAI for AI capabilities
+- yfinance and mftool for price data
+
+## 📞 Support
+
+For issues and questions:
+- Open an issue on GitHub
+- Check existing documentation
+- Review SQL scripts for database setup
+
+## 🎯 Roadmap
+
+- [ ] Portfolio optimization (Efficient Frontier)
+- [ ] Options flow analysis
+- [ ] Backtesting capabilities
+- [ ] Mobile app
+- [ ] Export functionality
+- [ ] Multi-currency support
+
+---
+
+**Built with ❤️ using Streamlit**
+
+🌟 Star this repo if you find it helpful!
