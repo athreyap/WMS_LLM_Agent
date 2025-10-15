@@ -383,6 +383,7 @@ class PortfolioAnalytics:
                 file_record = supabase.table('investment_files').insert({
                     'user_id': user_id,
                     'filename': uploaded_file.name,
+                    'file_path': f'/uploads/{uploaded_file.name}',  # Virtual path for Streamlit
                     'file_hash': file_hash
                 }).execute()
                 file_id = file_record.data[0]['id']
