@@ -16,10 +16,32 @@ class SharedDatabaseManager:
     """Manages database with shared historical data architecture"""
     
     def __init__(self):
-        self.supabase: Client = create_client(
-            st.secrets["supabase"]["url"],
-            st.secrets["supabase"]["key"]
-        )
+        try:
+            # Get and validate Supabase credentials
+            supabase_url = st.secrets["supabase"]["url"]
+            supabase_key = st.secrets["supabase"]["key"]
+            
+            # Validate URL format
+            if not supabase_url or not supabase_url.startswith("https://"):
+                raise ValueError(f"Invalid Supabase URL format. Must start with 'https://'. Got: {supabase_url[:50]}...")
+            
+            if not supabase_key or len(supabase_key) < 20:
+                raise ValueError("Invalid Supabase key. Key appears to be too short or empty.")
+            
+            # Create client
+            self.supabase: Client = create_client(
+                supabase_url.strip(),
+                supabase_key.strip()
+            )
+            
+        except KeyError as e:
+            st.error(f"❌ Missing Supabase configuration in secrets: {e}")
+            st.info("Please add your Supabase credentials in Streamlit Cloud Settings → Secrets")
+            raise
+        except Exception as e:
+            st.error(f"❌ Database connection error: {str(e)}")
+            st.info("Please check your Supabase URL and key in the secrets configuration")
+            raise
     
     # ========================================================================
     # USER MANAGEMENT (Unchanged)
@@ -207,6 +229,15 @@ class SharedDatabaseManager:
             }).eq('id', stock_id).execute()
         except Exception as e:
             st.caption(f"⚠️ Update stock price error: {str(e)}")
+    
+    def get_transactions_by_stock(self, user_id: str, stock_id: str) -> List[Dict[str, Any]]:
+        """Get all transactions for a specific stock"""
+        try:
+            response = self.supabase.table('user_transactions').select('*').eq('user_id', user_id).eq('stock_id', stock_id).order('transaction_date').execute()
+            return response.data
+        except Exception as e:
+            st.caption(f"⚠️ Get transactions by stock error: {str(e)}")
+            return []
     
     def get_all_unique_stocks(self) -> List[Dict[str, Any]]:
         """Get all unique stocks from stock_master"""
