@@ -1,34 +1,34 @@
 # Streamlit and UI
-streamlit==1.29.0
+streamlit
 
 # Database
-supabase==2.3.0
+supabase
 
 # AI and ML
-openai==1.6.1
-google-generativeai==0.3.2
+openai
+google-generativeai
 
 # Data Processing
-pandas==2.1.4
-numpy==1.26.2
-scipy==1.11.4
+pandas
+numpy
+scipy
 
 # File Processing
-PyPDF2==3.0.1
-pdfplumber==0.11.7
+PyPDF2
+pdfplumber
 
 # Financial Data
-yfinance==0.2.33
-mftool==2.0
-indstocks==1.1.1
+yfinance
+mftool
+indstocks
 
 # Visualization
-plotly==5.18.0
+plotly
 
 # Utilities
-python-dateutil==2.8.2
-requests==2.31.0
-beautifulsoup4==4.12.2
-lxml==4.9.3
-html5lib==1.1
+python-dateutil
+requests
+beautifulsoup4
+lxml
+html5lib
 
