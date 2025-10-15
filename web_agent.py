@@ -11435,26 +11435,23 @@ Call: FUNCTION_CALL: function_name(params)"""
             all_stats = []
             tickers_with_data = []
             
+            # ✅ OPTIMIZED: Fetch ALL weekly prices for user in ONE query (JOIN-based, no date filter)
+            from database_config_supabase import get_all_weekly_prices_for_user
+            all_weekly_prices = get_all_weekly_prices_for_user(user_id)
+            
+            st.caption(f"📊 Loaded weekly prices for {len(all_weekly_prices)} tickers from database")
+            
             for idx, ticker in enumerate(tickers):
-                # Get historical prices from database for date range
-                prices_data = get_stock_prices_range_supabase(
-                    ticker=ticker,
-                    start_date=start_date.strftime('%Y-%m-%d'),
-                    end_date=end_date.strftime('%Y-%m-%d')
-                )
-                
-                if not prices_data or len(prices_data) == 0:
+                # Get prices for this ticker from the bulk fetch
+                if ticker not in all_weekly_prices or not all_weekly_prices[ticker]:
                     st.warning(f"⚠️ No historical price data available for **{ticker}**")
                     st.info(f"💡 Historical data for {ticker} may still be loading. Try refreshing the page or use the 'Refresh Cache' button in Settings.")
                     continue
                 
                 # Convert to DataFrame
-                df_prices = pd.DataFrame(prices_data)
+                df_prices = pd.DataFrame(all_weekly_prices[ticker])
                 
-                # Ensure we have the required columns (handle both date and price_date naming)
-                if 'price_date' in df_prices.columns:
-                    df_prices['date'] = df_prices['price_date']
-                
+                # Ensure we have the required columns
                 if 'date' not in df_prices.columns or 'price' not in df_prices.columns:
                     continue
                 
