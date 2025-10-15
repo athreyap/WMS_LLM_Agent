@@ -330,7 +330,6 @@ def fetch_weekly_prices_bulk(
                             investment_amount = float(first_trans['quantity'] * first_trans['price'])
                             
                             # Calculate CAGR
-                            from datetime import datetime
                             today = datetime.now()
                             years_elapsed = (today - investment_date).days / 365.25
                             
