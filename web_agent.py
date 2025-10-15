@@ -1366,14 +1366,13 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
                     progress_bar.progress(idx / len(self.session_state.pending_files))
                     
                     # Process the file with comprehensive error handling
-                    # Skip weekly cache AND live prices during registration
-                    # Weekly cache: will populate all at once after all files
-                    # Live prices: will fetch at login for current market prices
+                    # Fetch weekly cache PER FILE (fast bulk method)
+                    # Skip live prices during registration (will fetch at login)
                     try:
                         success = self.process_csv_file(
                             uploaded_file, 
                             user_id, 
-                            skip_weekly_cache=True,
+                            skip_weekly_cache=False,  # ✅ CHANGED: Fetch weekly per file
                             skip_live_prices=True
                         )
                     
@@ -1411,17 +1410,11 @@ Do not include currency symbols, units, or any other text - ONLY the numeric pri
             progress_bar.empty()
             status_text.empty()
             
-            # Step 2.5: Populate weekly cache for all tickers (only if some files succeeded)
+            # Step 2.5: Weekly cache already done per file (fast bulk method)
+            # No need for additional caching here
             if processed_count > 0:
                 st.markdown("---")
-                st.info("🔄 Building weekly price cache for all holdings... This may take a few minutes...")
-                try:
-                    with st.spinner("⏳ Caching weekly price data... Please wait..."):
-                        self.populate_weekly_and_monthly_cache(user_id)
-                    st.success("✅ Weekly price cache populated successfully!")
-                except Exception as cache_error:
-                    st.warning(f"⚠️ Weekly cache population had warnings: {cache_error}")
-                    st.info("💡 Charts may have limited data. You can refresh the cache later from Settings.")
+                st.success("✅ Weekly price cache completed during file processing!")
             
             # Step 3: Show summary
             st.markdown("---")
