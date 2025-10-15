@@ -852,53 +852,249 @@ Rules:
             except Exception as e:
                 logger.warning(f"⚠️ mftool import/init failed: {e}")
             
-            # Use AI for failed tickers
+            # Use AI for failed tickers (BULK with Python dict format - works with OpenAI!)
             failed_codes = [code for code in mf_tickers if code not in mf_prices]
             if failed_codes:
-                logger.info(f"🤖 Using AI fallback for {len(failed_codes)} MF codes...")
-                ai_prices = self.get_bulk_mf_nav_isin(failed_codes, ticker_names)
-                mf_prices.update(ai_prices)
+                logger.info(f"🤖 Using AI fallback for {len(failed_codes)} MF codes (Python dict format)...")
                 
-                # If still failed, try by name
-                still_failed = [code for code in failed_codes if code not in mf_prices]
-                if still_failed:
-                    logger.info(f"🤖 Retrying {len(still_failed)} codes using fund names...")
-                    name_based_prices = self.get_bulk_mf_nav_by_name(still_failed, ticker_names)
-                    mf_prices.update(name_based_prices)
+                from ai_price_fetcher import AIPriceFetcher
+                ai = AIPriceFetcher()
+                
+                if ai.is_available():
+                    # Build ticker list with names
+                    ticker_list = []
+                    for code in failed_codes:
+                        name = ticker_names.get(code, code)
+                        ticker_list.append(f"'{code}': '{name}'")
+                    
+                    prompt = f"""You are a financial data API. Return the MOST RECENT NAV (yesterday or latest available) for these Indian mutual funds.
+
+Tickers: {{ {', '.join(ticker_list)} }}
+
+Return ONLY a Python dictionary in this EXACT format (actual values, no placeholders):
+{{
+    '119019': 402.64,
+    '102949': 55.43,
+    '104781': 395.73
+}}
+
+Rules:
+- Return ONLY the dictionary (no explanations, no code, no markdown)
+- Use actual NAV values from yesterday or most recent available
+- Use scheme code as key, NAV as value
+- Skip any fund you cannot find
+"""
+                    
+                    # Call AI (Gemini → OpenAI fallback built-in)
+                    try:
+                        if ai.gemini_client:
+                            try:
+                                response = ai.gemini_client.generate_content(prompt)
+                                response_text = response.text
+                            except:
+                                # Gemini failed, use OpenAI
+                                response = ai.openai_client.chat.completions.create(
+                                    model="gpt-4o-mini",
+                                    messages=[{"role": "user", "content": prompt}],
+                                    max_tokens=1000
+                                )
+                                response_text = response.choices[0].message.content
+                        else:
+                            response = ai.openai_client.chat.completions.create(
+                                model="gpt-4o-mini",
+                                messages=[{"role": "user", "content": prompt}],
+                                max_tokens=1000
+                            )
+                            response_text = response.choices[0].message.content
+                        
+                        # Parse Python dictionary
+                        import ast
+                        response_text = response_text.strip()
+                        
+                        # Remove markdown code blocks if present
+                        if '```' in response_text:
+                            response_text = response_text.split('```')[1].replace('python', '').strip()
+                        
+                        # Parse dictionary
+                        nav_dict = ast.literal_eval(response_text)
+                        
+                        # Add to results
+                        for code, nav in nav_dict.items():
+                            code = str(code).strip()
+                            if code in failed_codes and isinstance(nav, (int, float)) and nav > 0:
+                                mf_prices[code] = float(nav)
+                                logger.info(f"✅ AI (dict): {code} = ₹{nav}")
+                        
+                        logger.info(f"✅ AI dict fetch: {len([c for c in failed_codes if c in mf_prices])}/{len(failed_codes)} MF codes")
+                    except Exception as e:
+                        logger.error(f"❌ AI dict parsing error: {e}")
+                        logger.debug(f"Response: {response_text[:200]}")
+                else:
+                    logger.warning("AI not available for MF fallback")
         
-        # 2. Stocks: Use yfinance bulk (FREE, fast) → AI fallback
+        # 2. Stocks: Use yfinance bulk (FREE, fast) → AI fallback with dict format
         stock_prices = {}
         if stock_tickers:
             stock_prices = self.get_stocks_bulk(stock_tickers)
             
-            # AI fallback for stocks that failed yfinance
+            # AI fallback for stocks that failed yfinance (BULK with Python dict)
             failed_stocks = [ticker for ticker in stock_tickers if ticker not in stock_prices]
             if failed_stocks:
-                logger.info(f"🤖 Using AI fallback for {len(failed_stocks)} stocks (yfinance failed)...")
-                try:
-                    ai_stock_prices = self.get_bulk_prices_with_ai(
-                        failed_stocks,
-                        ticker_names,
-                        ticker_type='Stock'
-                    )
-                    # Extract just prices from AI response (it returns CAGR data for PMS, but prices for stocks)
-                    for ticker, data in ai_stock_prices.items():
-                        if isinstance(data, dict) and 'price' in data:
-                            stock_prices[ticker] = data['price']
-                        elif isinstance(data, (int, float)):
-                            stock_prices[ticker] = float(data)
-                    logger.info(f"✅ AI recovered {len(ai_stock_prices)}/{len(failed_stocks)} stock prices")
-                except Exception as e:
-                    logger.warning(f"⚠️ AI fallback for stocks failed: {e}")
+                logger.info(f"🤖 Using AI fallback for {len(failed_stocks)} stocks (Python dict format)...")
+                
+                from ai_price_fetcher import AIPriceFetcher
+                ai = AIPriceFetcher()
+                
+                if ai.is_available():
+                    # Build ticker list with names
+                    ticker_list = []
+                    for ticker in failed_stocks:
+                        name = ticker_names.get(ticker, ticker)
+                        ticker_list.append(f"'{ticker}': '{name}'")
+                    
+                    prompt = f"""You are a financial data API. Return the MOST RECENT stock price (yesterday's close or latest available) for these Indian stocks.
+
+Tickers: {{ {', '.join(ticker_list)} }}
+
+Return ONLY a Python dictionary in this EXACT format (actual values, no placeholders):
+{{
+    'TANFACIND': 285.50,
+    '500414': 1250.75
+}}
+
+Rules:
+- Return ONLY the dictionary (no explanations, no code, no markdown)
+- Use actual stock prices from yesterday's close or most recent available
+- Use ticker as key, price as value
+- Skip any stock you cannot find
+"""
+                    
+                    try:
+                        # Call AI (Gemini → OpenAI fallback)
+                        if ai.gemini_client:
+                            try:
+                                response = ai.gemini_client.generate_content(prompt)
+                                response_text = response.text
+                            except:
+                                response = ai.openai_client.chat.completions.create(
+                                    model="gpt-4o-mini",
+                                    messages=[{"role": "user", "content": prompt}],
+                                    max_tokens=1000
+                                )
+                                response_text = response.choices[0].message.content
+                        else:
+                            response = ai.openai_client.chat.completions.create(
+                                model="gpt-4o-mini",
+                                messages=[{"role": "user", "content": prompt}],
+                                max_tokens=1000
+                            )
+                            response_text = response.choices[0].message.content
+                        
+                        # Parse Python dictionary
+                        import ast
+                        response_text = response_text.strip()
+                        
+                        # Remove markdown code blocks if present
+                        if '```' in response_text:
+                            response_text = response_text.split('```')[1].replace('python', '').strip()
+                        
+                        # Parse dictionary
+                        price_dict = ast.literal_eval(response_text)
+                        
+                        # Add to results
+                        for ticker, price in price_dict.items():
+                            ticker = str(ticker).strip()
+                            if ticker in failed_stocks and isinstance(price, (int, float)) and price > 0:
+                                stock_prices[ticker] = float(price)
+                                logger.info(f"✅ AI (dict): {ticker} = ₹{price}")
+                        
+                        logger.info(f"✅ AI recovered {len([t for t in failed_stocks if t in stock_prices])}/{len(failed_stocks)} stock prices")
+                    except Exception as e:
+                        logger.error(f"❌ AI stock dict parsing error: {e}")
+                else:
+                    logger.warning("AI not available for stock fallback")
         
-        # 3. PMS: Use AI bulk (paid but efficient)
+        # 3. PMS/AIF: Use AI with Python dict format (BULK call for all PMS/AIF)
         pms_data = {}
         if pms_tickers:
-            pms_data = self.get_bulk_prices_with_ai(
-                pms_tickers,
-                ticker_names,
-                ticker_type='PMS'
-            )
+            logger.info(f"🤖 Fetching CAGR for {len(pms_tickers)} PMS/AIF using AI (Python dict format)...")
+            
+            from ai_price_fetcher import AIPriceFetcher
+            ai = AIPriceFetcher()
+            
+            if ai.is_available():
+                # Build ticker list with names
+                ticker_list = []
+                for ticker in pms_tickers:
+                    name = ticker_names.get(ticker, ticker)
+                    ticker_list.append(f"'{ticker}': '{name}'")
+                
+                prompt = f"""You are a financial data API. Return the MOST RECENT CAGR performance (yesterday or latest available) for these Indian PMS/AIF funds.
+
+Tickers: {{ {', '.join(ticker_list)} }}
+
+Return ONLY a Python dictionary in this EXACT format (actual values, no placeholders):
+{{
+    'INP000005000': {{'1Y': 30.65, '3Y': 17.51, '5Y': 20.35}},
+    'INP000000613': {{'1Y': 23.50, '3Y': 21.00, '5Y': 26.50}},
+    'AIF_IN_AIF3_20-21_0857': {{'1Y': 15.20, '3Y': 18.30}}
+}}
+
+Rules:
+- Return ONLY the dictionary (no explanations, no code, no markdown)
+- Use actual CAGR returns from yesterday or most recent available
+- Values are in percentage (e.g., 30.65 means 30.65% annual return)
+- Include 1Y, 3Y, 5Y periods if available
+- Skip any fund you cannot find
+- Skip periods if not available (e.g., new fund may only have 1Y)
+"""
+                
+                try:
+                    # Call AI (Gemini → OpenAI fallback)
+                    if ai.gemini_client:
+                        try:
+                            response = ai.gemini_client.generate_content(prompt)
+                            response_text = response.text
+                        except:
+                            # Gemini failed, use OpenAI
+                            response = ai.openai_client.chat.completions.create(
+                                model="gpt-4o-mini",
+                                messages=[{"role": "user", "content": prompt}],
+                                max_tokens=1500
+                            )
+                            response_text = response.choices[0].message.content
+                    else:
+                        response = ai.openai_client.chat.completions.create(
+                            model="gpt-4o-mini",
+                            messages=[{"role": "user", "content": prompt}],
+                            max_tokens=1500
+                        )
+                        response_text = response.choices[0].message.content
+                    
+                    # Parse Python dictionary
+                    import ast
+                    response_text = response_text.strip()
+                    
+                    # Remove markdown code blocks if present
+                    if '```' in response_text:
+                        response_text = response_text.split('```')[1].replace('python', '').strip()
+                    
+                    # Parse dictionary
+                    pms_dict = ast.literal_eval(response_text)
+                    
+                    # Add to results
+                    for ticker, returns in pms_dict.items():
+                        ticker = str(ticker).strip()
+                        if ticker in pms_tickers and isinstance(returns, dict):
+                            pms_data[ticker] = returns
+                            logger.info(f"✅ AI (dict): {ticker} = {returns}")
+                    
+                    logger.info(f"✅ PMS/AIF dict fetch: {len(pms_data)}/{len(pms_tickers)} funds")
+                except Exception as e:
+                    logger.error(f"❌ AI PMS dict parsing error: {e}")
+                    logger.debug(f"Response: {response_text[:200] if 'response_text' in locals() else 'No response'}")
+            else:
+                logger.warning("AI not available for PMS/AIF")
         
         logger.info(f"✅ Bulk fetch complete:")
         logger.info(f"   - MF: {len(mf_prices)}/{len(mf_tickers) if mf_tickers else 0} (mftool→AI)")
