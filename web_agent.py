@@ -1866,15 +1866,12 @@ class PortfolioAnalytics:
             # Remove rows with zero or negative prices
             df = df[df['price'] > 0]
             
-            # ✅ Handle infinity and NaN values properly (no arbitrary limits)
-            # Remove rows with infinite values (inf, -inf)
-            df = df[np.isfinite(df['price'])]
-            df = df[np.isfinite(df['quantity'])]
+            # Remove rows with unreasonably large values (overflow protection)
+            MAX_PRICE = 1_000_000  # Max price: 10 lakhs
+            MAX_QUANTITY = 10_000_000  # Max quantity: 1 crore units
             
-            # Remove rows with extremely large values that might be data errors (not investment limits)
-            # Only filter out values that are clearly data corruption (like 1e+50)
-            df = df[df['price'] < 1e15]  # Allow up to ₹1 quadrillion (way more than any real investment)
-            df = df[df['quantity'] < 1e15]  # Allow up to 1 quadrillion units
+            df = df[df['price'] <= MAX_PRICE]
+            df = df[df['quantity'] <= MAX_QUANTITY]
             
             final_count = len(df)
             
@@ -1946,12 +1943,16 @@ class PortfolioAnalytics:
                                 progress_callback=lambda msg: st.caption(msg)
                             )
                             st.success("✅ Weekly price data cached (bulk mode)!")
+                            # Mark bulk fetch as complete
+                            st.session_state[f"bulk_fetch_done_{user_id}"] = True
                         except Exception as e:
                             st.warning(f"⚠️ Bulk weekly fetch failed, using fallback: {e}")
                             try:
                                 with st.spinner("⏳ Building weekly cache (fallback)..."):
                                     self.populate_weekly_and_monthly_cache(user_id)
                                 st.success("✅ Weekly data cached (fallback mode)!")
+                                # Mark bulk fetch as complete
+                                st.session_state[f"bulk_fetch_done_{user_id}"] = True
                             except Exception as e2:
                                 st.warning(f"⚠️ Weekly cache had warnings: {e2}")
                                 st.info("💡 You can manually refresh the cache later from Settings → Refresh Cache")
@@ -2262,6 +2263,10 @@ class PortfolioAnalytics:
                                     st.info(f"💼 {pms_skipped} PMS/AIF(s) - using CAGR calculation")
                                 if ai_fallback_count > 0:
                                     st.warning(f"⚠️ {ai_fallback_count} ticker(s) need AI fallback at login (APIs failed)")
+                                
+                                # Mark weekly cache as complete for this file
+                                if all_weekly_prices_to_save or (stocks_cached + mf_cached) > 0:
+                                    print(f"✅ Weekly cache complete for {uploaded_file.name}")
                             except Exception as weekly_err:
                                 print(f"⚠️ Weekly cache error for {uploaded_file.name}: {weekly_err}")
                                 # Continue anyway - weekly prices can be fetched at login
@@ -2320,6 +2325,10 @@ class PortfolioAnalytics:
                         st.write(f"- {failed_file}")
             
             if processed_count > 0:
+                # ✅ Mark weekly fetch as complete (per-file manual fetch completed)
+                st.session_state[f"bulk_fetch_done_{user_id}"] = True
+                print(f"✅ Set bulk_fetch_done flag for user {user_id} after processing {processed_count} files")
+                
                 st.success(f"🎉 Registration complete! {processed_count} file(s) processed successfully!")
                 
                 # ✅ Check if bulk fetch completed successfully
@@ -2668,8 +2677,8 @@ class PortfolioAnalytics:
                         ticker_date_ranges = {}
                         for ticker in tickers_to_fetch:
                             # Find min/max dates needed for this ticker
-                            if ticker in ticker_week_map and ticker_week_map[ticker]:
-                                ticker_weeks = ticker_week_map[ticker]
+                            ticker_weeks = [w for w in week_list if ticker in tickers_for_week]
+                            if ticker_weeks:
                                 ticker_date_ranges[ticker] = (min(ticker_weeks), max(ticker_weeks))
                         
                         api_failed_tickers = []
@@ -11435,23 +11444,26 @@ Call: FUNCTION_CALL: function_name(params)"""
             all_stats = []
             tickers_with_data = []
             
-            # ✅ OPTIMIZED: Fetch ALL weekly prices for user in ONE query (JOIN-based, no date filter)
-            from database_config_supabase import get_all_weekly_prices_for_user
-            all_weekly_prices = get_all_weekly_prices_for_user(user_id)
-            
-            st.caption(f"📊 Loaded weekly prices for {len(all_weekly_prices)} tickers from database")
-            
             for idx, ticker in enumerate(tickers):
-                # Get prices for this ticker from the bulk fetch
-                if ticker not in all_weekly_prices or not all_weekly_prices[ticker]:
+                # Get historical prices from database for date range
+                prices_data = get_stock_prices_range_supabase(
+                    ticker=ticker,
+                    start_date=start_date.strftime('%Y-%m-%d'),
+                    end_date=end_date.strftime('%Y-%m-%d')
+                )
+                
+                if not prices_data or len(prices_data) == 0:
                     st.warning(f"⚠️ No historical price data available for **{ticker}**")
                     st.info(f"💡 Historical data for {ticker} may still be loading. Try refreshing the page or use the 'Refresh Cache' button in Settings.")
                     continue
                 
                 # Convert to DataFrame
-                df_prices = pd.DataFrame(all_weekly_prices[ticker])
+                df_prices = pd.DataFrame(prices_data)
                 
-                # Ensure we have the required columns
+                # Ensure we have the required columns (handle both date and price_date naming)
+                if 'price_date' in df_prices.columns:
+                    df_prices['date'] = df_prices['price_date']
+                
                 if 'date' not in df_prices.columns or 'price' not in df_prices.columns:
                     continue
                 

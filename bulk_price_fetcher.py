@@ -1075,24 +1075,44 @@ Rules:
                     import ast
                     response_text = response_text.strip()
                     
+                    # Debug: Show what AI returned
+                    print(f"\n🔍 DEBUG: AI Response for PMS/AIF:")
+                    print(f"{'=' * 80}")
+                    print(response_text[:500])
+                    print(f"{'=' * 80}\n")
+                    
                     # Remove markdown code blocks if present
                     if '```' in response_text:
-                        response_text = response_text.split('```')[1].replace('python', '').strip()
+                        parts = response_text.split('```')
+                        for part in parts:
+                            if '{' in part and '}' in part:
+                                response_text = part.replace('python', '').strip()
+                                break
                     
                     # Parse dictionary
                     pms_dict = ast.literal_eval(response_text)
                     
                     # Add to results
+                    found_tickers = []
                     for ticker, returns in pms_dict.items():
                         ticker = str(ticker).strip()
                         if ticker in pms_tickers and isinstance(returns, dict):
                             pms_data[ticker] = returns
+                            found_tickers.append(ticker)
                             logger.info(f"✅ AI (dict): {ticker} = {returns}")
+                    
+                    # Check which tickers are missing
+                    missing_tickers = [t for t in pms_tickers if t not in pms_data]
+                    if missing_tickers:
+                        logger.warning(f"⚠️ AI did not return data for {len(missing_tickers)} PMS/AIF: {missing_tickers}")
                     
                     logger.info(f"✅ PMS/AIF dict fetch: {len(pms_data)}/{len(pms_tickers)} funds")
                 except Exception as e:
                     logger.error(f"❌ AI PMS dict parsing error: {e}")
-                    logger.debug(f"Response: {response_text[:200] if 'response_text' in locals() else 'No response'}")
+                    if 'response_text' in locals():
+                        logger.error(f"Response text: {response_text[:300]}")
+                    import traceback
+                    traceback.print_exc()
             else:
                 logger.warning("AI not available for PMS/AIF")
         
