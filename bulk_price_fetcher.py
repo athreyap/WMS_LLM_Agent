@@ -504,19 +504,56 @@ Rules:
         # Parse response
         results = {}
         try:
-            for line in response.text.strip().split('\n'):
-                if '|' not in line:
+            # Debug: Print full response
+            print(f"\n🔍 DEBUG: AI Response for {ticker_type}:")
+            print(f"{'=' * 80}")
+            print(response.text[:500])  # First 500 chars to avoid spam
+            print(f"{'=' * 80}\n")
+            
+            # Clean response text (remove markdown code blocks, explanations, etc.)
+            response_text = response.text.strip()
+            
+            # Remove markdown code blocks if present
+            if '```' in response_text:
+                # Extract content between code blocks
+                parts = response_text.split('```')
+                for part in parts:
+                    if '|' in part and not part.startswith('python'):
+                        response_text = part.strip()
+                        break
+            
+            for line in response_text.split('\n'):
+                line = line.strip()
+                
+                # Skip empty lines, explanations, headers
+                if not line or '|' not in line:
                     continue
                 
+                # Skip lines that look like headers or explanations
+                if any(word in line.lower() for word in ['code', 'fund', 'name', 'nav', 'example', 'format', 'rule']):
+                    if line.count('|') <= 1 or not any(char.isdigit() for char in line):
+                        continue
+                
                 parts = line.split('|')
+                if len(parts) < 2:
+                    continue
+                
                 code = parts[0].strip()
+                
+                # Validate code format
+                if not code or len(code) < 3:
+                    continue
                 
                 if ticker_type == 'MF':
                     try:
-                        nav = float(parts[1].strip())
-                        results[code] = nav
-                        logger.info(f"✅ AI: {code} = ₹{nav}")
-                    except:
+                        # Extract numeric value (remove currency symbols, commas)
+                        nav_str = parts[1].strip().replace('₹', '').replace(',', '').replace('Rs', '').replace('.', '', parts[1].count('.') - 1)
+                        nav = float(nav_str)
+                        if nav > 0:
+                            results[code] = nav
+                            logger.info(f"✅ AI: {code} = ₹{nav}")
+                    except Exception as e:
+                        logger.debug(f"   Failed to parse MF line: {line} - {e}")
                         continue
                 
                 elif ticker_type == 'PMS':
@@ -524,13 +561,23 @@ Rules:
                     returns = {}
                     for part in parts[1:]:
                         if ':' in part:
-                            period, value = part.split(':')
-                            returns[period] = float(value.strip())
-                    results[code] = returns
-                    logger.info(f"✅ AI: {code} = {returns}")
+                            try:
+                                period, value = part.split(':')
+                                period = period.strip()
+                                value = value.strip().replace('%', '').replace(',', '')
+                                returns[period] = float(value)
+                            except:
+                                continue
+                    
+                    if returns:
+                        results[code] = returns
+                        logger.info(f"✅ AI: {code} = {returns}")
         except Exception as parse_error:
             logger.error(f"❌ Error parsing AI response for {ticker_type}: {parse_error}")
+            import traceback
+            traceback.print_exc()
         
+        logger.info(f"📊 Parsed {len(results)} valid results from AI response")
         return results
     
     def _find_nearest_trading_day_price(self, data, ticker_with_suffix, target_date, is_single_ticker=False, max_days=7):
