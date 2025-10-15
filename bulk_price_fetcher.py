@@ -776,15 +776,29 @@ Rules:
                         # Remove 'MF_' prefix if exists
                         clean_code = code.replace('MF_', '')
                         
+                        # Convert to integer (mftool expects int, not string)
+                        try:
+                            scheme_code_int = int(clean_code)
+                        except ValueError:
+                            logger.warning(f"   ⚠️ {code} is not a valid scheme code (not a number)")
+                            continue
+                        
+                        logger.debug(f"   🔍 Trying mftool for {code} (scheme_code: {scheme_code_int})...")
+                        
                         # Try getting current NAV
-                        nav_result = mf_fetcher.get_mutual_fund_nav(clean_code)
+                        nav_result = mf_fetcher.get_mutual_fund_nav(scheme_code_int)
+                        
+                        logger.debug(f"   📥 mftool response for {code}: {nav_result}")
+                        
                         nav = nav_result.get('nav') if nav_result and isinstance(nav_result, dict) else None
                         
                         if nav and nav > 0:
                             mf_prices[code] = nav
                             logger.info(f"✅ mftool (FREE): {code} = ₹{nav}")
+                        else:
+                            logger.warning(f"   ⚠️ mftool returned invalid NAV for {code}: {nav}")
                     except Exception as e:
-                        logger.debug(f"   ⚠️ mftool failed for {code}: {e}")
+                        logger.warning(f"   ⚠️ mftool exception for {code}: {e}")
                         continue
                 
                 logger.info(f"✅ mftool (FREE): {len(mf_prices)}/{len(mf_tickers)} MF prices fetched")
