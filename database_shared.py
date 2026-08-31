@@ -78,17 +78,30 @@ class SharedDatabaseManager:
     def login_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         """Login user with username"""
         try:
-            password_hash = self.hash_password(password)
+            st.info(f"🔍 Attempting login for user: {username}")
+            st.info(f"🔍 Supabase client exists: {self.supabase is not None}")
             
+            password_hash = self.hash_password(password)
+            st.info("🔍 Password hashed successfully")
+            
+            st.info("🔍 Querying database...")
             response = self.supabase.table('users').select('*').eq(
                 'username', username
             ).eq('password_hash', password_hash).execute()
             
+            st.info(f"🔍 Database query completed. Found {len(response.data) if response.data else 0} users")
+            
             if response.data and len(response.data) > 0:
+                st.success("✅ Login successful!")
                 return response.data[0]
+            
+            st.warning("⚠️ No matching user found")
             return None
         except Exception as e:
-            st.error(f"Login error: {str(e)}")
+            st.error(f"❌ Login error: {str(e)}")
+            st.error(f"Error type: {type(e).__name__}")
+            import traceback
+            st.error(f"Traceback: {traceback.format_exc()}")
             return None
     
     # ========================================================================
